@@ -177,7 +177,9 @@ GET /metrics   → Prometheus-format metrics (peer count, storage used, sync lag
 3. **Browser session tokens**: Short-lived HMAC tokens (1 hour TTL) issued after user authenticates with their passphrase. Tokens are tied to a specific container instance.
 4. **Container isolation**: One container per customer. No cross-customer data access at the OS or storage layer.
 5. **Least privilege**: Container runs as non-root. Hyperswarm bridge and pluresd run as separate processes with minimal capability set.
-6. **Audit trail**: All sync events and web sessions logged to PluresDB for user review.
+6. **Audit trail**: 
+   - **User-visible log in PluresDB**: Sync events and web sessions that the user can review are recorded by the client (browser/device) into a dedicated audit log inside the user's PluresDB. These entries are signed and end-to-end encrypted using the user's keys; the cloud container only stores and relays the resulting ciphertext.
+   - **Container-side metadata log (optional)**: The container MAY keep a separate, minimal operational log (e.g., timestamps, container instance ID, coarse IP information or hashes) for abuse detection and debugging. This metadata is **not** written into the user's PluresDB and is not end-to-end encrypted. Its contents and retention are documented in the privacy policy.
 
 ## Azure Deployment
 
