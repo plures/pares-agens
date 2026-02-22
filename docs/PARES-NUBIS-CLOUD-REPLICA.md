@@ -201,7 +201,7 @@ User subscribes (Stripe webhook)
     │
     ▼
 Provisioning API
-    ├── Generate PARES_TOPIC_KEY slot (user provides at first login)
+    ├── Create empty PARES_TOPIC_KEY config entry (user generates/provides key at first login)
     ├── Create ACI container group
     ├── Attach Azure Files share (/data/pluresdb)
     ├── Inject secrets from Key Vault
