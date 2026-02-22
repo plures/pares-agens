@@ -200,6 +200,7 @@ Four security tiers scale from passive location to active investigation (Tier 4 
 
 - **[Cross-Platform Agent Architecture](docs/CROSS-PLATFORM-AGENT-ARCHITECTURE.md)** — How capability nodes enable cross-platform operation
 - **[pluresLM Desktop Memory Integration](docs/PLURESLM-DESKTOP-MEMORY.md)** — Unified memory system spanning conversations and actions
+- **[Pares Nubis Cloud Replica](docs/PARES-NUBIS-CLOUD-REPLICA.md)** — Managed always-on cloud peer for backup sync and web access
 - **[Remote Device Security Management](docs/REMOTE-DEVICE-SECURITY.md)** — Four-tier lost/stolen device security via Pares Manus nodes
 - **[Development Guide](https://github.com/plures/development-guide)** — Cross-cutting concerns and standards
 
@@ -212,6 +213,7 @@ pares-agens is part of the [Pares](https://github.com/plures/pares) mesh ecosyst
 | **Pares Arca** | "strongbox" | Distributed cache (free tier) |
 | **Pares Agens** | "one who acts" | AI agent framework |
 | **Pares Manus** | "hands" | Capability nodes (Windows/macOS/mobile) |
+| **Pares Nubis** | "cloud" | Managed cloud replica + web frontend |
 | **Pares Rector** | "one who steers" | Goal-based orchestrator |
 | **Arcae Nexus** | "strongboxes + connection" | Decentralized object registry |
 | **Pares Protocol** | — | Wire protocol + command channel |
