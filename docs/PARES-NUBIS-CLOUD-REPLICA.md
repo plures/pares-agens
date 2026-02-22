@@ -157,7 +157,7 @@ When the user searches for older data, PluresDB fetches from the nearest availab
 | Variable | Description | Example |
 |---|---|---|
 | `PARES_TOPIC_KEY` | Hyperswarm topic key for user's mesh | `ed25519:<hex>` |
-| `PARES_STORAGE_LIMIT_GB` | Maximum disk usage before eviction | `5` |
+| `PARES_STORAGE_LIMIT_GB` | Maximum allowed disk usage; on exceed, instance must alert and refuse new writes (no automatic data eviction) | `5` |
 | `PARES_WEB_TOKEN_SECRET` | HMAC secret for browser session tokens | `<random-256-bit>` |
 | `PARES_HEALTH_PORT` | HTTP port for health/readiness probes | `8080` |
 | `PARES_DATA_DIR` | PluresDB data directory | `/data/pluresdb` |
