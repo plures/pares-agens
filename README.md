@@ -129,6 +129,35 @@ pares agens create-demo "pluresLM-introduction" \
 pares agens present "pluresLM-introduction"
 ```
 
+### Remote Device Security Management
+
+When a device is lost or stolen, pares-agens can remotely lock it down — going far beyond standard "Find My Device" because a persistent Pares Manus node with root-level access runs on each enrolled device:
+
+```bash
+# From any device or web frontend
+pares agens run "My phone was stolen. Lock it down."
+
+# pares-agens will:
+# 1. Locate the phone node via PluresDB mesh
+# 2. Send commands via Hyperswarm (Noise-encrypted P2P)
+# 3. Phone's Pares Manus node executes:
+#    - Force lock + change PIN
+#    - Display "This device has been reported stolen" on lock screen
+#    - Encrypt storage (if not already enabled)
+#    - Begin GPS tracking
+#    - Capture front-camera photo (if Tier 4 was opted in during setup)
+# 4. Report back with location + photo + immutable audit record
+```
+
+Four security tiers scale from passive location to active investigation (Tier 4 requires explicit opt-in during device setup):
+
+| Tier | Examples |
+|---|---|
+| **Tier 1 — Locate & Alert** | GPS tracking, play loud sound, lock screen message |
+| **Tier 2 — Secure** | Force lock, change password, disable USB/Bluetooth |
+| **Tier 3 — Protect Data** | Trigger disk encryption, wipe local DB, revoke API keys |
+| **Tier 4 — Investigate** (opt-in) | Camera capture, mic recording, screen capture, geofence alerts |
+
 ### Privacy by Design
 
 - **Local inference**: All AI reasoning happens on your hardware
@@ -161,12 +190,18 @@ pares agens present "pluresLM-introduction"
   - [ ] Team knowledge sharing
   - [ ] Pares Rector orchestration integration
   - [ ] Enterprise deployment tools
+  - [ ] Remote device security management (Find My Device++)
+    - [ ] Tier 1: Locate & Alert (GPS, play sound, lock screen message)
+    - [ ] Tier 2: Secure (force lock, password change, disable USB/Bluetooth)
+    - [ ] Tier 3: Protect Data (disk encryption, wipe local DB, revoke API keys)
+    - [ ] Tier 4: Investigate — opt-in only (camera, mic, screen capture, geofence)
 
 ## Documentation
 
 - **[Cross-Platform Agent Architecture](docs/CROSS-PLATFORM-AGENT-ARCHITECTURE.md)** — How capability nodes enable cross-platform operation
 - **[pluresLM Desktop Memory Integration](docs/PLURESLM-DESKTOP-MEMORY.md)** — Unified memory system spanning conversations and actions
 - **[Pares Nubis Cloud Replica](docs/PARES-NUBIS-CLOUD-REPLICA.md)** — Managed always-on cloud peer for backup sync and web access
+- **[Remote Device Security Management](docs/REMOTE-DEVICE-SECURITY.md)** — Four-tier lost/stolen device security via Pares Manus nodes
 - **[Development Guide](https://github.com/plures/development-guide)** — Cross-cutting concerns and standards
 
 ## Part of Pares
