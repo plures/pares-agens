@@ -166,6 +166,7 @@ pares agens present "pluresLM-introduction"
 
 - **[Cross-Platform Agent Architecture](docs/CROSS-PLATFORM-AGENT-ARCHITECTURE.md)** — How capability nodes enable cross-platform operation
 - **[pluresLM Desktop Memory Integration](docs/PLURESLM-DESKTOP-MEMORY.md)** — Unified memory system spanning conversations and actions
+- **[Pares Nubis Cloud Replica](docs/PARES-NUBIS-CLOUD-REPLICA.md)** — Managed always-on cloud peer for backup sync and web access
 - **[Development Guide](https://github.com/plures/development-guide)** — Cross-cutting concerns and standards
 
 ## Part of Pares
@@ -177,6 +178,7 @@ pares-agens is part of the [Pares](https://github.com/plures/pares) mesh ecosyst
 | **Pares Arca** | "strongbox" | Distributed cache (free tier) |
 | **Pares Agens** | "one who acts" | AI agent framework |
 | **Pares Manus** | "hands" | Capability nodes (Windows/macOS/mobile) |
+| **Pares Nubis** | "cloud" | Managed cloud replica + web frontend |
 | **Pares Rector** | "one who steers" | Goal-based orchestrator |
 | **Arcae Nexus** | "strongboxes + connection" | Decentralized object registry |
 | **Pares Protocol** | — | Wire protocol + command channel |
