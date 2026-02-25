@@ -95,3 +95,9 @@ pub mod agent {
 }
 
 pub use agent::Agent;
+
+// Procedure executor modules
+pub mod event;
+pub mod handlers;
+pub mod procedure;
+pub mod source;

@@ -2,8 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "copilot/**", "feature/**"]
   pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   check:
@@ -24,14 +27,13 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: cargo check
         run: cargo check --workspace
 
-      - name: clippy
-        run: cargo clippy --workspace -- -D warnings
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: test
+      - name: cargo test
         run: cargo test --workspace
