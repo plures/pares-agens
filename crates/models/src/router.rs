@@ -1,0 +1,109 @@
+//! Model router — selects the right provider for each request.
+
+use std::collections::HashMap;
+
+use futures_util::Stream;
+use tracing::debug;
+
+use crate::{
+    client::OpenAiClient,
+    config::RouterConfig,
+    error::Error,
+    types::{ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse},
+};
+
+/// Routes `/v1/chat/completions` requests to the appropriate backend provider.
+///
+/// Provider selection follows these steps:
+/// 1. Evaluate [`RouterConfig::rules`] in order; use the first matching rule.
+/// 2. Fall back to [`RouterConfig::default_provider`].
+///
+/// # Example
+/// ```no_run
+/// use std::collections::HashMap;
+/// use pares_models::{
+///     config::{ProviderConfig, RouterConfig},
+///     router::ModelRouter,
+///     types::{ChatCompletionRequest, ChatMessage, Role},
+/// };
+///
+/// # async fn example() -> Result<(), pares_models::error::Error> {
+/// let config = RouterConfig::single(
+///     "local",
+///     ProviderConfig::new("http://localhost:12434", None),
+/// );
+/// let router = ModelRouter::new(config);
+/// let req = ChatCompletionRequest::new(
+///     "ai/mistral-nemo",
+///     vec![ChatMessage::text(Role::User, "Hello!")],
+/// );
+/// let response = router.chat(&req).await?;
+/// println!("{}", response.choices[0].message.content.as_deref().unwrap_or(""));
+/// # Ok(())
+/// # }
+/// ```
+pub struct ModelRouter {
+    config: RouterConfig,
+    clients: HashMap<String, OpenAiClient>,
+}
+
+impl ModelRouter {
+    /// Build a router from the given configuration.
+    pub fn new(config: RouterConfig) -> Self {
+        let clients = config
+            .providers
+            .iter()
+            .map(|(name, p)| {
+                let client = OpenAiClient::new(&p.base_url, p.api_key.clone());
+                (name.clone(), client)
+            })
+            .collect();
+        Self { config, clients }
+    }
+
+    /// Select the provider name for a given model identifier.
+    fn select_provider<'a>(&'a self, model: &str) -> &'a str {
+        for rule in &self.config.rules {
+            if let Some(prefix) = &rule.model_prefix {
+                if model.starts_with(prefix.as_str()) {
+                    debug!(model, provider = %rule.provider, "routing rule matched");
+                    return &rule.provider;
+                }
+            }
+        }
+        debug!(model, provider = %self.config.default_provider, "using default provider");
+        &self.config.default_provider
+    }
+
+    fn get_client(&self, provider: &str) -> Result<&OpenAiClient, Error> {
+        self.clients
+            .get(provider)
+            .ok_or_else(|| Error::ProviderNotFound(provider.to_owned()))
+    }
+
+    /// Send a non-streaming chat completion request.
+    pub async fn chat(
+        &self,
+        request: &ChatCompletionRequest,
+    ) -> Result<ChatCompletionResponse, Error> {
+        let provider = self.select_provider(&request.model).to_owned();
+        self.get_client(&provider)?.chat_completion(request).await
+    }
+
+    /// Send a streaming chat completion request.
+    pub async fn chat_stream(
+        &self,
+        request: &ChatCompletionRequest,
+    ) -> Result<impl Stream<Item = Result<ChatCompletionChunk, Error>>, Error> {
+        let provider = self.select_provider(&request.model).to_owned();
+        self.get_client(&provider)?.chat_completion_stream(request).await
+    }
+
+    /// Reload the router from a [`crate::config::ConfigStore`].
+    ///
+    /// Returns a new `ModelRouter` built from the freshly loaded config.
+    pub async fn reload_from<S: crate::config::ConfigStore>(store: &S) -> Result<Self, Error> {
+        let config = store.router_config().await?;
+        Ok(Self::new(config))
+    }
+}
