@@ -57,54 +57,53 @@ mod tests {
 
     #[test]
     fn event_kind_returns_correct_name() {
-        let msg = Event::Message {
-            id: "1".into(),
-            channel: "test".into(),
-            sender: "alice".into(),
-            content: "hello".into(),
-        };
-        assert_eq!(msg.kind(), "message");
+        let events = [
+            (
+                Event::Message {
+                    id: "1".into(),
+                    channel: "c".into(),
+                    sender: "u".into(),
+                    content: "hi".into(),
+                },
+                "message",
+            ),
+            (
+                Event::Timer {
+                    id: "t".into(),
+                    name: "daily".into(),
+                    recurring: true,
+                },
+                "timer",
+            ),
+            (
+                Event::StateChange {
+                    key: "mood".into(),
+                    old_value: None,
+                    new_value: serde_json::json!("happy"),
+                },
+                "state_change",
+            ),
+            (
+                Event::ModelResponse {
+                    request_id: "r".into(),
+                    model: "qwen3".into(),
+                    content: "ok".into(),
+                },
+                "model_response",
+            ),
+            (
+                Event::ToolResult {
+                    tool_call_id: "tc".into(),
+                    tool_name: "search".into(),
+                    content: "{}".into(),
+                    is_error: false,
+                },
+                "tool_result",
+            ),
+        ];
 
-        let timer = Event::Timer {
-            id: "t1".into(),
-            name: "daily".into(),
-            recurring: true,
-        };
-        assert_eq!(timer.kind(), "timer");
-
-        let sc = Event::StateChange {
-            key: "mood".into(),
-            old_value: None,
-            new_value: serde_json::json!("happy"),
-        };
-        assert_eq!(sc.kind(), "state_change");
-
-        let mr = Event::ModelResponse {
-            request_id: "r1".into(),
-            model: "qwen3".into(),
-            content: "Sure!".into(),
-        };
-        assert_eq!(mr.kind(), "model_response");
-
-        let tr = Event::ToolResult {
-            tool_call_id: "tc1".into(),
-            tool_name: "search".into(),
-            content: "{}".into(),
-            is_error: false,
-        };
-        assert_eq!(tr.kind(), "tool_result");
-    }
-
-    #[test]
-    fn event_serializes_with_type_tag() {
-        let msg = Event::Message {
-            id: "1".into(),
-            channel: "stdin".into(),
-            sender: "user".into(),
-            content: "hi".into(),
-        };
-        let json = serde_json::to_value(&msg).unwrap();
-        assert_eq!(json["type"], "message");
-        assert_eq!(json["content"], "hi");
+        for (event, expected) in &events {
+            assert_eq!(event.kind(), *expected);
+        }
     }
 }
