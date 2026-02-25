@@ -1,0 +1,10 @@
+[package]
+name = "pares-agens-core"
+description = "Event loop, procedure executor, and PluresDB integration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pluresdb = { git = "https://github.com/plures/pluresdb" }

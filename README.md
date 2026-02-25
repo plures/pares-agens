@@ -198,6 +198,8 @@ Four security tiers scale from passive location to active investigation (Tier 4 
 
 ## Documentation
 
+- **[Architecture](https://github.com/plures/development-guide/blob/main/design/PARES-AGENS.md)** — System design and component overview
+- **[Release Plan](https://github.com/plures/development-guide/blob/main/strategy/PARES-AGENS-RELEASE-PLAN.md)** — Phased delivery milestones
 - **[Cross-Platform Agent Architecture](docs/CROSS-PLATFORM-AGENT-ARCHITECTURE.md)** — How capability nodes enable cross-platform operation
 - **[pluresLM Desktop Memory Integration](docs/PLURESLM-DESKTOP-MEMORY.md)** — Unified memory system spanning conversations and actions
 - **[Pares Nubis Cloud Replica](docs/PARES-NUBIS-CLOUD-REPLICA.md)** — Managed always-on cloud peer for backup sync and web access
@@ -253,8 +255,8 @@ All components share [PluresDB](https://github.com/plures/pluresdb) as the data 
 
 ## Contributing
 
-Pares Agens is open source under AGPL-3.0. See the [development guide](https://github.com/plures/development-guide) for contribution guidelines, coding standards, and architecture decisions.
+Pares Agens is open source under MIT. See the [development guide](https://github.com/plures/development-guide) for contribution guidelines, coding standards, and architecture decisions.
 
 ## License
 
-AGPL-3.0
+MIT
