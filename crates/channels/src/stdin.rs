@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use pares_agens_core::Event;
 use uuid::Uuid;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use std::sync::Arc;
 use crate::adapter::{ChannelAdapter, ChannelError};
 
 /// Reads lines from stdin, emits Message events, prints responses to stdout.
@@ -26,7 +25,6 @@ impl ChannelAdapter for StdinAdapter {
     ) -> Result<(), ChannelError> {
         let stdin = tokio::io::stdin();
         let mut reader = BufReader::new(stdin).lines();
-        let on_event = Arc::new(on_event);
         while let Some(line) = reader.next_line().await? {
             let line = line.trim().to_string();
             if line.is_empty() { continue; }
@@ -35,7 +33,6 @@ impl ChannelAdapter for StdinAdapter {
                 content: line,
                 from: self.from.clone(),
             };
-            let on_event = Arc::clone(&on_event);
             if let Some(Event::ModelResponse { content, .. }) = on_event(event).await {
                 println!("{}", content);
             }
