@@ -1,0 +1,126 @@
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+// ── Chat message types ───────────────────────────────────────────────────────
+
+/// A single message in a chat conversation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessage {
+    /// `"system"`, `"user"`, `"assistant"`, or `"tool"`.
+    pub role: String,
+    /// The message text content.
+    pub content: String,
+    /// For `"tool"` role messages — the tool call ID this result belongs to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// Tool calls requested by the model (present on `"assistant"` messages).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+}
+
+impl ChatMessage {
+    pub fn system(content: impl Into<String>) -> Self {
+        Self {
+            role: "system".into(),
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: "user".into(),
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    pub fn assistant(content: impl Into<String>) -> Self {
+        Self {
+            role: "assistant".into(),
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: "tool".into(),
+            content: content.into(),
+            tool_call_id: Some(tool_call_id.into()),
+            tool_calls: None,
+        }
+    }
+}
+
+// ── Tool types ───────────────────────────────────────────────────────────────
+
+/// A tool call requested by the model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    /// Unique ID for correlating with the tool result.
+    pub id: String,
+    /// Name of the tool to call.
+    pub name: String,
+    /// JSON arguments for the tool.
+    pub arguments: Value,
+}
+
+/// A tool definition provided to the model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolDefinition {
+    /// Tool name (must be unique across all tools).
+    pub name: String,
+    /// Human-readable description of what the tool does.
+    pub description: String,
+    /// JSON Schema describing the tool's parameters.
+    pub parameters: Value,
+}
+
+// ── Model completion ─────────────────────────────────────────────────────────
+
+/// The result of a model completion request.
+#[derive(Debug, Clone)]
+pub struct ModelCompletion {
+    /// Text content (present when the model produced a direct response).
+    pub content: Option<String>,
+    /// Tool calls requested by the model (empty when the model responded
+    /// directly with text).
+    pub tool_calls: Vec<ToolCall>,
+}
+
+// ── Traits ───────────────────────────────────────────────────────────────────
+
+/// Abstraction over an OpenAI-compatible language model endpoint.
+///
+/// In production this will call the Docker Model Runner or a remote API.
+/// Tests use mock implementations.
+#[async_trait]
+pub trait ModelClient: Send + Sync {
+    /// Request a chat completion.
+    ///
+    /// Returns `None` content when the model makes tool calls instead of
+    /// producing a direct text response.
+    async fn complete(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolDefinition],
+    ) -> Result<ModelCompletion, String>;
+}
+
+/// Abstraction over the MCP tool dispatcher.
+///
+/// In production this will be backed by the MCP client crate.  Tests use mock
+/// implementations.
+#[async_trait]
+pub trait ToolDispatcher: Send + Sync {
+    /// List all available tool definitions.
+    async fn available_tools(&self) -> Vec<ToolDefinition>;
+
+    /// Invoke a tool by name and return its result as a string.
+    async fn call_tool(&self, name: &str, arguments: Value) -> String;
+}
