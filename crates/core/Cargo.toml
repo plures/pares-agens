@@ -1,0 +1,17 @@
+[package]
+name = "pares-agens-core"
+description = "Core event loop, PluresLM memory integration, and procedure executor for Pares Agens"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+chrono.workspace = true
