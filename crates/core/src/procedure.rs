@@ -17,8 +17,8 @@ pub trait Procedure: Send + Sync {
 
 /// Registry that maps event kinds to their registered procedures.
 ///
-/// Procedures are loaded at startup and stored here.  Multiple procedures may
-/// be registered for the same event kind.
+/// Procedures are loaded at startup from PluresDB state and stored here.
+/// Multiple procedures may be registered for the same event kind.
 #[derive(Default)]
 pub struct ProcedureRegistry {
     procedures: Vec<Box<dyn Procedure>>,
@@ -30,7 +30,7 @@ impl ProcedureRegistry {
         Self::default()
     }
 
-    /// Register a procedure.  Procedures are matched by [`Procedure::handles`].
+    /// Register a procedure. Procedures are matched by [`Procedure::handles`].
     pub fn register(&mut self, procedure: Box<dyn Procedure>) {
         self.procedures.push(procedure);
     }
