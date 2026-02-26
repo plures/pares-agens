@@ -19,7 +19,7 @@ use crate::protocol::Tool;
 /// Convert a single [`Tool`] into an OpenAI function-calling tool object.
 pub fn to_openai_function(tool: &Tool) -> Value {
     let mut parameters: Value = json!({
-        "type": tool.input_schema.schema_type,
+        "type": tool.input_schema.schema_type.as_str(),
     });
 
     if let Some(props) = &tool.input_schema.properties {
@@ -35,7 +35,7 @@ pub fn to_openai_function(tool: &Tool) -> Value {
     json!({
         "type": "function",
         "function": {
-            "name": tool.name,
+            "name": tool.name.as_str(),
             "description": tool.description.as_deref().unwrap_or(""),
             "parameters": parameters,
         }
