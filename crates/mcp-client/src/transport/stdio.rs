@@ -57,12 +57,7 @@ impl StdioTransport {
 
 #[async_trait]
 impl Transport for StdioTransport {
-    async fn send(&mut self, mut request: JsonRpcRequest) -> Result<JsonRpcResponse> {
-        // Assign a fresh numeric ID if the caller left it null.
-        if request.id.is_null() {
-            request.id = self.next_id();
-        }
-
+    async fn send(&mut self, request: JsonRpcRequest) -> Result<JsonRpcResponse> {
         let mut line = serde_json::to_string(&request)?;
         line.push('\n');
         self.stdin.write_all(line.as_bytes()).await?;
