@@ -1,5 +1,6 @@
 pub mod adapter;
 pub mod stdin;
+pub mod tauri_ipc;
 pub mod telegram;
 
 /// Validate that the license permits running the given number of channel adapters.
