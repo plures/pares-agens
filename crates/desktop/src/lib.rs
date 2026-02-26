@@ -12,8 +12,13 @@ pub fn run() {
             let show = MenuItem::with_id(app, "show", "Open Dashboard", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
 
+            let tray_icon = app
+                .default_window_icon()
+                .cloned()
+                .ok_or("default window icon is not configured")?;
+
             let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(tray_icon)
                 .tooltip("Pares Agens — AI Agent Framework")
                 .menu(&menu)
                 .menu_on_left_click(false)
