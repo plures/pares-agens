@@ -1,3 +1,8 @@
+## [0.3.0] — 2026-02-26
+
+- feat(core): reactive procedure executor with event loop, registry, and handler stubs (3a9324c)
+- Initial plan (def7503)
+
 ## [0.2.0] — 2026-02-26
 
 - feat: Telegram channel adapter (teloxide) (#23) (cb7b793)
