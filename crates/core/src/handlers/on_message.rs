@@ -98,49 +98,54 @@ impl Procedure for OnMessage {
         // ── Steps 3 & 4: Agentic loop (model → tools → model …) ──────────────
         let tool_defs = self.tools.available_tools().await;
 
-        let response_content = 'agent: {
-            for iteration in 0..MAX_TOOL_ITERATIONS {
-                let completion = match self.model.complete(&messages, &tool_defs).await {
-                    Ok(c) => c,
-                    Err(e) => {
-                        error!(error = %e, "model completion failed");
-                        break 'agent String::new();
-                    }
-                };
+        // Track whether the model produced a final text response.
+        let mut final_response: Option<String> = None;
 
-                // No tool calls — the model produced a final response.
-                if completion.tool_calls.is_empty() {
-                    break 'agent completion.content.unwrap_or_default();
+        for iteration in 0..MAX_TOOL_ITERATIONS {
+            let completion = match self.model.complete(&messages, &tool_defs).await {
+                Ok(c) => c,
+                Err(e) => {
+                    error!(error = %e, "model completion failed");
+                    break;
                 }
+            };
 
-                warn!(
-                    iteration,
-                    tool_calls = completion.tool_calls.len(),
-                    "model requested tool calls"
-                );
-
-                // Append the assistant turn with the tool call requests.
-                let mut assistant_msg = ChatMessage::assistant(
-                    completion.content.as_deref().unwrap_or(""),
-                );
-                assistant_msg.tool_calls = Some(completion.tool_calls.clone());
-                messages.push(assistant_msg);
-
-                // Execute each tool and append the results.
-                for tc in &completion.tool_calls {
-                    info!(tool = tc.name.as_str(), id = tc.id.as_str(), "calling tool");
-                    let result = self.tools.call_tool(&tc.name, tc.arguments.clone()).await;
-                    messages.push(ChatMessage::tool_result(&tc.id, result));
-                }
+            // No tool calls — the model produced a final response.
+            if completion.tool_calls.is_empty() {
+                final_response = Some(completion.content.unwrap_or_default());
+                break;
             }
 
-            // Exhausted iterations without a final text response.
+            warn!(
+                iteration,
+                tool_calls = completion.tool_calls.len(),
+                "model requested tool calls"
+            );
+
+            // Append the assistant turn with the tool call requests.
+            let mut assistant_msg = ChatMessage::assistant(
+                completion.content.as_deref().unwrap_or(""),
+            );
+            assistant_msg.tool_calls = Some(completion.tool_calls.clone());
+            messages.push(assistant_msg);
+
+            // Execute each tool and append the results.
+            for tc in &completion.tool_calls {
+                info!(tool = tc.name.as_str(), id = tc.id.as_str(), "calling tool");
+                let result = self.tools.call_tool(&tc.name, tc.arguments.clone()).await;
+                messages.push(ChatMessage::tool_result(&tc.id, result));
+            }
+        }
+
+        // Only warn when all iterations were exhausted without a final text response.
+        if final_response.is_none() {
             warn!(
                 MAX_TOOL_ITERATIONS,
                 "tool loop exhausted without final response"
             );
-            String::new()
-        };
+        }
+
+        let response_content = final_response.unwrap_or_default();
 
         // ── Step 5: Emit response ─────────────────────────────────────────────
         info!(
