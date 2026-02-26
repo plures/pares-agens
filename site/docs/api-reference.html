@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>API Reference — Pares Agens</title>
+  <meta name="description" content="MCP tool definitions, Event types, and handler traits for Pares Agens." />
+  <link rel="stylesheet" href="../style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <a href="../" class="nav-logo" style="text-decoration:none">
+      <span class="dot"></span>
+      pares&nbsp;agens
+    </a>
+    <ul class="nav-links">
+      <li><a href="../#features">Features</a></li>
+      <li><a href="../#pricing">Pricing</a></li>
+      <li><a href="../#downloads">Downloads</a></li>
+      <li><a href="./" style="color:var(--text)">Docs</a></li>
+      <li>
+        <a href="https://github.com/plures/pares-agens" class="btn btn-outline" style="padding:7px 14px">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          GitHub
+        </a>
+      </li>
+    </ul>
+  </div>
+</nav>
+
+<div class="docs-shell">
+  <aside class="docs-sidebar">
+    <div class="docs-sidebar-section">
+      <h4>Get started</h4>
+      <ul class="docs-nav">
+        <li><a href="getting-started.html">Installation &amp; first message</a></li>
+      </ul>
+    </div>
+    <div class="docs-sidebar-section">
+      <h4>Guides</h4>
+      <ul class="docs-nav">
+        <li><a href="procedure-authoring.html">Procedure authoring</a></li>
+        <li><a href="model-configuration.html">Model configuration</a></li>
+        <li><a href="channel-setup.html">Channel setup</a></li>
+      </ul>
+    </div>
+    <div class="docs-sidebar-section">
+      <h4>Reference</h4>
+      <ul class="docs-nav">
+        <li><a href="api-reference.html" class="active">API reference (MCP tools)</a></li>
+      </ul>
+    </div>
+  </aside>
+
+  <main class="docs-content">
+    <h1>API Reference</h1>
+    <p class="docs-lead">Complete reference for MCP tool definitions, Event variants, core traits, and CLI commands.</p>
+
+    <h2>MCP Tools</h2>
+    <p>Pares Agens exposes its capabilities to the model as <a href="https://modelcontextprotocol.io">MCP</a> (Model Context Protocol) tools. Tools are invoked by the model during a response and executed by the <code>ToolDispatcher</code>.</p>
+
+    <h3><code>memory_search</code></h3>
+    <table>
+      <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>Input: <code>query</code></td><td><code>string</code></td><td>Free-text search query</td></tr>
+        <tr><td>Input: <code>limit</code></td><td><code>integer</code> (optional, default 5)</td><td>Max results to return</td></tr>
+        <tr><td>Output</td><td><code>Array&lt;Memory&gt;</code></td><td>Ranked memory entries with score, text, and metadata</td></tr>
+      </tbody>
+    </table>
+    <pre><code>// Example model invocation
+{
+  "name": "memory_search",
+  "arguments": { "query": "last week's meeting notes", "limit": 3 }
+}
+
+// Response
+[
+  { "id": "mem_abc", "text": "Meeting on 2026-02-20...", "score": 0.94 },
+  ...
+]</code></pre>
+
+    <h3><code>memory_store</code></h3>
+    <table>
+      <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>Input: <code>text</code></td><td><code>string</code></td><td>Content to store</td></tr>
+        <tr><td>Input: <code>tags</code></td><td><code>Array&lt;string&gt;</code> (optional)</td><td>Labels for later filtering</td></tr>
+        <tr><td>Output</td><td><code>{ id: string }</code></td><td>ID of the created memory entry</td></tr>
+      </tbody>
+    </table>
+
+    <h3><code>shell_exec</code></h3>
+    <table>
+      <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>Input: <code>command</code></td><td><code>string</code></td><td>Shell command to run</td></tr>
+        <tr><td>Input: <code>cwd</code></td><td><code>string</code> (optional)</td><td>Working directory</td></tr>
+        <tr><td>Output</td><td><code>{ stdout, stderr, exit_code }</code></td><td>Combined output</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout warning">
+      <strong>⚠️ Capability node required</strong>
+      <code>shell_exec</code> requires a capability node running on the target machine. The agent core alone cannot execute shell commands.
+    </div>
+
+    <h3><code>http_get</code> / <code>http_post</code></h3>
+    <table>
+      <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>Input: <code>url</code></td><td><code>string</code></td><td>Request URL</td></tr>
+        <tr><td>Input: <code>headers</code></td><td><code>object</code> (optional)</td><td>HTTP headers map</td></tr>
+        <tr><td>Input: <code>body</code></td><td><code>string</code> (optional, POST only)</td><td>Request body</td></tr>
+        <tr><td>Output</td><td><code>{ status, body }</code></td><td>HTTP response</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Event variants</h2>
+    <table>
+      <thead>
+        <tr><th>Variant</th><th>Payload</th><th>Emitted by</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>Event::Message</code></td><td><code>MessagePayload { text, channel, user_id }</code></td><td>Channel adapters (local, Telegram)</td></tr>
+        <tr><td><code>Event::ModelResponse</code></td><td><code>ModelResponsePayload { text, tool_calls }</code></td><td><code>OnMessage</code> handler</td></tr>
+        <tr><td><code>Event::Reply</code></td><td><code>ReplyPayload { text, channel }</code></td><td>Any handler</td></tr>
+        <tr><td><code>Event::Timer</code></td><td><code>TimerPayload { id, elapsed }</code></td><td>Executor clock</td></tr>
+        <tr><td><code>Event::StateChange</code></td><td><code>StateChangePayload { key, value }</code></td><td>Any handler</td></tr>
+        <tr><td><code>Event::ToolCall</code></td><td><code>ToolCallPayload { name, arguments }</code></td><td><code>OnMessage</code> on model tool call</td></tr>
+        <tr><td><code>Event::ToolResult</code></td><td><code>ToolResultPayload { call_id, result }</code></td><td><code>ToolDispatcher</code></td></tr>
+      </tbody>
+    </table>
+
+    <h2>Core traits</h2>
+
+    <h3><code>EventHandler</code></h3>
+    <pre><code>#[async_trait]
+pub trait EventHandler: Send + Sync {
+    fn name(&amp;self) -&gt; &amp;str;
+    async fn execute(&amp;self, ctx: &amp;EventContext) -&gt; Vec&lt;Event&gt;;
+}</code></pre>
+
+    <h3><code>ModelClient</code></h3>
+    <pre><code>#[async_trait]
+pub trait ModelClient: Send + Sync {
+    async fn complete(
+        &amp;self,
+        messages: Vec&lt;ChatMessage&gt;,
+        tools:    Vec&lt;ToolDef&gt;,
+    ) -&gt; Result&lt;ModelResponse, ModelError&gt;;
+}</code></pre>
+
+    <h3><code>MemoryClient</code></h3>
+    <pre><code>#[async_trait]
+pub trait MemoryClient: Send + Sync {
+    async fn search(&amp;self, query: &amp;str, limit: usize)
+        -&gt; Result&lt;Vec&lt;MemoryEntry&gt;, MemoryError&gt;;
+
+    async fn store(&amp;self, text: &amp;str, tags: Vec&lt;String&gt;)
+        -&gt; Result&lt;String, MemoryError&gt;;  // returns memory id
+}</code></pre>
+
+    <h3><code>ToolDispatcher</code></h3>
+    <pre><code>#[async_trait]
+pub trait ToolDispatcher: Send + Sync {
+    fn list_tools(&amp;self) -&gt; Vec&lt;ToolDef&gt;;
+
+    async fn dispatch(
+        &amp;self,
+        call: &amp;ToolCall,
+    ) -&gt; Result&lt;serde_json::Value, ToolError&gt;;
+}</code></pre>
+
+    <h2>CLI reference</h2>
+    <table>
+      <thead>
+        <tr><th>Command</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>pares agens init</code></td><td>Initialise agent configuration and local database</td></tr>
+        <tr><td><code>pares agens chat</code></td><td>Start an interactive local chat session</td></tr>
+        <tr><td><code>pares agens start</code></td><td>Start agent with all configured channels (daemon mode)</td></tr>
+        <tr><td><code>pares agens status</code></td><td>Show model, memory, and channel status</td></tr>
+        <tr><td><code>pares agens model-test &lt;prompt&gt;</code></td><td>Send a test prompt to the configured model</td></tr>
+        <tr><td><code>pares agens discover-nodes</code></td><td>Scan local network and Hyperswarm for capability nodes</td></tr>
+        <tr><td><code>pares agens setup-local-inference</code></td><td>Provision a distributed local inference cluster</td></tr>
+        <tr><td><code>pares agens run &lt;task&gt;</code></td><td>Execute a one-shot task and exit</td></tr>
+      </tbody>
+    </table>
+  </main>
+</div>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-logo">
+      <span style="width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block"></span>
+      pares agens
+    </div>
+    <ul class="footer-links">
+      <li><a href="./">Docs</a></li>
+      <li><a href="https://github.com/plures/pares-agens">GitHub</a></li>
+      <li><a href="https://github.com/plures/pares-agens/blob/main/LICENSE">License (AGPL-3.0)</a></li>
+    </ul>
+    <span class="footer-copy">© 2026 Plures. AGPL-3.0.</span>
+  </div>
+</footer>
+
+</body>
+</html>
