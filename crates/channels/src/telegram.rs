@@ -82,9 +82,9 @@ impl TelegramAdapter {
                 use teloxide::types::MediaKind;
                 match &common.media_kind {
                     MediaKind::Text(t) => Some(Event::Message {
-                        id: Uuid::new_v4(),
+                        id: Uuid::new_v4().to_string().to_string(),
                         content: t.text.clone(),
-                        from,
+                        channel: "telegram".to_string(), sender: from,
                     }),
                     MediaKind::Photo(p) => {
                         // Use the highest-resolution photo
@@ -100,13 +100,13 @@ impl TelegramAdapter {
                             .trim()
                             .to_string();
                         Some(Event::Message {
-                            id: Uuid::new_v4(),
+                            id: Uuid::new_v4().to_string().to_string(),
                             content: if caption.is_empty() {
                                 format!("[photo file_id={file_id}]")
                             } else {
                                 format!("[photo file_id={file_id}] {caption}")
                             },
-                            from,
+                            channel: "telegram".to_string(), sender: from,
                         })
                     }
                     MediaKind::Document(d) => {
@@ -124,13 +124,13 @@ impl TelegramAdapter {
                             .trim()
                             .to_string();
                         Some(Event::Message {
-                            id: Uuid::new_v4(),
+                            id: Uuid::new_v4().to_string().to_string(),
                             content: if caption.is_empty() {
                                 format!("[document file_id={file_id} name={file_name}]")
                             } else {
                                 format!("[document file_id={file_id} name={file_name}] {caption}")
                             },
-                            from,
+                            channel: "telegram".to_string(), sender: from,
                         })
                     }
                     _ => {
