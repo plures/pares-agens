@@ -17,5 +17,4 @@ tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 thiserror = "2"
 reqwest = { version = "0.12", features = ["json", "stream"] }
-uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"

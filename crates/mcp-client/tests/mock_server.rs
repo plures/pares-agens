@@ -19,30 +19,29 @@ use serde_json::{json, Value};
 // ── Mock transport ────────────────────────────────────────────────────────────
 
 /// A [`Transport`] that answers requests from a fixed handler function.
-struct MockTransport<F> {
+struct MockTransport<F: Fn(&JsonRpcRequest) -> JsonRpcResponse + Send + Sync> {
     handler: F,
 }
 
-impl<F> MockTransport<F>
-where
-    F: Fn(&str, Option<&Value>) -> JsonRpcResponse + Send + Sync,
-{
+impl<F: Fn(&JsonRpcRequest) -> JsonRpcResponse + Send + Sync> MockTransport<F> {
     fn new(handler: F) -> Self {
         Self { handler }
     }
 }
 
 #[async_trait]
-impl<F> Transport for MockTransport<F>
-where
-    F: Fn(&str, Option<&Value>) -> JsonRpcResponse + Send + Sync,
-{
+impl<F: Fn(&JsonRpcRequest) -> JsonRpcResponse + Send + Sync> Transport for MockTransport<F> {
     async fn send(&mut self, request: JsonRpcRequest) -> Result<JsonRpcResponse> {
-        Ok((self.handler)(&request.method, request.params.as_ref()))
+        Ok((self.handler)(&request))
     }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Echo the request id back; notifications get Value::Null.
+fn req_id(req: &JsonRpcRequest) -> Value {
+    req.id.clone().unwrap_or(Value::Null)
+}
 
 fn ok_response(id: Value, result: Value) -> JsonRpcResponse {
     JsonRpcResponse {
@@ -81,9 +80,9 @@ fn sample_tool() -> Tool {
 }
 
 fn make_mock_client() -> McpClient {
-    McpClient::new(MockTransport::new(|method, _params| {
-        let id = json!(1);
-        match method {
+    McpClient::new(MockTransport::new(|req| {
+        let id = req_id(req);
+        match req.method.as_str() {
             "initialize" => ok_response(
                 id,
                 serde_json::to_value(InitializeResult {
@@ -154,9 +153,9 @@ async fn list_tools_uses_cache_on_second_call() {
     let call_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counter = call_count.clone();
 
-    let mut client = McpClient::new(MockTransport::new(move |method, _| {
-        let id = json!(1);
-        match method {
+    let mut client = McpClient::new(MockTransport::new(move |req| {
+        let id = req_id(req);
+        match req.method.as_str() {
             "initialize" | "notifications/initialized" => ok_response(id, json!({})),
             "tools/list" => {
                 counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -186,9 +185,9 @@ async fn refresh_tools_bypasses_cache() {
     let call_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counter = call_count.clone();
 
-    let mut client = McpClient::new(MockTransport::new(move |method, _| {
-        let id = json!(1);
-        match method {
+    let mut client = McpClient::new(MockTransport::new(move |req| {
+        let id = req_id(req);
+        match req.method.as_str() {
             "initialize" | "notifications/initialized" => ok_response(id, json!({})),
             "tools/list" => {
                 counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -208,6 +207,64 @@ async fn refresh_tools_bypasses_cache() {
     let _ = client.initialize().await;
     client.list_tools().await.unwrap();
     client.refresh_tools().await.unwrap(); // bypasses cache
+    assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn refresh_tools_paginates_all_pages() {
+    // First call returns page 1 with a cursor; second call returns page 2 with no cursor.
+    let call_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = call_count.clone();
+
+    let tool_b = Tool {
+        name: "tool_b".into(),
+        description: Some("Tool B".into()),
+        input_schema: ToolInputSchema {
+            schema_type: "object".into(),
+            properties: None,
+            required: None,
+        },
+    };
+    let tool_b = std::sync::Arc::new(tool_b);
+
+    let mut client = McpClient::new(MockTransport::new(move |req| {
+        let id = req_id(req);
+        match req.method.as_str() {
+            "initialize" | "notifications/initialized" => ok_response(id, json!({})),
+            "tools/list" => {
+                let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n == 0 {
+                    // First page: one tool + cursor
+                    ok_response(
+                        id,
+                        serde_json::to_value(ListToolsResult {
+                            tools: vec![sample_tool()],
+                            next_cursor: Some("page2".into()),
+                        })
+                        .unwrap(),
+                    )
+                } else {
+                    // Second page: another tool, no cursor
+                    ok_response(
+                        id,
+                        serde_json::to_value(ListToolsResult {
+                            tools: vec![(*tool_b).clone()],
+                            next_cursor: None,
+                        })
+                        .unwrap(),
+                    )
+                }
+            }
+            _ => err_response(id, -32601, "not found"),
+        }
+    }));
+
+    let _ = client.initialize().await;
+    let tools = client.refresh_tools().await.unwrap();
+
+    assert_eq!(tools.len(), 2, "should collect tools from both pages");
+    assert_eq!(tools[0].name, "web_search");
+    assert_eq!(tools[1].name, "tool_b");
     assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 2);
 }
 
@@ -299,8 +356,8 @@ async fn invalidate_cache_clears_tools() {
 
 #[tokio::test]
 async fn jsonrpc_error_propagated_correctly() {
-    let mut client = McpClient::new(MockTransport::new(|_method, _| {
-        err_response(json!(1), -32602, "invalid params")
+    let mut client = McpClient::new(MockTransport::new(|req| {
+        err_response(req_id(req), -32602, "invalid params")
     }));
 
     let err = client.initialize().await.unwrap_err();
@@ -308,6 +365,17 @@ async fn jsonrpc_error_propagated_correctly() {
         err,
         mcp_client::McpError::JsonRpc { code: -32602, .. }
     ));
+}
+
+#[tokio::test]
+async fn response_id_mismatch_returns_error() {
+    // Mock that always returns id=999 regardless of request id.
+    let mut client = McpClient::new(MockTransport::new(|_req| {
+        ok_response(json!(999), json!({"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"x","version":"0"}}))
+    }));
+
+    let err = client.initialize().await.unwrap_err();
+    assert!(matches!(err, mcp_client::McpError::UnexpectedResponse(_)));
 }
 
 #[tokio::test]

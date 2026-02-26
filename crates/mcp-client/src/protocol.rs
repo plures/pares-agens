@@ -8,9 +8,12 @@ use serde_json::Value;
 // ── JSON-RPC 2.0 ────────────────────────────────────────────────────────────
 
 /// A JSON-RPC 2.0 request.
+///
+/// Requests carry an `id`; notifications omit it (use [`JsonRpcRequest::notification`]).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
+    /// Present for requests; omitted for notifications.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<Value>,
     pub method: String,
@@ -19,7 +22,7 @@ pub struct JsonRpcRequest {
 }
 
 impl JsonRpcRequest {
-    /// Create a standard JSON-RPC request with an `id`.
+    /// Create a JSON-RPC 2.0 request (with an `id`).
     pub fn new(id: impl Into<Value>, method: impl Into<String>, params: Option<Value>) -> Self {
         Self {
             jsonrpc: "2.0".into(),
@@ -29,7 +32,7 @@ impl JsonRpcRequest {
         }
     }
 
-    /// Create a JSON-RPC notification (no `id` field).
+    /// Create a JSON-RPC 2.0 notification (no `id`; no response expected).
     pub fn notification(method: impl Into<String>, params: Option<Value>) -> Self {
         Self {
             jsonrpc: "2.0".into(),
@@ -143,6 +146,13 @@ pub struct ServerInfo {
 }
 
 // ── MCP tools/list ───────────────────────────────────────────────────────────
+
+/// Optional parameters for a `tools/list` request.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ListToolsParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
 
 /// Result of a `tools/list` request.
 #[derive(Debug, Clone, Serialize, Deserialize)]

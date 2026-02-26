@@ -6,7 +6,7 @@
 
 use async_trait::async_trait;
 use reqwest::Client;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::{
     error::Result,
@@ -20,7 +20,6 @@ use super::Transport;
 pub struct HttpTransport {
     client: Client,
     url: String,
-    next_id: u64,
 }
 
 impl HttpTransport {
@@ -29,7 +28,6 @@ impl HttpTransport {
         Self {
             client: Client::new(),
             url: url.into(),
-            next_id: 1,
         }
     }
 
@@ -38,23 +36,14 @@ impl HttpTransport {
         Self {
             client,
             url: url.into(),
-            next_id: 1,
         }
-    }
-
-    fn next_id(&mut self) -> Value {
-        let id = self.next_id;
-        self.next_id += 1;
-        Value::Number(id.into())
     }
 }
 
 #[async_trait]
 impl Transport for HttpTransport {
-    async fn send(&mut self, mut request: JsonRpcRequest) -> Result<JsonRpcResponse> {
-        if request.id.is_null() {
-            request.id = self.next_id();
-        }
+    async fn send(&mut self, request: JsonRpcRequest) -> Result<JsonRpcResponse> {
+        let is_notification = request.id.is_none();
 
         let response = self
             .client
@@ -63,10 +52,18 @@ impl Transport for HttpTransport {
             .json(&request)
             .send()
             .await?
-            .error_for_status()?
-            .json::<JsonRpcResponse>()
-            .await?;
+            .error_for_status()?;
 
-        Ok(response)
+        // Notifications don't require a response body.
+        if is_notification {
+            return Ok(JsonRpcResponse {
+                jsonrpc: "2.0".into(),
+                id: Value::Null,
+                result: Some(json!({})),
+                error: None,
+            });
+        }
+
+        Ok(response.json::<JsonRpcResponse>().await?)
     }
 }

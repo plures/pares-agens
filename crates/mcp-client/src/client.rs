@@ -7,7 +7,7 @@ use crate::{
     error::{McpError, Result},
     protocol::{
         CallToolParams, CallToolResult, InitializeParams, InitializeResult, JsonRpcRequest,
-        ListToolsResult, Tool,
+        ListToolsParams, ListToolsResult, Tool,
     },
     transport::Transport,
 };
@@ -46,8 +46,19 @@ impl McpClient {
 
     async fn call(&mut self, method: &str, params: Option<Value>) -> Result<Value> {
         let request = self.make_request(method, params);
+        let expected_id = request.id.clone();
         debug!(method, "sending MCP request");
         let response = self.transport.send(request).await?;
+
+        // Validate that the server echoed back the same request id.
+        if let Some(ref eid) = expected_id {
+            if &response.id != eid {
+                return Err(McpError::UnexpectedResponse(format!(
+                    "response id {:?} does not match request id {:?}",
+                    response.id, eid
+                )));
+            }
+        }
 
         if let Some(err) = response.error {
             return Err(McpError::JsonRpc {
@@ -71,8 +82,8 @@ impl McpClient {
         let init: InitializeResult = serde_json::from_value(result)?;
 
         // Send the required `notifications/initialized` notification.
-        let notification = JsonRpcRequest::new(Value::Null, "notifications/initialized", None);
-        // Ignore any response to a notification.
+        // Notifications have no id and require no response.
+        let notification = JsonRpcRequest::notification("notifications/initialized", None);
         let _ = self.transport.send(notification).await;
 
         Ok(init)
@@ -88,12 +99,29 @@ impl McpClient {
         self.refresh_tools().await
     }
 
-    /// Bypass the cache and fetch tools directly from the server.
+    /// Bypass the cache and fetch tools directly from the server, following
+    /// cursor-based pagination until all pages are consumed.
     pub async fn refresh_tools(&mut self) -> Result<Vec<Tool>> {
-        let result = self.call("tools/list", None).await?;
-        let list: ListToolsResult = serde_json::from_value(result)?;
-        self.tools_cache = Some(list.tools.clone());
-        Ok(list.tools)
+        let mut all_tools: Vec<Tool> = Vec::new();
+        let mut cursor: Option<String> = None;
+
+        loop {
+            // Only include the cursor param when paginating; first call uses no params.
+            let params = cursor
+                .take()
+                .map(|c| serde_json::to_value(ListToolsParams { cursor: Some(c) }))
+                .transpose()?;
+            let result = self.call("tools/list", params).await?;
+            let page: ListToolsResult = serde_json::from_value(result)?;
+            all_tools.extend(page.tools);
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+
+        self.tools_cache = Some(all_tools.clone());
+        Ok(all_tools)
     }
 
     /// Invalidate the tools cache so the next [`list_tools`] call fetches

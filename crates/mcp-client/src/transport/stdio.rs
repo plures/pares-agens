@@ -1,7 +1,6 @@
 //! Stdio transport: communicates with an MCP server process via stdin/stdout.
 
 use async_trait::async_trait;
-use serde_json::Value;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
@@ -16,11 +15,16 @@ use super::Transport;
 
 /// Spawns a process and communicates with it over stdin/stdout using
 /// newline-delimited JSON-RPC 2.0.
+///
+/// Notifications (requests without an `id`) are sent without waiting for a
+/// response; requests with an `id` block until the matching response line
+/// arrives.
+///
+/// The child process is killed (best-effort) when this struct is dropped.
 pub struct StdioTransport {
-    _child: Child,
+    child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
-    next_id: u64,
 }
 
 impl StdioTransport {
@@ -41,17 +45,17 @@ impl StdioTransport {
         })?;
 
         Ok(Self {
-            _child: child,
+            child,
             stdin,
             stdout: BufReader::new(stdout),
-            next_id: 1,
         })
     }
+}
 
-    fn next_id(&mut self) -> Value {
-        let id = self.next_id;
-        self.next_id += 1;
-        Value::Number(id.into())
+impl Drop for StdioTransport {
+    fn drop(&mut self) {
+        // Best-effort: send SIGKILL so the server process doesn't linger.
+        let _ = self.child.start_kill();
     }
 }
 
@@ -63,8 +67,23 @@ impl Transport for StdioTransport {
         self.stdin.write_all(line.as_bytes()).await?;
         self.stdin.flush().await?;
 
+        // Notifications have no id and expect no response from the server.
+        if request.id.is_none() {
+            return Ok(JsonRpcResponse {
+                jsonrpc: "2.0".into(),
+                id: serde_json::Value::Null,
+                result: Some(serde_json::json!({})),
+                error: None,
+            });
+        }
+
         let mut response_line = String::new();
-        self.stdout.read_line(&mut response_line).await?;
+        let n = self.stdout.read_line(&mut response_line).await?;
+        if n == 0 {
+            return Err(McpError::Transport(
+                "child process closed stdout (EOF) while waiting for response".into(),
+            ));
+        }
 
         let response: JsonRpcResponse = serde_json::from_str(response_line.trim())?;
         Ok(response)
