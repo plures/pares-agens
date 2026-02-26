@@ -417,3 +417,26 @@ mod tests {
         );
     }
 }
+
+// Compatibility re-exports (from original memory.rs)
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Memory {
+    pub id: String,
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryCapture {
+    pub role: String,
+    pub content: String,
+}
+
+#[async_trait]
+pub trait MemoryClient: Send + Sync {
+    async fn recall(&self, query: &str, limit: usize) -> Vec<Memory>;
+    async fn capture(&self, entry: MemoryCapture) -> Result<(), String>;
+}
