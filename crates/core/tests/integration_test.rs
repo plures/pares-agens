@@ -25,13 +25,18 @@ impl Procedure for EchoMessage {
         "message"
     }
     async fn execute(&self, event: &Event) -> Vec<Event> {
-        if let Event::Message { id, channel, content, .. } = event {
-            vec![Event::Message {
-                id: format!("{id}-response"),
-                channel: channel.clone(),
-                sender: "agent".into(),
-                content: content.clone(),
-            }]
+        if let Event::Message { id, channel, content, sender, .. } = event {
+            // Only echo user-originated messages to avoid an infinite loop
+            if sender == "user" {
+                vec![Event::Message {
+                    id: format!("{id}-response"),
+                    channel: channel.clone(),
+                    sender: "agent".into(),
+                    content: content.clone(),
+                }]
+            } else {
+                vec![]
+            }
         } else {
             vec![]
         }
