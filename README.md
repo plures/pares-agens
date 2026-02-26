@@ -19,7 +19,7 @@ Pares Agens: message → PluresDB procedure fires → model call → response
 - **Persistent memory** — PluresLM auto-captures conversations, decisions, preferences. Recalls relevant context before every response.
 - **Reactive procedures** — Agent behavior defined as database procedures that fire on events (messages, timers, state changes). Not code.
 - **Decision ledger** — Praxis logs every interaction. High-stakes actions require approval gates before executing.
-- **Multi-channel** — Telegram, Signal, Discord, or the native desktop UI. Talk to your agent from anywhere.
+- **Native on every device** — Desktop app (Windows/macOS/Linux), mobile (iOS/Android), all synced via PluresDB + Hyperswarm. No messages lost, no server required.
 - **Offline-capable** — With a local model, everything works without internet.
 - **P2P sync** — Hyperswarm connects your devices. Memories sync without a server.
 - **Cross-platform nodes** — One agent brain, many hands. Windows, macOS, mobile nodes provide platform capabilities.
@@ -62,7 +62,7 @@ model = "gpt-5"
 # First run opens a setup wizard:
 # 1. Name your agent
 # 2. Pick a model (local or enter API key)
-# 3. Connect a channel (Telegram, or just use the desktop UI)
+# 3. Optionally connect devices (mobile, other desktops — syncs via Hyperswarm)
 # 4. Start chatting
 ```
 
@@ -73,8 +73,8 @@ model = "gpt-5"
 │              Tauri Desktop App                │
 │           (design-dojo UI / tray)             │
 ├──────────────────────────────────────────────┤
-│              Channel Adapters                 │
-│   Telegram │ Signal │ Discord │ Desktop UI    │
+│              Client Adapters                  │
+│    Desktop │ Mobile │ Web │ (Telegram bridge) │
 ├───────────────────┬──────────────────────────┤
 │     PluresDB Core │                           │
 │  ┌───────────────┐│  ┌─────────────────────┐ │
@@ -104,7 +104,7 @@ model = "gpt-5"
 | Local models | ✅ | ✅ |
 | Cloud models | ✅ (bring your key) | ✅ |
 | PluresLM memory | ✅ Unlimited | ✅ |
-| Channels | 1 | Unlimited |
+| Devices | 1 | Unlimited |
 | Model routing | — | ✅ |
 | P2P sync | — | ✅ |
 | MCP tools | — | ✅ |
