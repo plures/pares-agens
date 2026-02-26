@@ -11,9 +11,10 @@ async fn e2e_message_echo_and_memory_capture() {
     let agent = Agent::new(Arc::clone(&memory) as Arc<dyn Memory + Send + Sync>);
 
     let msg = Event::Message {
-        id: Uuid::new_v4(),
+        id: Uuid::new_v4().to_string(),
+        channel: "direct".to_string(),
+        sender: "tester".to_string(),
         content: "hello world".to_string(),
-        from: "tester".to_string(),
     };
     let response = agent.handle_event(msg).await;
 
