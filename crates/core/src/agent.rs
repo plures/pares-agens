@@ -62,10 +62,14 @@ impl Default for InMemory {
 #[async_trait]
 impl Memory for InMemory {
     async fn capture(&self, content: &str) {
-        self.entries
-            .lock()
-            .expect("lock poisoned")
-            .push(content.to_string());
+        match self.entries.lock() {
+            Ok(mut entries) => entries.push(content.to_string()),
+            Err(poisoned) => {
+                // Recover the inner value from a poisoned lock instead of panicking
+                let mut entries = poisoned.into_inner();
+                entries.push(content.to_string());
+            }
+        }
     }
 
     async fn recall(&self, query: &str) -> Result<Vec<String>, String> {
