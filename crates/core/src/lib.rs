@@ -29,12 +29,18 @@
 //! # }
 //! ```
 
+pub mod agent;
 pub mod event;
 pub mod executor;
 pub mod handlers;
 pub mod memory;
 pub mod model;
 pub mod procedure;
+pub mod setup;
 pub mod source;
-pub use event::Event;
+pub mod state;
 pub mod praxis;
+
+pub use agent::{Agent, InMemory};
+pub use agent::Memory as AgentMemory;
+pub use event::Event;
