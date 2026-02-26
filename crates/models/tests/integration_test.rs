@@ -69,8 +69,6 @@ fn tool_call_response() -> serde_json::Value {
 fn streaming_body(chunks: &[&str]) -> String {
     let mut body = String::new();
     for (i, text) in chunks.iter().enumerate() {
-        let finish = if i == chunks.len() - 1 { "stop" } else { "null" };
-        let _ = finish; // used in finish_reason override below
         let chunk = json!({
             "id": "chatcmpl-stream",
             "object": "chat.completion.chunk",
