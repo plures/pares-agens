@@ -41,5 +41,6 @@ pub mod source;
 pub mod state;
 pub mod praxis;
 
-pub use agent::{Agent, InMemory, Memory};
+pub use agent::{Agent, InMemory};
+pub use agent::Memory as AgentMemory;
 pub use event::Event;
