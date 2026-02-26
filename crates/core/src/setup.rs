@@ -145,21 +145,54 @@ impl SetupWizard {
     }
 
     /// Set the agent name and advance to the next step.
-    pub fn set_agent_name(&mut self, name: impl Into<String>) {
-        self.agent_name = Some(name.into());
-        self.step = self.step.next();
+    ///
+    /// Returns an error if called when the wizard is not in the `AgentName` step.
+    pub fn set_agent_name(&mut self, name: impl Into<String>) -> Result<(), String> {
+        match self.step {
+            WizardStep::AgentName => {
+                self.agent_name = Some(name.into());
+                self.step = self.step.next();
+                Ok(())
+            }
+            _ => Err(format!(
+                "cannot set agent name while in {:?} step",
+                self.step
+            )),
+        }
     }
 
     /// Set the model choice and advance to the next step.
-    pub fn set_model(&mut self, model: ModelChoice) {
-        self.model = Some(model);
-        self.step = self.step.next();
+    ///
+    /// Returns an error if called when the wizard is not in the `ModelPicker` step.
+    pub fn set_model(&mut self, model: ModelChoice) -> Result<(), String> {
+        match self.step {
+            WizardStep::ModelPicker => {
+                self.model = Some(model);
+                self.step = self.step.next();
+                Ok(())
+            }
+            _ => Err(format!(
+                "cannot set model while in {:?} step",
+                self.step
+            )),
+        }
     }
 
     /// Set optional Telegram credentials and advance to the next step.
-    pub fn set_telegram(&mut self, setup: Option<TelegramSetup>) {
-        self.telegram = setup;
-        self.step = self.step.next();
+    ///
+    /// Returns an error if called when the wizard is not in the `TelegramConnect` step.
+    pub fn set_telegram(&mut self, setup: Option<TelegramSetup>) -> Result<(), String> {
+        match self.step {
+            WizardStep::TelegramConnect => {
+                self.telegram = setup;
+                self.step = self.step.next();
+                Ok(())
+            }
+            _ => Err(format!(
+                "cannot set Telegram setup while in {:?} step",
+                self.step
+            )),
+        }
     }
 
     /// Whether the wizard has collected all required fields.
