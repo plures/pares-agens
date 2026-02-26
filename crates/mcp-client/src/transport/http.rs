@@ -1,7 +1,8 @@
-//! HTTP transport: sends JSON-RPC 2.0 requests as HTTP POST and reads
-//! the response body as JSON.  Also supports the MCP HTTP+SSE variant
-//! where each request is POSTed to the server's `/message` endpoint and
-//! the response is returned inline as JSON.
+//! HTTP transport: sends JSON-RPC 2.0 requests as HTTP POST to a configured
+//! URL and reads the response body as JSON.
+//!
+//! The caller is responsible for providing the appropriate endpoint (for
+//! example, an MCP `/message` URL) when constructing the transport.
 
 use async_trait::async_trait;
 use reqwest::Client;
