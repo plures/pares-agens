@@ -1,3 +1,7 @@
+## [0.2.0] — 2026-02-26
+
+- feat: Telegram channel adapter (teloxide) (#23) (cb7b793)
+
 # Changelog
 
 ## [0.1.0] — 2026-02-23
