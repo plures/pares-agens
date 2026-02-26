@@ -63,6 +63,7 @@ impl Transport for HttpTransport {
             .json(&request)
             .send()
             .await?
+            .error_for_status()?
             .json::<JsonRpcResponse>()
             .await?;
 
