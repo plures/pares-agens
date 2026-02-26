@@ -161,6 +161,13 @@ impl License {
 
     /// Serialisable status snapshot for UI display.
     ///
+    /// Note: The `valid` field in [`LicenseStatus`] reflects validity at the time
+    /// the `License` was constructed and is not recomputed on each call to
+    /// this method. It may become stale if a Pro license subsequently expires.
+    ///
+    /// For up-to-date checks, use [`License::is_pro`] or [`License::check_feature`],
+    /// which always compare `expires_at` against the current time.
+    ///
     /// The `valid` field is recomputed against the current wall-clock time on
     /// every call, so the snapshot is always fresh and never stale.
     pub fn status(&self) -> LicenseStatus {
