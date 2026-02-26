@@ -1,0 +1,9 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for Pares Agens",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default"
+  ]
+}
