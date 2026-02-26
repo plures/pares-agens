@@ -28,10 +28,10 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: cargo check
-        run: cargo check --workspace
+        run: cargo check --workspace --locked
 
       - name: cargo clippy
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --locked -- -D warnings
 
       - name: cargo test
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
