@@ -1,0 +1,19 @@
+[package]
+name = "pares-agens-desktop"
+description = "Pares Agens desktop application — system tray agent node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "pares_agens_desktop"
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-ico", "image-png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

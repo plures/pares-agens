@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pares Agens</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #0f0f13;
+        color: #e2e8f0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        gap: 16px;
+      }
+      h1 { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; }
+      p  { font-size: 0.9rem; color: #94a3b8; }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 14px;
+        border-radius: 9999px;
+        background: rgba(99,57,196,0.15);
+        border: 1px solid rgba(99,57,196,0.4);
+        font-size: 0.8rem;
+        color: #a78bfa;
+      }
+      .dot {
+        width: 8px; height: 8px;
+        border-radius: 50%;
+        background: #22c55e;
+        animation: pulse 2s infinite;
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50%       { opacity: 0.4; }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Pares Agens</h1>
+    <div class="badge"><span class="dot"></span> Agent node running</div>
+    <p>This window can be closed — the agent continues in the system tray.</p>
+  </body>
+</html>
