@@ -47,6 +47,15 @@ impl Executor {
 
     /// Run the event loop until the source returns no events for one poll or
     /// `max_iterations` ticks have been processed (0 = unlimited).
+    ///
+    /// **Follow-up events**: the `Vec<Event>` returned by each [`Procedure`]
+    /// represents outbound/derived events (e.g. a response message, a timer
+    /// reschedule).  The current implementation does **not** re-feed these
+    /// events into the loop; handlers that need their follow-ups processed
+    /// (e.g. a timer reschedule) should write them back to PluresDB so they
+    /// are picked up by the next [`EventSource::poll_events`] call.
+    ///
+    /// [`Procedure`]: crate::procedure::Procedure
     pub async fn run(&self, source: &dyn EventSource, max_iterations: usize) {
         let mut iterations = 0usize;
         loop {
