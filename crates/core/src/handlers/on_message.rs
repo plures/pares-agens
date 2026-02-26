@@ -162,20 +162,26 @@ impl Procedure for OnMessage {
         };
 
         // ── Step 6: Capture memory ────────────────────────────────────────────
-        let _ = self
+        if let Err(e) = self
             .memory
             .capture(MemoryCapture {
                 role: "user".into(),
                 content: content.clone(),
             })
-            .await;
-        let _ = self
+            .await
+        {
+            error!(error = %e, "on_message: failed to capture user turn in memory");
+        }
+        if let Err(e) = self
             .memory
             .capture(MemoryCapture {
                 role: "assistant".into(),
                 content: response_content,
             })
-            .await;
+            .await
+        {
+            error!(error = %e, "on_message: failed to capture assistant turn in memory");
+        }
 
         vec![response]
     }

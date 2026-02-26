@@ -7,9 +7,11 @@
 //! provides a simple in-process implementation suitable for tests and the
 //! first-run experience before a persistent store is configured.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use async_trait::async_trait;
+use tokio::sync::Mutex;
+use tracing::error;
 
 use crate::event::Event;
 
@@ -23,7 +25,9 @@ use crate::event::Event;
 #[async_trait]
 pub trait Memory: Send + Sync {
     /// Persist `content` to memory.
-    async fn capture(&self, content: &str);
+    ///
+    /// Returns `Err` if the backend is unavailable or the write fails.
+    async fn capture(&self, content: &str) -> Result<(), String>;
 
     /// Retrieve entries that match `query`.
     ///
@@ -38,7 +42,8 @@ pub trait Memory: Send + Sync {
 
 /// In-memory [`Memory`] implementation for testing and development.
 ///
-/// All entries are stored in a `Vec<String>` guarded by a `Mutex`.
+/// All entries are stored in a `Vec<String>` guarded by a `tokio::sync::Mutex`
+/// so the lock is held only briefly and never blocks the async executor.
 /// Recall performs a simple case-insensitive substring match.
 pub struct InMemory {
     entries: Arc<Mutex<Vec<String>>>,
@@ -61,20 +66,14 @@ impl Default for InMemory {
 
 #[async_trait]
 impl Memory for InMemory {
-    async fn capture(&self, content: &str) {
-        match self.entries.lock() {
-            Ok(mut entries) => entries.push(content.to_string()),
-            Err(poisoned) => {
-                // Recover the inner value from a poisoned lock instead of panicking
-                let mut entries = poisoned.into_inner();
-                entries.push(content.to_string());
-            }
-        }
+    async fn capture(&self, content: &str) -> Result<(), String> {
+        self.entries.lock().await.push(content.to_string());
+        Ok(())
     }
 
     async fn recall(&self, query: &str) -> Result<Vec<String>, String> {
         let q = query.to_lowercase();
-        let entries = self.entries.lock().map_err(|e| e.to_string())?;
+        let entries = self.entries.lock().await;
         Ok(entries
             .iter()
             .filter(|e| e.to_lowercase().contains(&q))
@@ -113,7 +112,9 @@ impl Agent {
     pub async fn handle_event(&self, event: Event) -> Option<Event> {
         match event {
             Event::Message { ref id, ref content, .. } => {
-                self.memory.capture(content).await;
+                if let Err(e) = self.memory.capture(content).await {
+                    error!(error = %e, "agent: failed to capture message in memory");
+                }
                 Some(Event::ModelResponse {
                     request_id: id.clone(),
                     model: "echo".into(),
@@ -175,9 +176,9 @@ mod tests {
     #[tokio::test]
     async fn in_memory_recall_returns_matching_entries() {
         let mem = InMemory::new();
-        mem.capture("hello world").await;
-        mem.capture("goodbye world").await;
-        mem.capture("unrelated").await;
+        mem.capture("hello world").await.unwrap();
+        mem.capture("goodbye world").await.unwrap();
+        mem.capture("unrelated").await.unwrap();
         let results = mem.recall("hello").await.unwrap();
         assert_eq!(results, vec!["hello world"]);
     }
@@ -185,7 +186,7 @@ mod tests {
     #[tokio::test]
     async fn in_memory_recall_case_insensitive() {
         let mem = InMemory::new();
-        mem.capture("Hello World").await;
+        mem.capture("Hello World").await.unwrap();
         let results = mem.recall("hello").await.unwrap();
         assert_eq!(results.len(), 1);
     }
@@ -193,8 +194,9 @@ mod tests {
     #[tokio::test]
     async fn in_memory_recall_empty_when_no_match() {
         let mem = InMemory::new();
-        mem.capture("something else").await;
+        mem.capture("something else").await.unwrap();
         let results = mem.recall("hello").await.unwrap();
         assert!(results.is_empty());
     }
 }
+

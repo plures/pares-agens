@@ -280,11 +280,11 @@ mod tests {
     #[test]
     fn wizard_step_progression() {
         let mut wizard = SetupWizard::new();
-        wizard.set_agent_name("Aria");
+        wizard.set_agent_name("Aria").unwrap();
         assert_eq!(wizard.step, WizardStep::ModelPicker);
-        wizard.set_model(docker_model());
+        wizard.set_model(docker_model()).unwrap();
         assert_eq!(wizard.step, WizardStep::TelegramConnect);
-        wizard.set_telegram(None);
+        wizard.set_telegram(None).unwrap();
         assert_eq!(wizard.step, WizardStep::Done);
         assert!(wizard.is_complete());
     }
@@ -293,18 +293,18 @@ mod tests {
     fn wizard_is_not_complete_before_all_steps() {
         let mut wizard = SetupWizard::new();
         assert!(!wizard.is_complete());
-        wizard.set_agent_name("Aria");
+        wizard.set_agent_name("Aria").unwrap();
         assert!(!wizard.is_complete());
-        wizard.set_model(docker_model());
+        wizard.set_model(docker_model()).unwrap();
         assert!(!wizard.is_complete());
     }
 
     #[test]
     fn wizard_build_returns_config() {
         let mut wizard = SetupWizard::new();
-        wizard.set_agent_name("Aria");
-        wizard.set_model(docker_model());
-        wizard.set_telegram(None);
+        wizard.set_agent_name("Aria").unwrap();
+        wizard.set_model(docker_model()).unwrap();
+        wizard.set_telegram(None).unwrap();
         let config = wizard.build().unwrap();
         assert_eq!(config.agent_name, "Aria");
         assert!(config.setup_complete);
@@ -321,9 +321,9 @@ mod tests {
     async fn wizard_saves_and_loads_from_store() {
         let store = MockStore::new();
         let mut wizard = SetupWizard::new();
-        wizard.set_agent_name("Aria");
-        wizard.set_model(docker_model());
-        wizard.set_telegram(None);
+        wizard.set_agent_name("Aria").unwrap();
+        wizard.set_model(docker_model()).unwrap();
+        wizard.set_telegram(None).unwrap();
 
         let saved = wizard.save(&store).await.unwrap();
         assert_eq!(saved.agent_name, "Aria");
@@ -363,9 +363,9 @@ mod tests {
     #[test]
     fn wizard_with_telegram() {
         let mut wizard = SetupWizard::new();
-        wizard.set_agent_name("Aria");
-        wizard.set_model(docker_model());
-        wizard.set_telegram(Some(TelegramSetup { token: "tok".into() }));
+        wizard.set_agent_name("Aria").unwrap();
+        wizard.set_model(docker_model()).unwrap();
+        wizard.set_telegram(Some(TelegramSetup { token: "tok".into() })).unwrap();
 
         let config = wizard.build().unwrap();
         assert!(config.telegram.is_some());
@@ -375,13 +375,13 @@ mod tests {
     #[test]
     fn wizard_with_api_key_model() {
         let mut wizard = SetupWizard::new();
-        wizard.set_agent_name("Aria");
+        wizard.set_agent_name("Aria").unwrap();
         wizard.set_model(ModelChoice::ApiKey {
             provider: "openai".into(),
             base_url: "https://api.openai.com/v1".into(),
             api_key: "sk-test".into(),
-        });
-        wizard.set_telegram(None);
+        }).unwrap();
+        wizard.set_telegram(None).unwrap();
 
         let config = wizard.build().unwrap();
         assert!(matches!(config.model, ModelChoice::ApiKey { .. }));
@@ -397,5 +397,18 @@ mod tests {
         };
         let json = serde_json::to_string(&config).unwrap();
         assert!(!json.contains("telegram"), "null telegram should be omitted");
+    }
+
+    #[test]
+    fn wizard_setters_reject_out_of_order_calls() {
+        let mut wizard = SetupWizard::new();
+        // Calling set_model before set_agent_name must fail.
+        assert!(wizard.set_model(docker_model()).is_err());
+        // Calling set_telegram before completing earlier steps must also fail.
+        assert!(wizard.set_telegram(None).is_err());
+        // Correct order succeeds.
+        wizard.set_agent_name("Aria").unwrap();
+        // Now set_agent_name again must fail.
+        assert!(wizard.set_agent_name("Bob").is_err());
     }
 }
