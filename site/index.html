@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pares Agens — Your AI. Your data. Your machine.</title>
+  <meta name="description" content="Local-first AI agent framework. Runs on your hardware, remembers everything, works offline and over P2P mesh." />
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<!-- ── Navigation ───────────────────────────────────── -->
+<nav>
+  <div class="nav-inner">
+    <a href="/" class="nav-logo" style="text-decoration:none">
+      <span class="dot"></span>
+      pares&nbsp;agens
+    </a>
+    <ul class="nav-links">
+      <li><a href="#features">Features</a></li>
+      <li><a href="#pricing">Pricing</a></li>
+      <li><a href="#downloads">Downloads</a></li>
+      <li><a href="docs/">Docs</a></li>
+      <li>
+        <a href="https://github.com/plures/pares-agens" class="btn btn-outline" style="padding:7px 14px">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          GitHub
+        </a>
+      </li>
+    </ul>
+  </div>
+</nav>
+
+<!-- ── Hero ─────────────────────────────────────────── -->
+<section class="hero">
+  <div class="container">
+    <div class="hero-badge">
+      <span class="badge-dot"></span>
+      Pre-alpha · Q2 2026 target
+    </div>
+    <h1>Your AI.<br>Your data.<br>Your machine.</h1>
+    <p>Local-first AI agent framework. Runs entirely on your hardware — no cloud required. Reactive event loop, offline-first memory, and P2P mesh sync across all your devices.</p>
+    <div class="hero-actions">
+      <a href="docs/getting-started.html" class="btn btn-primary">Get started →</a>
+      <a href="https://github.com/plures/pares-agens" class="btn btn-outline">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        View on GitHub
+      </a>
+    </div>
+    <div class="hero-meta">
+      <span>⚡ Reactive event loop</span>
+      <span>📴 Offline-first</span>
+      <span>🔗 P2P mesh sync</span>
+      <span>🔒 Zero telemetry</span>
+    </div>
+  </div>
+</section>
+
+<!-- ── Features ─────────────────────────────────────── -->
+<section id="features" style="background: var(--bg-card); border-top:1px solid var(--border); border-bottom:1px solid var(--border)">
+  <div class="container">
+    <div class="section-label">Features</div>
+    <h2 class="section-title">Intelligence that stays with you</h2>
+    <p class="section-sub">Everything you need to run a sovereign AI that learns, remembers, and acts — without sending a byte to the cloud.</p>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">⚡</div>
+        <h3>Reactive Event Loop</h3>
+        <p>Procedure-based architecture with a reactive event loop. Every message, timer, or state change triggers the right handler automatically.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📴</div>
+        <h3>Offline-First</h3>
+        <p>Works completely without internet. Local inference with Qwen3 runs on your hardware — your conversations never leave your network.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔗</div>
+        <h3>P2P Mesh Sync</h3>
+        <p>Sync memory and state across all your devices using Hyperswarm. No central server, no single point of failure.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🧠</div>
+        <h3>Unified Memory</h3>
+        <p>pluresLM remembers conversations, code patterns, and desktop interactions in one searchable store that persists across sessions.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🤖</div>
+        <h3>Custom Procedures</h3>
+        <p>Author your own agent behaviors as typed procedures. Compose them into powerful workflows with full control over triggers and outputs.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🛠️</div>
+        <h3>MCP Tool API</h3>
+        <p>Expose any capability as an MCP tool. Connect external services, automate GUIs, or query databases from one unified interface.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📱</div>
+        <h3>Cross-Platform Nodes</h3>
+        <p>Lightweight capability nodes run on Windows, macOS, mobile, and browser. One agent brain controls all your platforms.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔒</div>
+        <h3>Privacy by Design</h3>
+        <p>All communication is Noise-protocol encrypted. Audit logs are stored locally in PluresDB. Zero telemetry, full transparency.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">💬</div>
+        <h3>Multi-Channel</h3>
+        <p>Chat via local terminal or Telegram. More channels coming soon — the agent is the same, only the interface changes.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Pricing ───────────────────────────────────────── -->
+<section id="pricing">
+  <div class="container" style="text-align:center">
+    <div class="section-label">Pricing</div>
+    <h2 class="section-title">Simple, honest pricing</h2>
+    <p class="section-sub" style="margin:0 auto 56px">Free forever for personal use. Pro adds cloud backup and multi-device sync.</p>
+
+    <div class="pricing-grid">
+      <!-- Free -->
+      <div class="pricing-card">
+        <div>
+          <div class="pricing-name">Free</div>
+          <div class="pricing-price">
+            <span class="pricing-amount">$0</span>
+            <span class="pricing-period">/ mo</span>
+          </div>
+          <p class="pricing-desc">Everything you need to run a local AI agent on one machine.</p>
+        </div>
+        <ul class="pricing-features">
+          <li>Local agent on 1 machine</li>
+          <li>Unlimited conversations</li>
+          <li>pluresLM memory (local)</li>
+          <li>All built-in procedures</li>
+          <li>MCP tool API</li>
+          <li>Telegram + local channels</li>
+          <li class="na">Cloud backup</li>
+          <li class="na">Multi-device P2P sync</li>
+          <li class="na">Priority support</li>
+        </ul>
+        <a href="docs/getting-started.html" class="btn btn-outline" style="width:100%;justify-content:center">Get started free</a>
+      </div>
+
+      <!-- Pro -->
+      <div class="pricing-card featured">
+        <div>
+          <div class="pricing-name">Pro</div>
+          <div class="pricing-price">
+            <span class="pricing-amount">$9</span>
+            <span class="pricing-period">/ mo</span>
+          </div>
+          <p class="pricing-desc">Full mesh sync, cloud backup via Pares Nubis, and priority support.</p>
+        </div>
+        <ul class="pricing-features">
+          <li>Everything in Free</li>
+          <li>Unlimited devices</li>
+          <li>P2P mesh sync (Hyperswarm)</li>
+          <li>Pares Nubis cloud backup</li>
+          <li>Cross-device memory sync</li>
+          <li>Remote capability nodes</li>
+          <li>Priority email support</li>
+          <li>Early access to new features</li>
+        </ul>
+        <a href="https://github.com/plures/pares-agens" class="btn btn-primary" style="width:100%;justify-content:center">Join waitlist</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Downloads ─────────────────────────────────────── -->
+<section id="downloads" style="background: var(--bg-card); border-top:1px solid var(--border); border-bottom:1px solid var(--border)">
+  <div class="container" style="text-align:center">
+    <div class="section-label">Downloads</div>
+    <h2 class="section-title">Available on every platform</h2>
+    <p class="section-sub" style="margin:0 auto 56px">Download the native installer or use the universal script. Nix users can install via flake.</p>
+
+    <div class="downloads-grid">
+      <a href="https://github.com/plures/pares-agens/releases/latest" class="dl-card">
+        <div class="dl-icon">🪟</div>
+        <h3>Windows</h3>
+        <span>x86_64 · MSI installer</span>
+      </a>
+      <a href="https://github.com/plures/pares-agens/releases/latest" class="dl-card">
+        <div class="dl-icon">🍎</div>
+        <h3>macOS</h3>
+        <span>Apple Silicon &amp; Intel · DMG</span>
+      </a>
+      <a href="https://github.com/plures/pares-agens/releases/latest" class="dl-card">
+        <div class="dl-icon">🐧</div>
+        <h3>Linux</h3>
+        <span>x86_64 / aarch64 · .deb, .rpm, AppImage</span>
+      </a>
+      <div class="dl-card" style="cursor:default">
+        <div class="dl-icon">❄️</div>
+        <h3>Nix / NixOS</h3>
+        <code style="font-size:0.76rem;word-break:break-all;background:var(--bg-code);border:1px solid var(--border);border-radius:4px;padding:4px 8px;">nix profile install github:plures/pares-agens</code>
+      </div>
+    </div>
+
+    <p style="margin-top:36px;color:var(--muted);font-size:0.85rem">
+      Or use the universal installer:
+      <code style="font-size:0.82rem">curl -sSL install-pares.plures.io | sh</code>
+    </p>
+  </div>
+</section>
+
+<!-- ── CTA ───────────────────────────────────────────── -->
+<section class="cta-section">
+  <div class="container">
+    <h2>Ready to own your AI?</h2>
+    <p>Read the docs and send your first message in under 5&nbsp;minutes.</p>
+    <div class="hero-actions">
+      <a href="docs/getting-started.html" class="btn btn-primary">Read the docs →</a>
+      <a href="https://github.com/plures/pares-agens" class="btn btn-outline">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        Star on GitHub
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ── Footer ───────────────────────────────────────── -->
+<footer>
+  <div class="footer-inner">
+    <div class="footer-logo">
+      <span style="width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block"></span>
+      pares agens
+    </div>
+    <ul class="footer-links">
+      <li><a href="docs/">Docs</a></li>
+      <li><a href="docs/getting-started.html">Getting started</a></li>
+      <li><a href="https://github.com/plures/pares-agens">GitHub</a></li>
+      <li><a href="https://github.com/plures/pares-agens/blob/main/LICENSE">License (AGPL-3.0)</a></li>
+    </ul>
+    <span class="footer-copy">© 2026 Plures. AGPL-3.0.</span>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Getting Started — Pares Agens</title>
+  <meta name="description" content="Install Pares Agens, configure a model, and send your first message in under 5 minutes." />
+  <link rel="stylesheet" href="../style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <a href="../" class="nav-logo" style="text-decoration:none">
+      <span class="dot"></span>
+      pares&nbsp;agens
+    </a>
+    <ul class="nav-links">
+      <li><a href="../#features">Features</a></li>
+      <li><a href="../#pricing">Pricing</a></li>
+      <li><a href="../#downloads">Downloads</a></li>
+      <li><a href="./" style="color:var(--text)">Docs</a></li>
+      <li>
+        <a href="https://github.com/plures/pares-agens" class="btn btn-outline" style="padding:7px 14px">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          GitHub
+        </a>
+      </li>
+    </ul>
+  </div>
+</nav>
+
+<div class="docs-shell">
+  <aside class="docs-sidebar">
+    <div class="docs-sidebar-section">
+      <h4>Get started</h4>
+      <ul class="docs-nav">
+        <li><a href="getting-started.html" class="active">Installation &amp; first message</a></li>
+      </ul>
+    </div>
+    <div class="docs-sidebar-section">
+      <h4>Guides</h4>
+      <ul class="docs-nav">
+        <li><a href="procedure-authoring.html">Procedure authoring</a></li>
+        <li><a href="model-configuration.html">Model configuration</a></li>
+        <li><a href="channel-setup.html">Channel setup</a></li>
+      </ul>
+    </div>
+    <div class="docs-sidebar-section">
+      <h4>Reference</h4>
+      <ul class="docs-nav">
+        <li><a href="api-reference.html">API reference (MCP tools)</a></li>
+      </ul>
+    </div>
+  </aside>
+
+  <main class="docs-content">
+    <h1>Getting Started</h1>
+    <p class="docs-lead">Install Pares Agens, connect a model, and send your first message — in under 5 minutes.</p>
+
+    <h2>Prerequisites</h2>
+    <ul>
+      <li>Linux, macOS, or Windows (WSL2 supported)</li>
+      <li>A running <strong>Ollama</strong> instance (<a href="https://ollama.com">ollama.com</a>) <em>or</em> any OpenAI-compatible API endpoint</li>
+      <li>~500 MB disk space for the agent binary and local database</li>
+    </ul>
+
+    <div class="callout">
+      <strong>💡 Quickest path</strong>
+      Install Ollama, pull <code>llama3</code>, then follow the steps below. You'll be chatting in under 5 minutes.
+    </div>
+
+    <h2>Step 1 — Install</h2>
+
+    <h3>Universal installer (Linux / macOS)</h3>
+    <pre><code>curl -sSL install-pares.plures.io | sh</code></pre>
+
+    <h3>Nix / NixOS</h3>
+    <pre><code># Nix profile
+nix profile install github:plures/pares-agens
+
+# NixOS module
+services.pares-agens.enable = true;</code></pre>
+
+    <h3>Windows</h3>
+    <p>Download the <code>.msi</code> installer from the <a href="https://github.com/plures/pares-agens/releases/latest">latest release</a> and run it. The <code>pares</code> command will be added to your PATH automatically.</p>
+
+    <h3>Build from source</h3>
+    <pre><code>git clone https://github.com/plures/pares-agens
+cd pares-agens
+cargo build --release
+# binary at ./target/release/pares</code></pre>
+
+    <h2>Step 2 — Initialise your agent</h2>
+    <pre><code>pares agens init --name="my-assistant"</code></pre>
+    <p>This creates a configuration file at <code>~/.config/pares-agens/config.toml</code> and initializes a local PluresDB database for memory storage.</p>
+
+    <h2>Step 3 — Configure a model</h2>
+    <p>Edit <code>~/.config/pares-agens/config.toml</code> and set the model endpoint:</p>
+    <pre><code>[model]
+provider = "ollama"          # or "openai" for OpenAI-compatible APIs
+base_url = "http://localhost:11434"
+model    = "llama3"</code></pre>
+    <p>See the <a href="model-configuration.html">Model configuration</a> guide for all options including local Qwen3 clusters and cloud APIs.</p>
+
+    <h2>Step 4 — Start chatting</h2>
+    <pre><code>pares agens chat</code></pre>
+    <p>You should see:</p>
+    <pre><code>pares-agens v0.1.0
+Model:   ollama/llama3 @ localhost:11434
+Memory:  PluresDB (local, 0 memories)
+Channel: local
+
+You: </code></pre>
+    <p>Type a message and press <kbd>Enter</kbd>. The agent will respond using the configured model and automatically store the conversation in local memory.</p>
+
+    <div class="callout success">
+      <strong>✅ That's it!</strong>
+      You're now running a fully local, offline-capable AI agent. Everything stays on your machine.
+    </div>
+
+    <h2>Verify the agent is working</h2>
+    <pre><code>pares agens status</code></pre>
+    <pre><code>✅ Model:    ollama/llama3 (connected)
+✅ Memory:   PluresDB local (42 memories)
+✅ Channels: local
+⬜ P2P sync: disabled (Pro feature)</code></pre>
+
+    <h2>Next steps</h2>
+    <ul>
+      <li><a href="procedure-authoring.html">Author custom procedures</a> to give your agent new behaviours</li>
+      <li><a href="model-configuration.html">Configure a different model</a> — local Qwen3, cloud OpenAI, Anthropic-compatible</li>
+      <li><a href="channel-setup.html">Set up Telegram</a> so you can chat from your phone</li>
+      <li><a href="api-reference.html">Explore the MCP tool API</a> to connect external services</li>
+    </ul>
+  </main>
+</div>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-logo">
+      <span style="width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block"></span>
+      pares agens
+    </div>
+    <ul class="footer-links">
+      <li><a href="./">Docs</a></li>
+      <li><a href="https://github.com/plures/pares-agens">GitHub</a></li>
+      <li><a href="https://github.com/plures/pares-agens/blob/main/LICENSE">License (AGPL-3.0)</a></li>
+    </ul>
+    <span class="footer-copy">© 2026 Plures. AGPL-3.0.</span>
+  </div>
+</footer>
+
+</body>
+</html>

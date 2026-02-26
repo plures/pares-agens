@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Documentation — Pares Agens</title>
+  <meta name="description" content="Pares Agens documentation — getting started, procedure authoring, model configuration, channels, and API reference." />
+  <link rel="stylesheet" href="../style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <a href="../" class="nav-logo" style="text-decoration:none">
+      <span class="dot"></span>
+      pares&nbsp;agens
+    </a>
+    <ul class="nav-links">
+      <li><a href="../#features">Features</a></li>
+      <li><a href="../#pricing">Pricing</a></li>
+      <li><a href="../#downloads">Downloads</a></li>
+      <li><a href="./" style="color:var(--text)">Docs</a></li>
+      <li>
+        <a href="https://github.com/plures/pares-agens" class="btn btn-outline" style="padding:7px 14px">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          GitHub
+        </a>
+      </li>
+    </ul>
+  </div>
+</nav>
+
+<div class="docs-shell">
+  <!-- Sidebar -->
+  <aside class="docs-sidebar">
+    <div class="docs-sidebar-section">
+      <h4>Get started</h4>
+      <ul class="docs-nav">
+        <li><a href="getting-started.html">Installation &amp; first message</a></li>
+      </ul>
+    </div>
+    <div class="docs-sidebar-section">
+      <h4>Guides</h4>
+      <ul class="docs-nav">
+        <li><a href="procedure-authoring.html">Procedure authoring</a></li>
+        <li><a href="model-configuration.html">Model configuration</a></li>
+        <li><a href="channel-setup.html">Channel setup</a></li>
+      </ul>
+    </div>
+    <div class="docs-sidebar-section">
+      <h4>Reference</h4>
+      <ul class="docs-nav">
+        <li><a href="api-reference.html">API reference (MCP tools)</a></li>
+      </ul>
+    </div>
+  </aside>
+
+  <!-- Content -->
+  <main class="docs-content">
+    <h1>Documentation</h1>
+    <p class="docs-lead">Everything you need to install, configure, and extend Pares Agens.</p>
+
+    <h2>Where to start</h2>
+    <p>New here? Follow the <a href="getting-started.html">Getting started</a> guide. You'll install the agent, configure a model, and send your first message in under 5 minutes.</p>
+
+    <h2>Guides</h2>
+    <table>
+      <thead>
+        <tr><th>Guide</th><th>What you'll learn</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><a href="getting-started.html">Installation &amp; first message</a></td>
+          <td>Install → configure → chat in &lt; 5 minutes</td>
+        </tr>
+        <tr>
+          <td><a href="procedure-authoring.html">Procedure authoring</a></td>
+          <td>Write custom agent behaviors with typed Rust procedures</td>
+        </tr>
+        <tr>
+          <td><a href="model-configuration.html">Model configuration</a></td>
+          <td>Connect local (Ollama) or cloud (OpenAI-compatible) models</td>
+        </tr>
+        <tr>
+          <td><a href="channel-setup.html">Channel setup</a></td>
+          <td>Use the local terminal or a Telegram bot as your chat interface</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Reference</h2>
+    <table>
+      <thead>
+        <tr><th>Page</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><a href="api-reference.html">API reference (MCP tools)</a></td>
+          <td>All built-in MCP tool definitions, inputs, and outputs</td>
+        </tr>
+      </tbody>
+    </table>
+  </main>
+</div>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-logo">
+      <span style="width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block"></span>
+      pares agens
+    </div>
+    <ul class="footer-links">
+      <li><a href="./">Docs</a></li>
+      <li><a href="https://github.com/plures/pares-agens">GitHub</a></li>
+      <li><a href="https://github.com/plures/pares-agens/blob/main/LICENSE">License (AGPL-3.0)</a></li>
+    </ul>
+    <span class="footer-copy">© 2026 Plures. AGPL-3.0.</span>
+  </div>
+</footer>
+
+</body>
+</html>

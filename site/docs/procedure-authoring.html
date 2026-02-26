@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Procedure Authoring — Pares Agens</title>
+  <meta name="description" content="Write custom agent procedures in Rust to extend Pares Agens with new behaviors." />
+  <link rel="stylesheet" href="../style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <a href="../" class="nav-logo" style="text-decoration:none">
+      <span class="dot"></span>
+      pares&nbsp;agens
+    </a>
+    <ul class="nav-links">
+      <li><a href="../#features">Features</a></li>
+      <li><a href="../#pricing">Pricing</a></li>
+      <li><a href="../#downloads">Downloads</a></li>
+      <li><a href="./" style="color:var(--text)">Docs</a></li>
+      <li>
+        <a href="https://github.com/plures/pares-agens" class="btn btn-outline" style="padding:7px 14px">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          GitHub
+        </a>
+      </li>
+    </ul>
+  </div>
+</nav>
+
+<div class="docs-shell">
+  <aside class="docs-sidebar">
+    <div class="docs-sidebar-section">
+      <h4>Get started</h4>
+      <ul class="docs-nav">
+        <li><a href="getting-started.html">Installation &amp; first message</a></li>
+      </ul>
+    </div>
+    <div class="docs-sidebar-section">
+      <h4>Guides</h4>
+      <ul class="docs-nav">
+        <li><a href="procedure-authoring.html" class="active">Procedure authoring</a></li>
+        <li><a href="model-configuration.html">Model configuration</a></li>
+        <li><a href="channel-setup.html">Channel setup</a></li>
+      </ul>
+    </div>
+    <div class="docs-sidebar-section">
+      <h4>Reference</h4>
+      <ul class="docs-nav">
+        <li><a href="api-reference.html">API reference (MCP tools)</a></li>
+      </ul>
+    </div>
+  </aside>
+
+  <main class="docs-content">
+    <h1>Procedure Authoring</h1>
+    <p class="docs-lead">Extend Pares Agens with custom behaviors by writing typed Rust procedures. Procedures are first-class event handlers that plug into the reactive event loop.</p>
+
+    <h2>Concepts</h2>
+
+    <h3>Events</h3>
+    <p>Everything in Pares Agens is driven by <em>events</em>. An event carries a typed payload and is dispatched by the executor to all registered handlers:</p>
+    <ul>
+      <li><code>Event::Message</code> — an inbound chat message from any channel</li>
+      <li><code>Event::ModelResponse</code> — a completed model response</li>
+      <li><code>Event::Timer</code> — a periodic timer tick</li>
+      <li><code>Event::StateChange</code> — an arbitrary key/value state update</li>
+    </ul>
+
+    <h3>Procedures</h3>
+    <p>A <em>procedure</em> is an async handler that receives an event context and returns a <code>Vec&lt;Event&gt;</code> of follow-up events to inject back into the loop. Built-in procedures include <code>OnMessage</code>, <code>AutoRecall</code>, and <code>AutoCapture</code>.</p>
+
+    <h2>Your first procedure</h2>
+    <p>Create a new crate or add to an existing one:</p>
+    <pre><code># in Cargo.toml
+[dependencies]
+pares-agens-core = { git = "https://github.com/plures/pares-agens" }</code></pre>
+
+    <p>Implement the <code>Procedure</code> trait:</p>
+    <pre><code>use pares_agens_core::{event::Event, procedure::Procedure};
+use async_trait::async_trait;
+use uuid::Uuid;
+
+pub struct GreetHandler;
+
+#[async_trait]
+impl Procedure for GreetHandler {
+    fn name(&amp;self) -&gt; &amp;str {
+        "greet"
+    }
+
+    fn handles(&amp;self) -&gt; &amp;str {
+        "message"   // matches the string returned by Event::kind() for Message variants
+    }
+
+    async fn execute(&amp;self, event: &amp;Event) -&gt; Vec&lt;Event&gt; {
+        let Event::Message { channel, content, .. } = event else {
+            return vec![];
+        };
+
+        if content.to_lowercase().contains("hello") {
+            return vec![Event::Message {
+                id: Uuid::new_v4().to_string(),
+                channel: channel.clone(),
+                sender: "agent".into(),
+                content: "Hey there! 👋".into(),
+            }];
+        }
+
+        vec![]
+    }
+}</code></pre>
+
+    <div class="callout">
+      <strong>📌 Key rule</strong>
+      Handlers must be <strong>pure with respect to side effects on the event loop</strong>. All follow-up work is expressed as returned events, never by directly calling other handlers.
+    </div>
+
+    <h2>Register your procedure</h2>
+    <p>Register the procedure on a <code>ProcedureRegistry</code> and pass it to the executor:</p>
+    <pre><code>use pares_agens_core::{executor::Executor, procedure::ProcedureRegistry};
+
+let mut registry = ProcedureRegistry::new();
+registry.register(Box::new(GreetHandler));
+registry.register(Box::new(OnMessage::new(
+    memory_client,
+    model_client,
+    tool_dispatcher,
+    "You are a helpful assistant.",
+)));
+
+let executor = Executor::new(registry);
+executor.run(&amp;source, 0 /* unlimited */).await;</code></pre>
+
+    <h2>Working with memory</h2>
+    <p>Inject a <code>MemoryClient</code> to recall past conversations from pluresLM:</p>
+    <pre><code>use pares_agens_core::{
+    event::Event,
+    memory::{Memory, MemoryClient},
+    procedure::Procedure,
+};
+use std::sync::Arc;
+
+pub struct SummaryHandler {
+    memory: Arc&lt;dyn MemoryClient&gt;,
+}
+
+#[async_trait]
+impl Procedure for SummaryHandler {
+    fn name(&amp;self) -&gt; &amp;str { "summarise" }
+    fn handles(&amp;self) -&gt; &amp;str { "message" }
+
+    async fn execute(&amp;self, event: &amp;Event) -&gt; Vec&lt;Event&gt; {
+        let Event::Message { id, channel, sender, content } = event else {
+            return vec![];
+        };
+
+        // Recall relevant memories
+        let memories: Vec&lt;Memory&gt; = self.memory.recall(content, 5).await;
+
+        // Prepend recalled context to the message content
+        let context: String = memories.iter()
+            .map(|m| format!("[memory] {}", m.content))
+            .collect::&lt;Vec&lt;_&gt;&gt;()
+            .join("\n");
+
+        let enriched = if context.is_empty() {
+            content.clone()
+        } else {
+            format!("{context}\n\n{content}")
+        };
+
+        vec![Event::Message {
+            id: format!("{id}-enriched"),
+            channel: channel.clone(),
+            sender: sender.clone(),
+            content: enriched,
+        }]
+    }
+}</code></pre>
+
+    <h2>Timer-based procedures</h2>
+    <p>Use <code>OnTimer</code> to drive scheduled behaviour. Implement <code>TimerAction</code> for each named timer:</p>
+    <pre><code>use pares_agens_core::{
+    event::Event,
+    handlers::on_timer::{OnTimer, TimerAction},
+    procedure::ProcedureRegistry,
+};
+use async_trait::async_trait;
+use std::sync::Arc;
+
+struct DailySummaryAction;
+
+#[async_trait]
+impl TimerAction for DailySummaryAction {
+    async fn execute(&amp;self) -&gt; Vec&lt;Event&gt; {
+        println!("Daily summary running…");
+        vec![] // return follow-up events if needed
+    }
+}
+
+let on_timer = OnTimer::new();
+on_timer.register("daily_summary", Arc::new(DailySummaryAction));
+
+let mut registry = ProcedureRegistry::new();
+registry.register(Box::new(on_timer));</code></pre>
+
+    <h2>State-change watchers</h2>
+    <p>Use <code>OnStateChange</code> to react to PluresDB key updates. Implement <code>WatcherAction</code> for each watched key:</p>
+    <pre><code>use pares_agens_core::{
+    event::Event,
+    handlers::on_state_change::{OnStateChange, WatcherAction},
+    procedure::ProcedureRegistry,
+};
+use async_trait::async_trait;
+use std::sync::Arc;
+use uuid::Uuid;
+
+struct BatteryWatcher;
+
+#[async_trait]
+impl WatcherAction for BatteryWatcher {
+    async fn on_change(&amp;self, event: &amp;Event) -&gt; Vec&lt;Event&gt; {
+        let Event::StateChange { new_value, .. } = event else {
+            return vec![];
+        };
+        let level = new_value.as_u64().unwrap_or(100) as u8;
+        if level &lt; 20 {
+            return vec![Event::Message {
+                id: Uuid::new_v4().to_string(),
+                channel: "alerts".into(),
+                sender: "agent".into(),
+                content: "⚠️ Battery low!".into(),
+            }];
+        }
+        vec![]
+    }
+}
+
+let on_state_change = OnStateChange::new();
+on_state_change.watch("battery_level", Arc::new(BatteryWatcher));
+
+let mut registry = ProcedureRegistry::new();
+registry.register(Box::new(on_state_change));</code></pre>
+
+    <h2>Testing your procedure</h2>
+    <p>All dependencies are trait objects, so testing is straightforward with inline mock implementations:</p>
+    <pre><code>#[cfg(test)]
+mod tests {
+    use super::*;
+    use pares_agens_core::{
+        event::Event,
+        memory::{Memory, MemoryCapture, MemoryClient},
+    };
+    use async_trait::async_trait;
+
+    struct MockMemory;
+
+    #[async_trait]
+    impl MemoryClient for MockMemory {
+        async fn recall(&amp;self, _query: &amp;str, _limit: usize) -&gt; Vec&lt;Memory&gt; {
+            vec![]
+        }
+        async fn capture(&amp;self, _entry: MemoryCapture) -&gt; Result&lt;(), String&gt; {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn greets_on_hello() {
+        let handler = GreetHandler;
+        let event = Event::Message {
+            id: "1".into(),
+            channel: "test".into(),
+            sender: "user".into(),
+            content: "hello world".into(),
+        };
+        let events = handler.execute(&amp;event).await;
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], Event::Message { .. }));
+    }
+}</code></pre>
+
+    <div class="callout success">
+      <strong>✅ Tip</strong>
+      Run <code>cargo test --workspace</code> to validate all procedures including your custom ones.
+    </div>
+
+    <h2>Next steps</h2>
+    <ul>
+      <li><a href="api-reference.html">API reference</a> — full list of events, traits, and helpers</li>
+      <li><a href="model-configuration.html">Model configuration</a> — swap or add models your procedures can call</li>
+      <li><a href="channel-setup.html">Channel setup</a> — expose your procedure's replies via Telegram or local terminal</li>
+    </ul>
+  </main>
+</div>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-logo">
+      <span style="width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block"></span>
+      pares agens
+    </div>
+    <ul class="footer-links">
+      <li><a href="./">Docs</a></li>
+      <li><a href="https://github.com/plures/pares-agens">GitHub</a></li>
+      <li><a href="https://github.com/plures/pares-agens/blob/main/LICENSE">License (AGPL-3.0)</a></li>
+    </ul>
+    <span class="footer-copy">© 2026 Plures. AGPL-3.0.</span>
+  </div>
+</footer>
+
+</body>
+</html>
