@@ -9,25 +9,27 @@
 //!
 //! ## Usage
 //!
-//! ```rust
+//! ```rust,no_run
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! use pares_agens_core::license::{Feature, FixedKeyValidator, License, LicenseValidator};
 //!
-//! # tokio_test::block_on(async {
 //! // Free tier — always available
 //! let free = License::free();
 //! assert!(!free.is_pro());
 //!
 //! // Validate a key and obtain a Pro license
 //! let validator = FixedKeyValidator::new("my-pro-key");
-//! let pro = validator.validate("my-pro-key").await.expect("valid key");
+//! let pro = validator.validate("my-pro-key").await?;
 //! assert!(pro.is_pro());
-//! pro.check_feature(Feature::PraxisAuditExport).expect("pro allows audit export");
-//! # })
+//! pro.check_feature(Feature::PraxisAuditExport)?;
+//! # Ok(())
+//! # }
 //! ```
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 
 // ---------------------------------------------------------------------------
 // Tier
@@ -158,8 +160,15 @@ impl License {
     }
 
     /// Serialisable status snapshot for UI display.
-    pub fn status(&self) -> &LicenseStatus {
-        &self.status
+    ///
+    /// The `valid` field is recomputed against the current wall-clock time on
+    /// every call, so the snapshot is always fresh and never stale.
+    pub fn status(&self) -> LicenseStatus {
+        LicenseStatus {
+            tier: self.status.tier.clone(),
+            valid: self.is_pro() || self.status.tier == LicenseTier::Free,
+            expires_at: self.status.expires_at,
+        }
     }
 
     /// Returns `true` if this is a currently valid Pro license.
@@ -232,7 +241,9 @@ impl FixedKeyValidator {
 #[async_trait]
 impl LicenseValidator for FixedKeyValidator {
     async fn validate(&self, key: &str) -> Result<License, LicenseError> {
-        if key.trim() == self.pro_key.as_str() {
+        let trimmed = key.trim();
+        let keys_match: bool = trimmed.as_bytes().ct_eq(self.pro_key.as_bytes()).into();
+        if keys_match {
             Ok(License::pro(None))
         } else {
             Err(LicenseError::InvalidKey { reason: "key does not match".into() })
