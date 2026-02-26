@@ -61,6 +61,25 @@ impl ModelRouter {
         Self { config, clients }
     }
 
+    /// Build a multi-provider router, gated behind the Pro license.
+    ///
+    /// Use this constructor when `config` contains more than one provider or
+    /// at least one routing rule — both are Pro features.  Returns
+    /// [`pares_agens_core::license::LicenseError`] if the license check fails.
+    ///
+    /// Single-provider configs (no rules) are always permitted regardless of
+    /// tier; use the plain [`ModelRouter::new`] for those cases.
+    pub fn new_multi(
+        config: RouterConfig,
+        license: &pares_agens_core::license::License,
+    ) -> Result<Self, pares_agens_core::license::LicenseError> {
+        if config.providers.len() > 1 || !config.rules.is_empty() {
+            license
+                .check_feature(pares_agens_core::license::Feature::MultipleModelProviders)?;
+        }
+        Ok(Self::new(config))
+    }
+
     /// Select the provider name for a given model identifier.
     fn select_provider<'a>(&'a self, model: &str) -> &'a str {
         for rule in &self.config.rules {

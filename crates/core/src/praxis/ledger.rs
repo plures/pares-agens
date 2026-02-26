@@ -318,9 +318,23 @@ impl Ledger {
     ///
     /// Each element is a serialised [`LedgerEntry`].  The output is suitable
     /// for archiving, compliance audits, or shipping to a remote log store.
-    pub fn export_json(&self) -> serde_json::Value {
+    ///
+    /// # Pro feature
+    ///
+    /// This method requires a valid Pro license.  Pass a [`License`] obtained
+    /// from a [`LicenseValidator`] (or [`License::pro`] in tests).  Returns
+    /// [`LicenseError::FeatureNotAvailable`] on the Free tier and
+    /// [`LicenseError::Expired`] when the Pro license has expired.
+    ///
+    /// [`LicenseValidator`]: crate::license::LicenseValidator
+    /// [`License`]: crate::license::License
+    pub fn export_json(
+        &self,
+        license: &crate::license::License,
+    ) -> Result<serde_json::Value, crate::license::LicenseError> {
+        license.check_feature(crate::license::Feature::PraxisAuditExport)?;
         let entries = self.all_entries();
-        serde_json::to_value(&entries).unwrap_or(serde_json::Value::Array(vec![]))
+        Ok(serde_json::to_value(&entries).unwrap_or(serde_json::Value::Array(vec![])))
     }
 }
 
@@ -570,7 +584,8 @@ mod tests {
         ledger.log(&event, serde_json::json!({"model": "qwen3"}));
         ledger.gate("send_email:x", "reason").unwrap();
 
-        let json = ledger.export_json();
+        let lic = crate::license::License::pro(None);
+        let json = ledger.export_json(&lic).expect("pro license should allow export");
         let arr = json.as_array().expect("export should be a JSON array");
         assert_eq!(arr.len(), 2);
     }
@@ -581,7 +596,8 @@ mod tests {
         let event = msg_event();
         ledger.log(&event, serde_json::json!(null));
 
-        let json = ledger.export_json();
+        let lic = crate::license::License::pro(None);
+        let json = ledger.export_json(&lic).expect("pro license should allow export");
         let entry = &json[0];
         assert!(entry.get("id").is_some());
         assert!(entry.get("timestamp").is_some());
@@ -595,7 +611,22 @@ mod tests {
     #[test]
     fn export_json_empty_ledger_is_empty_array() {
         let ledger = Ledger::default();
-        let json = ledger.export_json();
+        let lic = crate::license::License::pro(None);
+        let json = ledger.export_json(&lic).expect("pro license should allow export");
         assert_eq!(json, serde_json::json!([]));
+    }
+
+    #[test]
+    fn export_json_blocked_on_free_tier() {
+        let ledger = Ledger::default();
+        let event = msg_event();
+        ledger.log(&event, serde_json::json!({"model": "qwen3"}));
+
+        let lic = crate::license::License::free();
+        let result = ledger.export_json(&lic);
+        assert!(
+            matches!(result, Err(crate::license::LicenseError::FeatureNotAvailable { .. })),
+            "free tier should not be able to export the audit ledger"
+        );
     }
 }
