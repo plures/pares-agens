@@ -2,11 +2,57 @@ use async_trait::async_trait;
 use pares_agens_core::{
     event::Event,
     executor::Executor,
-    handlers::{OnMessage, OnTimer},
-    procedure::ProcedureRegistry,
+    procedure::{Procedure, ProcedureRegistry},
     source::EventSource,
 };
 use std::sync::Mutex;
+
+// ---------------------------------------------------------------------------
+// Stub procedures used by integration tests
+// ---------------------------------------------------------------------------
+
+/// Simple echo procedure: returns a Message event with the same content and
+/// `sender = "agent"`.  Used in place of the full `OnMessage` pipeline so
+/// that integration tests do not need real model/memory/tool dependencies.
+struct EchoMessage;
+
+#[async_trait]
+impl Procedure for EchoMessage {
+    fn name(&self) -> &str {
+        "echo_message"
+    }
+    fn handles(&self) -> &str {
+        "message"
+    }
+    async fn execute(&self, event: &Event) -> Vec<Event> {
+        if let Event::Message { id, channel, content, .. } = event {
+            vec![Event::Message {
+                id: format!("{id}-response"),
+                channel: channel.clone(),
+                sender: "agent".into(),
+                content: content.clone(),
+            }]
+        } else {
+            vec![]
+        }
+    }
+}
+
+/// No-op timer procedure: fires and returns no follow-up events.
+struct NoopTimer;
+
+#[async_trait]
+impl Procedure for NoopTimer {
+    fn name(&self) -> &str {
+        "noop_timer"
+    }
+    fn handles(&self) -> &str {
+        "timer"
+    }
+    async fn execute(&self, _: &Event) -> Vec<Event> {
+        vec![]
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -59,7 +105,7 @@ impl EventSource for BatchSource {
 #[tokio::test]
 async fn on_message_echoes_via_executor() {
     let mut registry = ProcedureRegistry::new();
-    registry.register(Box::new(OnMessage));
+    registry.register(Box::new(EchoMessage));
     let executor = Executor::new(registry);
 
     let follow_ups = executor.dispatch(&msg("hello world")).await;
@@ -76,7 +122,7 @@ async fn on_message_echoes_via_executor() {
 #[tokio::test]
 async fn on_timer_dispatches_cleanly() {
     let mut registry = ProcedureRegistry::new();
-    registry.register(Box::new(OnTimer));
+    registry.register(Box::new(NoopTimer));
     let executor = Executor::new(registry);
 
     let follow_ups = executor.dispatch(&timer("daily-summary")).await;
@@ -91,8 +137,8 @@ async fn event_loop_processes_multiple_batches() {
     ]);
 
     let mut registry = ProcedureRegistry::new();
-    registry.register(Box::new(OnMessage));
-    registry.register(Box::new(OnTimer));
+    registry.register(Box::new(EchoMessage));
+    registry.register(Box::new(NoopTimer));
     let executor = Executor::new(registry);
 
     // max_iterations = 0 → runs until source is empty
@@ -121,9 +167,9 @@ async fn event_loop_respects_max_iterations() {
 
 #[tokio::test]
 async fn registry_only_routes_matching_kinds() {
-    // Register only OnMessage; timer events should produce no output.
+    // Register only EchoMessage; timer events should produce no output.
     let mut registry = ProcedureRegistry::new();
-    registry.register(Box::new(OnMessage));
+    registry.register(Box::new(EchoMessage));
     let executor = Executor::new(registry);
 
     let follow_ups = executor.dispatch(&timer("orphan")).await;

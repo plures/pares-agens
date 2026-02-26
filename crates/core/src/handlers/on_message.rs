@@ -162,13 +162,15 @@ impl Procedure for OnMessage {
         };
 
         // ── Step 6: Capture memory ────────────────────────────────────────────
-        self.memory
+        let _ = self
+            .memory
             .capture(MemoryCapture {
                 role: "user".into(),
                 content: content.clone(),
             })
             .await;
-        self.memory
+        let _ = self
+            .memory
             .capture(MemoryCapture {
                 role: "assistant".into(),
                 content: response_content,
@@ -220,8 +222,9 @@ mod tests {
             self.recalls.clone()
         }
 
-        async fn capture(&self, item: MemoryCapture) {
+        async fn capture(&self, item: MemoryCapture) -> Result<(), String> {
             self.captured.lock().unwrap().push(item);
+            Ok(())
         }
     }
 
