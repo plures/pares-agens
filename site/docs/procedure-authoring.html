@@ -137,13 +137,13 @@ impl EventHandler for SummaryHandler {
     async fn execute(&amp;self, ctx: &amp;EventContext) -&gt; Vec&lt;Event&gt; {
         let Event::Message(msg) = &amp;ctx.event else { return vec![]; };
 
-        // Search existing memories
-        let memories = self.memory
-            .search(&amp;msg.text, 5)
-            .await
-            .unwrap_or_default();
+        // Recall existing memories
+        let memories = self.memory.recall(&amp;msg.text, 5);
 
         // Emit a model call with context injected
+        vec![Event::model_call_with_context(msg.text.clone(), memories)]
+    }
+}</code></pre>
         vec![Event::model_call_with_context(msg.text.clone(), memories)]
     }
 }</code></pre>
