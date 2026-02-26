@@ -124,26 +124,30 @@
     <h2>Event variants</h2>
     <table>
       <thead>
-        <tr><th>Variant</th><th>Payload</th><th>Emitted by</th></tr>
+        <tr><th>Variant</th><th>Fields</th><th>Emitted by</th></tr>
       </thead>
       <tbody>
-        <tr><td><code>Event::Message</code></td><td><code>MessagePayload { text, channel, user_id }</code></td><td>Channel adapters (local, Telegram)</td></tr>
-        <tr><td><code>Event::ModelResponse</code></td><td><code>ModelResponsePayload { text, tool_calls }</code></td><td><code>OnMessage</code> handler</td></tr>
-        <tr><td><code>Event::Reply</code></td><td><code>ReplyPayload { text, channel }</code></td><td>Any handler</td></tr>
-        <tr><td><code>Event::Timer</code></td><td><code>TimerPayload { id, elapsed }</code></td><td>Executor clock</td></tr>
-        <tr><td><code>Event::StateChange</code></td><td><code>StateChangePayload { key, value }</code></td><td>Any handler</td></tr>
-        <tr><td><code>Event::ToolCall</code></td><td><code>ToolCallPayload { name, arguments }</code></td><td><code>OnMessage</code> on model tool call</td></tr>
-        <tr><td><code>Event::ToolResult</code></td><td><code>ToolResultPayload { call_id, result }</code></td><td><code>ToolDispatcher</code></td></tr>
+        <tr><td><code>Event::Message</code></td><td><code>{ id, channel, sender, content }</code></td><td>Channel adapters (local, Telegram); <code>OnMessage</code> response</td></tr>
+        <tr><td><code>Event::ModelResponse</code></td><td><code>{ request_id, model, content }</code></td><td><code>OnMessage</code> handler</td></tr>
+        <tr><td><code>Event::Timer</code></td><td><code>{ id, name, recurring }</code></td><td>Executor clock; <code>OnTimer</code> reschedule</td></tr>
+        <tr><td><code>Event::StateChange</code></td><td><code>{ key, old_value, new_value }</code></td><td>PluresDB state updates</td></tr>
+        <tr><td><code>Event::ToolResult</code></td><td><code>{ tool_call_id, tool_name, content, is_error }</code></td><td><code>ToolDispatcher</code></td></tr>
       </tbody>
     </table>
 
     <h2>Core traits</h2>
 
-    <h3><code>EventHandler</code></h3>
+    <h3><code>Procedure</code></h3>
     <pre><code>#[async_trait]
-pub trait EventHandler: Send + Sync {
+pub trait Procedure: Send + Sync {
+    /// Unique name for this procedure (e.g. `"on_message"`).
     fn name(&amp;self) -&gt; &amp;str;
-    async fn execute(&amp;self, ctx: &amp;EventContext) -&gt; Vec&lt;Event&gt;;
+
+    /// The event kind this procedure handles (matches [`Event::kind`]).
+    fn handles(&amp;self) -&gt; &amp;str;
+
+    /// Execute the procedure in response to the given event.
+    async fn execute(&amp;self, event: &amp;Event) -&gt; Vec&lt;Event&gt;;
 }</code></pre>
 
     <h3><code>ModelClient</code></h3>
@@ -151,30 +155,23 @@ pub trait EventHandler: Send + Sync {
 pub trait ModelClient: Send + Sync {
     async fn complete(
         &amp;self,
-        messages: Vec&lt;ChatMessage&gt;,
-        tools:    Vec&lt;ToolDef&gt;,
-    ) -&gt; Result&lt;ModelResponse, ModelError&gt;;
+        messages: &amp;[ChatMessage],
+        tools:    &amp;[ToolDefinition],
+    ) -&gt; Result&lt;ModelCompletion, String&gt;;
 }</code></pre>
 
     <h3><code>MemoryClient</code></h3>
     <pre><code>#[async_trait]
 pub trait MemoryClient: Send + Sync {
-    async fn search(&amp;self, query: &amp;str, limit: usize)
-        -&gt; Result&lt;Vec&lt;MemoryEntry&gt;, MemoryError&gt;;
-
-    async fn store(&amp;self, text: &amp;str, tags: Vec&lt;String&gt;)
-        -&gt; Result&lt;String, MemoryError&gt;;  // returns memory id
+    async fn recall(&amp;self, query: &amp;str, limit: usize) -&gt; Vec&lt;Memory&gt;;
+    async fn capture(&amp;self, entry: MemoryCapture) -&gt; Result&lt;(), String&gt;;
 }</code></pre>
 
     <h3><code>ToolDispatcher</code></h3>
     <pre><code>#[async_trait]
 pub trait ToolDispatcher: Send + Sync {
-    fn list_tools(&amp;self) -&gt; Vec&lt;ToolDef&gt;;
-
-    async fn dispatch(
-        &amp;self,
-        call: &amp;ToolCall,
-    ) -&gt; Result&lt;serde_json::Value, ToolError&gt;;
+    async fn available_tools(&amp;self) -&gt; Vec&lt;ToolDefinition&gt;;
+    async fn call_tool(&amp;self, name: &amp;str, arguments: serde_json::Value) -&gt; String;
 }</code></pre>
 
     <h2>CLI reference</h2>

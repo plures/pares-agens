@@ -79,27 +79,37 @@
     <p>Create a new crate or add to an existing one:</p>
     <pre><code># in Cargo.toml
 [dependencies]
-pares-core = { git = "https://github.com/plures/pares-agens" }</code></pre>
+pares-agens-core = { git = "https://github.com/plures/pares-agens" }</code></pre>
 
-    <p>Implement the <code>EventHandler</code> trait:</p>
-    <pre><code>use pares_core::{Event, EventContext, EventHandler};
+    <p>Implement the <code>Procedure</code> trait:</p>
+    <pre><code>use pares_agens_core::{event::Event, procedure::Procedure};
 use async_trait::async_trait;
+use uuid::Uuid;
 
 pub struct GreetHandler;
 
 #[async_trait]
-impl EventHandler for GreetHandler {
+impl Procedure for GreetHandler {
     fn name(&amp;self) -&gt; &amp;str {
         "greet"
     }
 
-    async fn execute(&amp;self, ctx: &amp;EventContext) -&gt; Vec&lt;Event&gt; {
-        let Event::Message(msg) = &amp;ctx.event else {
+    fn handles(&amp;self) -&gt; &amp;str {
+        "message"   // matches the string returned by Event::kind() for Message variants
+    }
+
+    async fn execute(&amp;self, event: &amp;Event) -&gt; Vec&lt;Event&gt; {
+        let Event::Message { channel, content, .. } = event else {
             return vec![];
         };
 
-        if msg.text.to_lowercase().contains("hello") {
-            return vec![Event::send_reply("Hey there! 👋")];
+        if content.to_lowercase().contains("hello") {
+            return vec![Event::Message {
+                id: Uuid::new_v4().to_string(),
+                channel: channel.clone(),
+                sender: "agent".into(),
+                content: "Hey there! 👋".into(),
+            }];
         }
 
         vec![]
@@ -112,84 +122,168 @@ impl EventHandler for GreetHandler {
     </div>
 
     <h2>Register your procedure</h2>
-    <p>Register the handler when building the executor:</p>
-    <pre><code>use pares_core::Executor;
+    <p>Register the procedure on a <code>ProcedureRegistry</code> and pass it to the executor:</p>
+    <pre><code>use pares_agens_core::{executor::Executor, procedure::ProcedureRegistry};
 
-let executor = Executor::builder()
-    .handler(GreetHandler)
-    .handler(OnMessage::new(model_client, memory_client, tool_dispatcher))
-    .build();
+let mut registry = ProcedureRegistry::new();
+registry.register(Box::new(GreetHandler));
+registry.register(Box::new(OnMessage::new(
+    memory_client,
+    model_client,
+    tool_dispatcher,
+    "You are a helpful assistant.",
+)));
 
-executor.run().await?;</code></pre>
+let executor = Executor::new(registry);
+executor.run(&amp;source, 0 /* unlimited */).await;</code></pre>
 
     <h2>Working with memory</h2>
-    <p>Inject a <code>MemoryClient</code> to read from and write to pluresLM:</p>
-    <pre><code>use pares_core::memory::MemoryClient;
+    <p>Inject a <code>MemoryClient</code> to recall past conversations from pluresLM:</p>
+    <pre><code>use pares_agens_core::{
+    event::Event,
+    memory::{Memory, MemoryClient},
+    procedure::Procedure,
+};
+use std::sync::Arc;
 
 pub struct SummaryHandler {
     memory: Arc&lt;dyn MemoryClient&gt;,
 }
 
 #[async_trait]
-impl EventHandler for SummaryHandler {
+impl Procedure for SummaryHandler {
     fn name(&amp;self) -&gt; &amp;str { "summarise" }
+    fn handles(&amp;self) -&gt; &amp;str { "message" }
 
-    async fn execute(&amp;self, ctx: &amp;EventContext) -&gt; Vec&lt;Event&gt; {
-        let Event::Message(msg) = &amp;ctx.event else { return vec![]; };
+    async fn execute(&amp;self, event: &amp;Event) -&gt; Vec&lt;Event&gt; {
+        let Event::Message { id, channel, sender, content } = event else {
+            return vec![];
+        };
 
-        // Recall existing memories
-        let memories = self.memory.recall(&amp;msg.text, 5);
+        // Recall relevant memories
+        let memories: Vec&lt;Memory&gt; = self.memory.recall(content, 5).await;
 
-        // Emit a model call with context injected
-        vec![todo!("construct the appropriate Event variant with `memories` as context")]
-    }
-}</code></pre>
-        vec![Event::model_call_with_context(msg.text.clone(), memories)]
+        // Prepend recalled context to the message content
+        let context: String = memories.iter()
+            .map(|m| format!("[memory] {}", m.content))
+            .collect::&lt;Vec&lt;_&gt;&gt;()
+            .join("\n");
+
+        let enriched = if context.is_empty() {
+            content.clone()
+        } else {
+            format!("{context}\n\n{content}")
+        };
+
+        vec![Event::Message {
+            id: format!("{id}-enriched"),
+            channel: channel.clone(),
+            sender: sender.clone(),
+            content: enriched,
+        }]
     }
 }</code></pre>
 
     <h2>Timer-based procedures</h2>
-    <p>Register a periodic timer to drive scheduled behaviour:</p>
-    <pre><code>use pares_core::handlers::OnTimer;
-use std::time::Duration;
+    <p>Use <code>OnTimer</code> to drive scheduled behaviour. Implement <code>TimerAction</code> for each named timer:</p>
+    <pre><code>use pares_agens_core::{
+    event::Event,
+    handlers::on_timer::{OnTimer, TimerAction},
+    procedure::ProcedureRegistry,
+};
+use async_trait::async_trait;
+use std::sync::Arc;
 
-// Fires every 60 seconds
-let timer = OnTimer::new(Duration::from_secs(60), |_ctx| async {
-    println!("tick");
-    vec![] // return follow-up events if needed
-});
+struct DailySummaryAction;
 
-executor.register_handler(timer);</code></pre>
+#[async_trait]
+impl TimerAction for DailySummaryAction {
+    async fn execute(&amp;self) -&gt; Vec&lt;Event&gt; {
+        println!("Daily summary running…");
+        vec![] // return follow-up events if needed
+    }
+}
+
+let on_timer = OnTimer::new();
+on_timer.register("daily_summary", Arc::new(DailySummaryAction));
+
+let mut registry = ProcedureRegistry::new();
+registry.register(Box::new(on_timer));</code></pre>
 
     <h2>State-change watchers</h2>
-    <p>React to arbitrary key/value state changes published anywhere in the loop:</p>
-    <pre><code>use pares_core::handlers::OnStateChange;
+    <p>Use <code>OnStateChange</code> to react to PluresDB key updates. Implement <code>WatcherAction</code> for each watched key:</p>
+    <pre><code>use pares_agens_core::{
+    event::Event,
+    handlers::on_state_change::{OnStateChange, WatcherAction},
+    procedure::ProcedureRegistry,
+};
+use async_trait::async_trait;
+use std::sync::Arc;
+use uuid::Uuid;
 
-let watcher = OnStateChange::new("battery_level", |ctx| async move {
-    let level: u8 = ctx.value().unwrap_or(100);
-    if level &lt; 20 {
-        return vec![Event::send_reply("⚠️ Battery low!")];
+struct BatteryWatcher;
+
+#[async_trait]
+impl WatcherAction for BatteryWatcher {
+    async fn on_change(&amp;self, event: &amp;Event) -&gt; Vec&lt;Event&gt; {
+        let Event::StateChange { new_value, .. } = event else {
+            return vec![];
+        };
+        let level = new_value.as_u64().unwrap_or(100) as u8;
+        if level &lt; 20 {
+            return vec![Event::Message {
+                id: Uuid::new_v4().to_string(),
+                channel: "alerts".into(),
+                sender: "agent".into(),
+                content: "⚠️ Battery low!".into(),
+            }];
+        }
+        vec![]
     }
-    vec![]
-});
+}
 
-executor.register_handler(watcher);</code></pre>
+let on_state_change = OnStateChange::new();
+on_state_change.watch("battery_level", Arc::new(BatteryWatcher));
+
+let mut registry = ProcedureRegistry::new();
+registry.register(Box::new(on_state_change));</code></pre>
 
     <h2>Testing your procedure</h2>
-    <p>All dependencies are trait objects, so testing is straightforward with mock implementations:</p>
+    <p>All dependencies are trait objects, so testing is straightforward with inline mock implementations:</p>
     <pre><code>#[cfg(test)]
 mod tests {
     use super::*;
-    use pares_core::testing::{MockMemoryClient, test_context};
+    use pares_agens_core::{
+        event::Event,
+        memory::{Memory, MemoryCapture, MemoryClient},
+    };
+    use async_trait::async_trait;
+
+    struct MockMemory;
+
+    #[async_trait]
+    impl MemoryClient for MockMemory {
+        async fn recall(&amp;self, _query: &amp;str, _limit: usize) -&gt; Vec&lt;Memory&gt; {
+            vec![]
+        }
+        async fn capture(&amp;self, _entry: MemoryCapture) -&gt; Result&lt;(), String&gt; {
+            Ok(())
+        }
+    }
 
     #[tokio::test]
     async fn greets_on_hello() {
         let handler = GreetHandler;
-        let ctx = test_context(Event::message("hello world"));
-        let events = handler.execute(&amp;ctx).await;
+        let event = Event::Message {
+            id: "1".into(),
+            channel: "test".into(),
+            sender: "user".into(),
+            content: "hello world".into(),
+        };
+        let events = handler.execute(&amp;event).await;
 
         assert_eq!(events.len(), 1);
-        assert!(matches!(events[0], Event::Reply(_)));
+        assert!(matches!(events[0], Event::Message { .. }));
     }
 }</code></pre>
 
