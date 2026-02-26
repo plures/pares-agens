@@ -11,17 +11,29 @@ use serde_json::Value;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
-    pub id: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<Value>,
     pub method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub params: Option<Value>,
 }
 
 impl JsonRpcRequest {
+    /// Create a standard JSON-RPC request with an `id`.
     pub fn new(id: impl Into<Value>, method: impl Into<String>, params: Option<Value>) -> Self {
         Self {
             jsonrpc: "2.0".into(),
-            id: id.into(),
+            id: Some(id.into()),
+            method: method.into(),
+            params,
+        }
+    }
+
+    /// Create a JSON-RPC notification (no `id` field).
+    pub fn notification(method: impl Into<String>, params: Option<Value>) -> Self {
+        Self {
+            jsonrpc: "2.0".into(),
+            id: None,
             method: method.into(),
             params,
         }
