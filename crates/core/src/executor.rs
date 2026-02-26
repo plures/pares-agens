@@ -66,8 +66,13 @@ impl Executor {
                 break;
             }
 
-            for event in &events {
-                self.dispatch(event).await;
+            for event in events {
+                // Process the initial event and any follow-up events it emits.
+                let mut pending = vec![event];
+                while let Some(current) = pending.pop() {
+                    let follow_ups = self.dispatch(&current).await;
+                    pending.extend(follow_ups);
+                }
             }
 
             iterations += 1;
