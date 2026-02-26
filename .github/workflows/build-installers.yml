@@ -31,6 +31,7 @@ jobs:
           - name: macOS DMG (universal)
             platform: macos-latest
             rust_target: universal-apple-darwin
+            toolchain_targets: aarch64-apple-darwin,x86_64-apple-darwin
             bundle_target: dmg
             artifact_glob: "crates/desktop/target/universal-apple-darwin/release/bundle/dmg/*.dmg"
 
@@ -45,14 +46,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
 
       # ── Rust toolchain ─────────────────────────────────────────────────
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.rust_target }}
+          targets: ${{ matrix.toolchain_targets || matrix.rust_target }}
 
-      # macOS universal binary needs both architectures
+      # macOS universal binary needs both architectures (already set via toolchain_targets)
       - name: Add macOS aarch64 target
         if: matrix.platform == 'macos-latest'
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
