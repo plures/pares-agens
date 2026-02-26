@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client"]
+members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client", "crates/migrate"]
 
 [workspace.package]
 version = "0.2.0"
@@ -19,3 +19,4 @@ uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 teloxide = { version = "0.13", features = ["macros", "throttle"] }
+clap = { version = "4", features = ["derive"] }
