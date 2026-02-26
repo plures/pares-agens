@@ -112,7 +112,9 @@ impl ProcedureRegistry {
     ///
     /// No-op if the name is not registered.
     pub fn enable(&mut self, name: &str) {
-        self.enabled.insert(name.to_string(), true);
+        if self.procedures.iter().any(|p| p.name() == name) {
+            self.enabled.insert(name.to_string(), true);
+        }
     }
 
     /// Disable the procedure with the given name.
