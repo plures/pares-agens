@@ -141,7 +141,7 @@ impl EventHandler for SummaryHandler {
         let memories = self.memory.recall(&amp;msg.text, 5);
 
         // Emit a model call with context injected
-        vec![Event::model_call_with_context(msg.text.clone(), memories)]
+        vec![todo!("construct the appropriate Event variant with `memories` as context")]
     }
 }</code></pre>
         vec![Event::model_call_with_context(msg.text.clone(), memories)]
