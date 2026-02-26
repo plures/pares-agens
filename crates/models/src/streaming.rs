@@ -52,7 +52,7 @@ pub fn parse_sse_stream(
 /// Try to consume a complete SSE `data:` line from `buf`.
 ///
 /// Returns `None` if there is no newline yet (caller should read more bytes).
-/// Returns `Some(None)` if the line was `[DONE]` (stream finished).
+/// Returns `None` if the line was `[DONE]` (stream finished).
 fn consume_line(buf: &mut String) -> Option<Result<ChatCompletionChunk, Error>> {
     loop {
         let newline = buf.find('\n')?;
