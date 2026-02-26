@@ -7,4 +7,4 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-pluresdb = { git = "https://github.com/plures/pluresdb" }
+pluresdb = { git = "https://github.com/plures/pluresdb", tag = "v0.1.0" }
