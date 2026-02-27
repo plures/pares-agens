@@ -16,6 +16,7 @@ use pares_agens_core::Event;
 use crate::state::{AppState, Settings};
 
 mod commands;
+mod procedures;
 mod state;
 
 /// Entry point called from `main.rs`.
@@ -62,6 +63,8 @@ pub fn run() {
                 ipc_handle: handle,
                 memory_store,
                 settings: Mutex::new(Settings::default()),
+                procedures: Mutex::new(Vec::new()),
+                procedure_log: Mutex::new(Vec::new()),
             });
 
             // ── System tray ───────────────────────────────────────────────
@@ -74,6 +77,12 @@ pub fn run() {
             commands::get_memories,
             commands::get_settings,
             commands::set_settings,
+            procedures::list_procedures,
+            procedures::get_procedure,
+            procedures::save_procedure,
+            procedures::toggle_procedure,
+            procedures::get_procedure_log,
+            procedures::create_from_template,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Pares Agens");

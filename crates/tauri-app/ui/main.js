@@ -258,3 +258,215 @@ settingsDialog.addEventListener("click", (e) => {
 
 refreshMemories();
 chatInput.focus();
+
+// ── Procedures ────────────────────────────────────────────────────────────
+
+const btnProcedures    = document.getElementById("btn-procedures");
+const proceduresDialog = document.getElementById("procedures-dialog");
+const btnCloseProc     = document.getElementById("btn-close-procedures");
+const procList         = document.getElementById("proc-list");
+const procTemplateSelect = document.getElementById("proc-template-select");
+const btnCreateProc    = document.getElementById("btn-create-proc");
+const procEmpty        = document.getElementById("proc-empty");
+const procEditorView   = document.getElementById("proc-editor-view");
+const procDetailName   = document.getElementById("proc-detail-name");
+const procDetailType   = document.getElementById("proc-detail-type");
+const procEnabledToggle = document.getElementById("proc-enabled-toggle");
+const btnEditProc      = document.getElementById("btn-edit-proc");
+const btnSaveProc      = document.getElementById("btn-save-proc");
+const procBody         = document.getElementById("proc-body");
+const procLogBody      = document.getElementById("proc-log-body");
+
+/** @type {string|null} — name of the currently selected procedure */
+let selectedProcName = null;
+/** @type {boolean} — whether the editor is in edit mode */
+let editMode = false;
+
+/** Render the procedure list from the given array of records. */
+function renderProcList(records) {
+  procList.innerHTML = "";
+  if (!records || records.length === 0) {
+    const li = document.createElement("li");
+    li.className = "proc-list-empty";
+    li.textContent = "No procedures registered.";
+    li.style.cssText = "color:var(--text-muted);font-size:12px;padding:12px;text-align:center";
+    procList.appendChild(li);
+    return;
+  }
+  for (const rec of records) {
+    const li = document.createElement("li");
+    li.setAttribute("role", "option");
+    li.setAttribute("aria-selected", rec.name === selectedProcName ? "true" : "false");
+    li.dataset.name = rec.name;
+
+    const dot = document.createElement("span");
+    dot.className = `proc-status-dot ${rec.enabled ? "enabled" : "disabled"}`;
+    dot.title = rec.enabled ? "Enabled" : "Disabled";
+
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "proc-list-name";
+    nameSpan.textContent = rec.name;
+
+    const typeSpan = document.createElement("span");
+    typeSpan.className = "proc-list-type";
+    typeSpan.textContent = rec.eventType;
+
+    li.appendChild(dot);
+    li.appendChild(nameSpan);
+    li.appendChild(typeSpan);
+
+    li.addEventListener("click", () => selectProcedure(rec.name));
+    procList.appendChild(li);
+  }
+}
+
+/** Load and show the detail view for a named procedure. */
+async function selectProcedure(name) {
+  try {
+    const rec = await invoke("get_procedure", { name });
+    if (!rec) return;
+
+    selectedProcName = name;
+
+    // Update list selection highlight
+    for (const li of procList.querySelectorAll("li")) {
+      li.setAttribute("aria-selected", li.dataset.name === name ? "true" : "false");
+    }
+
+    procDetailName.textContent = rec.name;
+    procDetailType.textContent = rec.eventType;
+    procEnabledToggle.checked = rec.enabled;
+    procBody.value = rec.body;
+
+    // Reset to read-only view
+    setEditMode(false);
+
+    procEmpty.hidden = true;
+    procEditorView.hidden = false;
+
+    // Load execution log for this procedure
+    await refreshProcLog(name);
+  } catch (err) {
+    console.error("selectProcedure error:", err);
+  }
+}
+
+/** Switch between edit and read-only mode. */
+function setEditMode(on) {
+  editMode = on;
+  procBody.readOnly = !on;
+  btnEditProc.textContent = on ? "Cancel" : "Edit";
+  btnEditProc.setAttribute("aria-pressed", on ? "true" : "false");
+  btnSaveProc.hidden = !on;
+}
+
+/** Persist the current procedure body to the backend. */
+async function saveProcedure() {
+  if (!selectedProcName) return;
+  try {
+    const rec = await invoke("get_procedure", { name: selectedProcName });
+    if (!rec) return;
+    rec.body = procBody.value;
+    await invoke("save_procedure", { record: rec });
+    setEditMode(false);
+    await refreshProcList();
+  } catch (err) {
+    alert(`Failed to save procedure: ${err}`);
+  }
+}
+
+/** Reload the procedure list from the backend. */
+async function refreshProcList() {
+  try {
+    const records = await invoke("list_procedures");
+    renderProcList(records);
+  } catch (_) {
+    renderProcList([]);
+  }
+}
+
+/** Reload the execution log for a procedure. */
+async function refreshProcLog(name) {
+  try {
+    const entries = await invoke("get_procedure_log", { name, limit: 50 });
+    procLogBody.innerHTML = "";
+    if (!entries || entries.length === 0) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td colspan="3" class="log-empty">No executions recorded yet.</td>`;
+      procLogBody.appendChild(tr);
+      return;
+    }
+    for (const e of entries) {
+      const tr = document.createElement("tr");
+      const time = document.createElement("td");
+      time.textContent = new Date(e.firedAt).toLocaleTimeString();
+      const dur = document.createElement("td");
+      dur.textContent = `${e.durationMs} ms`;
+      const trigger = document.createElement("td");
+      trigger.textContent = e.triggerEvent;
+      tr.appendChild(time);
+      tr.appendChild(dur);
+      tr.appendChild(trigger);
+      procLogBody.appendChild(tr);
+    }
+  } catch (_) { /* log is non-critical */ }
+}
+
+// ── Enable/disable toggle ──────────────────────────────────────────────────
+
+procEnabledToggle.addEventListener("change", async () => {
+  if (!selectedProcName) return;
+  try {
+    await invoke("toggle_procedure", {
+      name: selectedProcName,
+      enabled: procEnabledToggle.checked,
+    });
+    await refreshProcList();
+  } catch (err) {
+    // Revert the toggle on failure
+    procEnabledToggle.checked = !procEnabledToggle.checked;
+    alert(`Failed to toggle procedure: ${err}`);
+  }
+});
+
+// ── Edit / Save buttons ────────────────────────────────────────────────────
+
+btnEditProc.addEventListener("click", () => setEditMode(!editMode));
+btnSaveProc.addEventListener("click", saveProcedure);
+
+// ── Create from template ───────────────────────────────────────────────────
+
+btnCreateProc.addEventListener("click", async () => {
+  const template = procTemplateSelect.value;
+  if (!template) {
+    alert("Please select a template first.");
+    return;
+  }
+  try {
+    const rec = await invoke("create_from_template", { template });
+    procTemplateSelect.value = "";
+    await refreshProcList();
+    await selectProcedure(rec.name);
+  } catch (err) {
+    alert(`Failed to create procedure: ${err}`);
+  }
+});
+
+// ── Open / close dialog ────────────────────────────────────────────────────
+
+async function openProcedures() {
+  selectedProcName = null;
+  editMode = false;
+  procEmpty.hidden = false;
+  procEditorView.hidden = true;
+  await refreshProcList();
+  proceduresDialog.showModal();
+}
+
+btnProcedures.addEventListener("click", openProcedures);
+btnCloseProc.addEventListener("click", () => proceduresDialog.close());
+
+// Close on backdrop click
+proceduresDialog.addEventListener("click", (e) => {
+  if (e.target === proceduresDialog) proceduresDialog.close();
+});
