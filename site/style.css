@@ -636,6 +636,107 @@ footer {
 
 .step-body h3 { margin-top: 0; }
 
+/* ── Comparison ──────────────────────────────────────── */
+
+.comparison-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  min-width: 560px;
+}
+
+.comparison-table th,
+.comparison-table td {
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  text-align: center;
+}
+
+.comparison-table th:first-child,
+.comparison-table td:first-child {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.comparison-table thead th {
+  background: var(--bg-card);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+.comparison-table th.col-pa { color: var(--accent); }
+
+.comparison-table td.col-pa { background: rgba(108, 143, 255, 0.06); }
+
+.comparison-table td.yes     { color: var(--success); font-weight: 700; }
+.comparison-table td.no      { color: var(--muted); }
+.comparison-table td.partial { color: #f59e0b; }
+
+.comparison-legend {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 16px;
+}
+
+/* ── FAQ ─────────────────────────────────────────────── */
+
+.faq-list {
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.faq-item {
+  border-bottom: 1px solid var(--border);
+}
+
+.faq-item:first-child {
+  border-top: 1px solid var(--border);
+}
+
+.faq-item summary {
+  padding: 20px 0;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--text);
+  user-select: none;
+}
+
+.faq-item summary::-webkit-details-marker { display: none; }
+
+.faq-item summary::after {
+  content: '+';
+  font-size: 1.2rem;
+  color: var(--muted);
+  flex-shrink: 0;
+  margin-left: 16px;
+  transition: transform 0.2s;
+}
+
+.faq-item[open] summary::after { transform: rotate(45deg); }
+
+.faq-item p {
+  padding: 0 0 20px;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.7;
+}
+
 /* ── Responsive ──────────────────────────────────────── */
 
 @media (max-width: 768px) {
