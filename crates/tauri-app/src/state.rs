@@ -21,6 +21,10 @@ pub struct Settings {
     pub channel: String,
     /// System prompt prepended to every conversation.
     pub system_prompt: String,
+    /// UI colour scheme: `"dark"` (default) or `"light"`.
+    pub theme: String,
+    /// Enable vi-style input mode in the chat input area.
+    pub vi_mode: bool,
 }
 
 impl Default for Settings {
@@ -30,6 +34,8 @@ impl Default for Settings {
             endpoint: "http://localhost:11434/v1".to_string(),
             channel: "tauri".to_string(),
             system_prompt: "You are Pares Agens, a helpful desktop AI assistant.".to_string(),
+            theme: "dark".to_string(),
+            vi_mode: false,
         }
     }
 }
