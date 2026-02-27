@@ -2,28 +2,38 @@
  * Pares Agens — Tauri frontend
  *
  * Architecture:
- *  - invoke("send_message", { content })  → ModelResponse content
- *  - invoke("get_settings")               → Settings object
- *  - invoke("set_settings", { settings }) → void
+ *  - invoke("send_message",         { content })          → ModelResponse content
+ *  - invoke("get_settings")                               → Settings object
+ *  - invoke("set_settings",         { settings })         → void
+ *  - invoke("list_providers")                             → ProviderEntry[] (keys masked)
+ *  - invoke("add_provider",         { provider })         → void
+ *  - invoke("update_provider",      { name, provider })   → void
+ *  - invoke("remove_provider",      { name })             → void
+ *  - invoke("upsert_channel_adapter",{ adapter })         → void
+ *  - invoke("set_routing",          { routing })          → void
  *
- * The Tauri backend exposes these commands via src/commands.rs.
- * All IPC goes through the TauriIpcAdapter in the channels crate.
+ * The Tauri backend exposes these commands via src/commands.rs and
+ * src/settings.rs.  All IPC goes through the TauriIpcAdapter in the channels
+ * crate.
  */
+
+import { renderProviders }                  from "./src/lib/settings/providers.js";
+import { renderRouting, readRouting }       from "./src/lib/settings/routing.js";
+import { renderChannels, readChannelAdapters } from "./src/lib/settings/channels.js";
+import { renderPreferences, readPreferences } from "./src/lib/settings/preferences.js";
 
 const { invoke } = window.__TAURI__.core;
 
 // ── DOM refs ──────────────────────────────────────────────────────────────
 
-const messageList   = document.getElementById("message-list");
-const chatForm      = document.getElementById("chat-form");
-const chatInput     = document.getElementById("chat-input");
-const sendBtn       = document.getElementById("send-btn");
-const statusDot     = document.getElementById("agent-status");
-const memoryList    = document.getElementById("memory-list");
-const btnSettings   = document.getElementById("btn-settings");
+const messageList    = document.getElementById("message-list");
+const chatForm       = document.getElementById("chat-form");
+const chatInput      = document.getElementById("chat-input");
+const sendBtn        = document.getElementById("send-btn");
+const statusDot      = document.getElementById("agent-status");
+const memoryList     = document.getElementById("memory-list");
+const btnSettings    = document.getElementById("btn-settings");
 const settingsDialog = document.getElementById("settings-dialog");
-const btnSave       = document.getElementById("btn-save-settings");
-const btnCancel     = document.getElementById("btn-cancel-settings");
 
 // ── Utilities ─────────────────────────────────────────────────────────────
 
@@ -219,39 +229,144 @@ chatInput.addEventListener("keydown", (e) => {
 
 // ── Settings ──────────────────────────────────────────────────────────────
 
+/** Currently loaded settings — refreshed each time the dialog opens. */
+let _currentSettings = null;
+
+// Tab switching ──────────────────────────────────────────────────────────
+
+const tabBtns   = settingsDialog.querySelectorAll(".tab-btn");
+const tabPanels = settingsDialog.querySelectorAll(".tab-panel");
+
+function activateTab(targetId) {
+  for (const btn of tabBtns) {
+    const active = btn.getAttribute("aria-controls") === targetId;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", String(active));
+  }
+  for (const panel of tabPanels) {
+    panel.hidden = panel.id !== targetId;
+  }
+}
+
+for (const btn of tabBtns) {
+  btn.addEventListener("click", () =>
+    activateTab(btn.getAttribute("aria-controls")),
+  );
+}
+
+// Open / close ───────────────────────────────────────────────────────────
+
 async function openSettings() {
   try {
-    const s = await invoke("get_settings");
-    document.getElementById("s-model").value         = s.model         ?? "";
-    document.getElementById("s-endpoint").value      = s.endpoint      ?? "";
-    document.getElementById("s-system-prompt").value = s.systemPrompt  ?? "";
-    document.getElementById("s-channel").value       = s.channel       ?? "tauri";
-  } catch (_) { /* proceed with whatever is in the inputs */ }
+    _currentSettings = await invoke("get_settings");
+  } catch (_) {
+    _currentSettings = {};
+  }
+
+  const providers = await _loadProviders();
+  _renderAllTabs(providers);
+
+  // Always start on the first tab.
+  activateTab("tab-panel-providers");
   settingsDialog.showModal();
 }
 
-async function saveSettings() {
-  const settings = {
-    model:        document.getElementById("s-model").value,
-    endpoint:     document.getElementById("s-endpoint").value,
-    systemPrompt: document.getElementById("s-system-prompt").value,
-    channel:      document.getElementById("s-channel").value,
-  };
+function closeSettings() {
+  settingsDialog.close();
+}
+
+async function _loadProviders() {
   try {
-    await invoke("set_settings", { settings });
-    settingsDialog.close();
+    return await invoke("list_providers");
+  } catch (_) {
+    return [];
+  }
+}
+
+function _renderAllTabs(providers) {
+  renderProviders(
+    document.getElementById("providers-content"),
+    providers,
+    invoke,
+    async () => {
+      const refreshed = await _loadProviders();
+      _renderAllTabs(refreshed);
+    },
+  );
+
+  renderRouting(
+    document.getElementById("routing-content"),
+    _currentSettings?.routing ?? {},
+    providers,
+  );
+
+  renderChannels(
+    document.getElementById("channels-content"),
+    _currentSettings?.channelAdapters ?? [],
+  );
+
+  renderPreferences(
+    document.getElementById("preferences-content"),
+    _currentSettings?.preferences ?? {},
+    _currentSettings ?? {},
+  );
+}
+
+// Save ───────────────────────────────────────────────────────────────────
+
+async function saveSettings() {
+  const routingData  = readRouting(document.getElementById("routing-content"));
+  const channelData  = readChannelAdapters(document.getElementById("channels-content"));
+  const { prefs, systemPrompt } = readPreferences(
+    document.getElementById("preferences-content"),
+  );
+
+  // Persist routing via dedicated command so providers list stays untouched.
+  try {
+    await invoke("set_routing", { routing: routingData });
+  } catch (err) {
+    alert(`Failed to save routing: ${err}`);
+    return;
+  }
+
+  // Persist each channel adapter.
+  for (const adapter of channelData) {
+    try {
+      await invoke("upsert_channel_adapter", { adapter });
+    } catch (err) {
+      alert(`Failed to save channel "${adapter.kind}": ${err}`);
+      return;
+    }
+  }
+
+  // Persist the rest of the settings (preferences + system prompt).
+  const updated = {
+    ...(_currentSettings ?? {}),
+    systemPrompt,
+    preferences: prefs,
+    // Keep routing and channelAdapters in sync on the full settings object.
+    routing: routingData,
+    channelAdapters: channelData,
+  };
+
+  try {
+    await invoke("set_settings", { settings: updated });
+    closeSettings();
   } catch (err) {
     alert(`Failed to save settings: ${err}`);
   }
 }
 
-btnSettings.addEventListener("click", openSettings);
-btnSave.addEventListener("click", saveSettings);
-btnCancel.addEventListener("click", () => settingsDialog.close());
+// Wire up buttons ────────────────────────────────────────────────────────
 
-// Close dialog on backdrop click
+btnSettings.addEventListener("click", openSettings);
+document.getElementById("btn-save-settings").addEventListener("click", saveSettings);
+document.getElementById("btn-cancel-settings").addEventListener("click", closeSettings);
+document.getElementById("btn-close-settings").addEventListener("click", closeSettings);
+
+// Close dialog on backdrop click.
 settingsDialog.addEventListener("click", (e) => {
-  if (e.target === settingsDialog) settingsDialog.close();
+  if (e.target === settingsDialog) closeSettings();
 });
 
 // ── Init ──────────────────────────────────────────────────────────────────
