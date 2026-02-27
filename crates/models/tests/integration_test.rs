@@ -335,3 +335,71 @@ async fn test_provider_not_found() {
         other => panic!("unexpected: {other}"),
     }
 }
+
+// ---------------------------------------------------------------------------
+// new_multi license gate
+// ---------------------------------------------------------------------------
+
+/// Single-provider config with no rules is permitted on the Free tier.
+#[test]
+fn test_new_multi_single_provider_free_tier_allowed() {
+    let config = RouterConfig::single(
+        "local",
+        ProviderConfig::new("http://localhost:12434", None),
+    );
+    let license = pares_agens_core::license::License::free();
+    let result = ModelRouter::new_multi(config, &license);
+    assert!(result.is_ok(), "single provider with no rules should be allowed on Free tier");
+}
+
+/// Multiple providers on Free tier must be rejected.
+#[test]
+fn test_new_multi_multiple_providers_blocked_on_free_tier() {
+    let config = RouterConfig {
+        providers: HashMap::from([
+            ("a".to_string(), ProviderConfig::new("http://host-a", None)),
+            ("b".to_string(), ProviderConfig::new("http://host-b", None)),
+        ]),
+        rules: vec![],
+        default_provider: "a".into(),
+    };
+    let license = pares_agens_core::license::License::free();
+    let result = ModelRouter::new_multi(config, &license);
+    assert!(
+        matches!(result, Err(pares_agens_core::license::LicenseError::FeatureNotAvailable { .. })),
+        "multiple providers should be blocked on Free tier"
+    );
+}
+
+/// Routing rules on Free tier must be rejected.
+#[test]
+fn test_new_multi_routing_rules_blocked_on_free_tier() {
+    let config = RouterConfig {
+        providers: HashMap::from([("local".to_string(), ProviderConfig::new("http://host", None))]),
+        rules: vec![RoutingRule { model_prefix: Some("gpt-".into()), provider: "local".into() }],
+        default_provider: "local".into(),
+    };
+    let license = pares_agens_core::license::License::free();
+    let result = ModelRouter::new_multi(config, &license);
+    assert!(
+        matches!(result, Err(pares_agens_core::license::LicenseError::FeatureNotAvailable { .. })),
+        "routing rules should be blocked on Free tier"
+    );
+}
+
+/// Multiple providers and routing rules are permitted on Pro tier.
+#[test]
+fn test_new_multi_multiple_providers_allowed_on_pro_tier() {
+    let config = RouterConfig {
+        providers: HashMap::from([
+            ("openai".to_string(), ProviderConfig::new("http://openai", Some("key".into()))),
+            ("local".to_string(), ProviderConfig::new("http://local", None)),
+        ]),
+        rules: vec![RoutingRule { model_prefix: Some("gpt-".into()), provider: "openai".into() }],
+        default_provider: "local".into(),
+    };
+    let license = pares_agens_core::license::License::pro(None);
+    let result = ModelRouter::new_multi(config, &license);
+    assert!(result.is_ok(), "multiple providers should be allowed on Pro tier");
+}
+
