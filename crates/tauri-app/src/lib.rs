@@ -62,6 +62,7 @@ pub fn run() {
                 ipc_handle: handle,
                 memory_store,
                 settings: Mutex::new(Settings::default()),
+                license: Mutex::new(pares_agens_core::license::License::free()),
             });
 
             // ── System tray ───────────────────────────────────────────────
@@ -74,6 +75,8 @@ pub fn run() {
             commands::get_memories,
             commands::get_settings,
             commands::set_settings,
+            commands::get_license_status,
+            commands::activate_license,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Pares Agens");

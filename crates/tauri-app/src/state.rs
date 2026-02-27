@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use pares_agens_channels::tauri_ipc::TauriIpcHandle;
+use pares_agens_core::license::License;
 use pares_agens_core::memory::store::InMemoryStore;
 
 /// User-configurable settings stored in PluresDB state.
@@ -44,4 +45,6 @@ pub struct AppState {
     pub memory_store: Arc<InMemoryStore>,
     /// User-configurable settings (model, endpoint, channel, …).
     pub settings: Mutex<Settings>,
+    /// Current license — Free by default; updated on successful activation.
+    pub license: Mutex<License>,
 }
