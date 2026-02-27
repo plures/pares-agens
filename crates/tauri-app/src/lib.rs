@@ -17,6 +17,7 @@ use crate::state::{AppState, Settings};
 
 mod commands;
 mod state;
+mod wizard;
 
 /// Entry point called from `main.rs`.
 ///
@@ -62,6 +63,7 @@ pub fn run() {
                 ipc_handle: handle,
                 memory_store,
                 settings: Mutex::new(Settings::default()),
+                wizard_completed: Mutex::new(false),
             });
 
             // ── System tray ───────────────────────────────────────────────
@@ -74,6 +76,10 @@ pub fn run() {
             commands::get_memories,
             commands::get_settings,
             commands::set_settings,
+            wizard::detect_docker_runner,
+            wizard::validate_api_key,
+            wizard::is_wizard_completed,
+            wizard::complete_wizard,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Pares Agens");

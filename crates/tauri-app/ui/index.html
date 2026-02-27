@@ -24,7 +24,7 @@
     <main id="chat-panel" class="chat-panel">
       <header class="chat-header">
         <span id="agent-status" class="status-dot online" title="Online"></span>
-        <h1>Pares Agens</h1>
+        <h1 id="agent-name-heading">Pares Agens</h1>
         <nav class="header-nav">
           <button id="btn-settings" class="icon-btn" title="Settings" aria-haspopup="dialog">⚙</button>
         </nav>
@@ -32,7 +32,7 @@
 
       <section id="message-list" class="message-list" role="log" aria-live="polite" aria-label="Conversation">
         <div class="welcome-message">
-          <p>Hello! I'm <strong>Pares Agens</strong>. How can I help you today?</p>
+          <p>Hello! I'm <strong id="welcome-agent-name">Pares Agens</strong>. How can I help you today?</p>
         </div>
       </section>
 
@@ -94,8 +94,176 @@
       </form>
     </dialog>
 
+    <!-- ── First-Run Wizard ───────────────────────────────────────────── -->
+    <div id="wizard-overlay" class="wizard-overlay" role="dialog" aria-modal="true" aria-label="Setup wizard" hidden>
+      <div class="wizard-card">
+
+        <!-- Progress bar -->
+        <div class="wizard-progress" aria-hidden="true">
+          <div class="wizard-progress-fill" id="wizard-progress-fill"></div>
+        </div>
+
+        <!-- Step 0 — Welcome -->
+        <section class="wizard-step" id="wizard-step-0" data-step="0">
+          <div class="wizard-icon">👋</div>
+          <h2 class="wizard-title">Welcome to Pares Agens</h2>
+          <p class="wizard-subtitle">Let's get you set up in under 2 minutes.</p>
+
+          <label class="wizard-label" for="wizard-agent-name">Name your agent</label>
+          <input
+            id="wizard-agent-name"
+            class="wizard-input"
+            type="text"
+            placeholder="Pares Agens"
+            maxlength="40"
+            aria-describedby="wizard-name-hint"
+          />
+          <p id="wizard-name-hint" class="wizard-hint">This name appears in the chat header.</p>
+
+          <div class="wizard-chip-row" aria-label="Suggested names">
+            <button class="wizard-chip" type="button" data-value="Aria">Aria</button>
+            <button class="wizard-chip" type="button" data-value="Nexus">Nexus</button>
+            <button class="wizard-chip" type="button" data-value="Sage">Sage</button>
+            <button class="wizard-chip" type="button" data-value="Atlas">Atlas</button>
+            <button class="wizard-chip" type="button" data-value="Nova">Nova</button>
+          </div>
+
+          <div class="wizard-actions">
+            <span></span>
+            <button class="wizard-btn-primary" id="wizard-next-0">Next →</button>
+          </div>
+        </section>
+
+        <!-- Step 1 — Model -->
+        <section class="wizard-step" id="wizard-step-1" data-step="1" hidden>
+          <div class="wizard-icon">🤖</div>
+          <h2 class="wizard-title">Connect your model</h2>
+          <p class="wizard-subtitle">Choose how your agent thinks.</p>
+
+          <div class="wizard-model-cards" role="radiogroup" aria-label="Model source">
+
+            <label class="wizard-model-card" id="model-card-local">
+              <input type="radio" name="model-source" value="local" class="wizard-radio" />
+              <span class="wizard-model-card-icon">🐋</span>
+              <span class="wizard-model-card-title">Local</span>
+              <span class="wizard-model-card-desc">Docker Model Runner — private &amp; offline</span>
+              <span id="docker-status" class="wizard-badge" aria-live="polite"></span>
+            </label>
+
+            <label class="wizard-model-card" id="model-card-cloud">
+              <input type="radio" name="model-source" value="cloud" class="wizard-radio" />
+              <span class="wizard-model-card-icon">☁️</span>
+              <span class="wizard-model-card-title">Cloud</span>
+              <span class="wizard-model-card-desc">OpenAI, Anthropic, or Google</span>
+            </label>
+
+            <label class="wizard-model-card" id="model-card-skip">
+              <input type="radio" name="model-source" value="skip" class="wizard-radio" checked />
+              <span class="wizard-model-card-icon">⏩</span>
+              <span class="wizard-model-card-title">Skip</span>
+              <span class="wizard-model-card-desc">Configure later in Settings</span>
+            </label>
+          </div>
+
+          <!-- Cloud sub-form (shown only when "cloud" is selected) -->
+          <div id="cloud-sub-form" class="wizard-cloud-form" hidden>
+            <label class="wizard-label" for="wizard-cloud-provider">Provider</label>
+            <select id="wizard-cloud-provider" class="wizard-select">
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="google">Google</option>
+            </select>
+
+            <label class="wizard-label" for="wizard-api-key">API Key</label>
+            <div class="wizard-api-row">
+              <input
+                id="wizard-api-key"
+                class="wizard-input"
+                type="password"
+                placeholder="sk-…"
+                autocomplete="off"
+                aria-describedby="api-key-status"
+              />
+              <button class="wizard-btn-secondary" id="btn-validate-key" type="button">Validate</button>
+            </div>
+            <p id="api-key-status" class="wizard-hint" aria-live="polite"></p>
+          </div>
+
+          <div class="wizard-actions">
+            <button class="wizard-btn-ghost" id="wizard-back-1">← Back</button>
+            <button class="wizard-btn-primary" id="wizard-next-1">Next →</button>
+          </div>
+        </section>
+
+        <!-- Step 2 — Personality -->
+        <section class="wizard-step" id="wizard-step-2" data-step="2" hidden>
+          <div class="wizard-icon">🧠</div>
+          <h2 class="wizard-title">Personality <span class="wizard-optional">(optional)</span></h2>
+          <p class="wizard-subtitle">Describe how your agent should behave.</p>
+
+          <label class="wizard-label" for="wizard-system-prompt">System prompt</label>
+          <textarea
+            id="wizard-system-prompt"
+            class="wizard-textarea"
+            rows="5"
+            placeholder="You are a helpful assistant focused on software engineering. Be concise and direct."
+            aria-describedby="system-prompt-hint"
+          ></textarea>
+          <p id="system-prompt-hint" class="wizard-hint">Leave blank to use the default prompt.</p>
+
+          <div class="wizard-actions">
+            <button class="wizard-btn-ghost" id="wizard-back-2">← Back</button>
+            <button class="wizard-btn-ghost" id="wizard-skip-2">Skip</button>
+            <button class="wizard-btn-primary" id="wizard-next-2">Next →</button>
+          </div>
+        </section>
+
+        <!-- Step 3 — Channel -->
+        <section class="wizard-step" id="wizard-step-3" data-step="3" hidden>
+          <div class="wizard-icon">📡</div>
+          <h2 class="wizard-title">Connect a channel <span class="wizard-optional">(optional)</span></h2>
+          <p class="wizard-subtitle">Reach your agent from anywhere.</p>
+
+          <label class="wizard-label" for="wizard-telegram-token">Telegram Bot Token</label>
+          <input
+            id="wizard-telegram-token"
+            class="wizard-input"
+            type="password"
+            placeholder="1234567890:ABC-…"
+            autocomplete="off"
+            aria-describedby="telegram-hint"
+          />
+          <p id="telegram-hint" class="wizard-hint">
+            Create a bot with <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" class="wizard-link">@BotFather</a>
+            and paste the token here.
+          </p>
+
+          <div class="wizard-actions">
+            <button class="wizard-btn-ghost" id="wizard-back-3">← Back</button>
+            <button class="wizard-btn-ghost" id="wizard-skip-3">Skip</button>
+            <button class="wizard-btn-primary" id="wizard-next-3">Next →</button>
+          </div>
+        </section>
+
+        <!-- Step 4 — Done -->
+        <section class="wizard-step" id="wizard-step-4" data-step="4" hidden>
+          <div class="wizard-icon">🎉</div>
+          <h2 class="wizard-title">You're all set!</h2>
+          <p class="wizard-subtitle" id="wizard-done-summary"></p>
+
+          <ul class="wizard-summary-list" id="wizard-summary-list" aria-label="Configuration summary"></ul>
+
+          <div class="wizard-actions wizard-actions-center">
+            <button class="wizard-btn-primary wizard-btn-large" id="wizard-finish">Start chatting →</button>
+          </div>
+        </section>
+
+      </div><!-- /.wizard-card -->
+    </div><!-- /#wizard-overlay -->
+
   </div><!-- /#app -->
 
   <script src="main.js" type="module"></script>
+  <script src="wizard.js" type="module"></script>
 </body>
 </html>
