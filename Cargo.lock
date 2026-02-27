@@ -2730,6 +2730,7 @@ dependencies = [
 name = "pares-agens-tauri"
 version = "0.2.0"
 dependencies = [
+ "pares-agens",
  "pares-agens-channels",
  "pares-agens-core",
  "serde",

@@ -16,6 +16,7 @@ use pares_agens_core::Event;
 use crate::state::{AppState, Settings};
 
 mod commands;
+mod migration;
 mod state;
 
 /// Entry point called from `main.rs`.
@@ -74,6 +75,9 @@ pub fn run() {
             commands::get_memories,
             commands::get_settings,
             commands::set_settings,
+            migration::migration_detect,
+            migration::migration_preview,
+            migration::migration_run,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Pares Agens");

@@ -17,3 +17,4 @@ tokio.workspace = true
 tracing.workspace = true
 pares-agens-core = { path = "../core" }
 pares-agens-channels = { path = "../channels" }
+pares-agens-migrate = { path = "../migrate", package = "pares-agens" }
