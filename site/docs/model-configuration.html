@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Model Configuration — Pares Agens</title>
+  <meta name="description" content="Configure local or cloud AI models for Pares Agens — Ollama, OpenAI-compatible, and local Qwen3 cluster setup." />
+  <link rel="stylesheet" href="../style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <a href="../" class="nav-logo" style="text-decoration:none">
+      <span class="dot"></span>
+      pares&nbsp;agens
+    </a>
+    <ul class="nav-links">
+      <li><a href="../#features">Features</a></li>
+      <li><a href="../#pricing">Pricing</a></li>
+      <li><a href="../#downloads">Downloads</a></li>
+      <li><a href="./" style="color:var(--text)">Docs</a></li>
+      <li>
+        <a href="https://github.com/plures/pares-agens" class="btn btn-outline" style="padding:7px 14px">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          GitHub
+        </a>
+      </li>
+    </ul>
+  </div>
+</nav>
+
+<div class="docs-shell">
+  <aside class="docs-sidebar">
+    <div class="docs-sidebar-section">
+      <h4>Get started</h4>
+      <ul class="docs-nav">
+        <li><a href="getting-started.html">Installation &amp; first message</a></li>
+      </ul>
+    </div>
+    <div class="docs-sidebar-section">
+      <h4>Guides</h4>
+      <ul class="docs-nav">
+        <li><a href="procedure-authoring.html">Procedure authoring</a></li>
+        <li><a href="model-configuration.html" class="active">Model configuration</a></li>
+        <li><a href="channel-setup.html">Channel setup</a></li>
+      </ul>
+    </div>
+    <div class="docs-sidebar-section">
+      <h4>Reference</h4>
+      <ul class="docs-nav">
+        <li><a href="api-reference.html">API reference (MCP tools)</a></li>
+      </ul>
+    </div>
+  </aside>
+
+  <main class="docs-content">
+    <h1>Model Configuration</h1>
+    <p class="docs-lead">Connect Pares Agens to any AI model — local Ollama, self-hosted inference clusters, or OpenAI-compatible cloud APIs.</p>
+
+    <h2>Configuration file</h2>
+    <p>All model settings live in <code>~/.config/pares-agens/config.toml</code> under the <code>[model]</code> section.</p>
+
+    <h2>Option 1 — Ollama (recommended for local use)</h2>
+    <p>Install <a href="https://ollama.com">Ollama</a>, pull a model, and point the agent at it:</p>
+    <pre><code># Pull a model first
+ollama pull llama3
+ollama pull qwen2.5:72b   # for heavier reasoning tasks</code></pre>
+
+    <pre><code>[model]
+provider = "ollama"
+base_url = "http://localhost:11434"
+model    = "llama3"
+
+# Optional generation parameters
+temperature    = 0.7
+max_tokens     = 4096
+context_window = 8192</code></pre>
+
+    <div class="callout">
+      <strong>💡 Recommended models</strong>
+      <code>llama3</code> for general chat, <code>qwen2.5:72b</code> for complex reasoning, <code>codestral</code> for code-heavy tasks.
+    </div>
+
+    <h2>Option 2 — OpenAI-compatible API</h2>
+    <p>Any OpenAI-compatible endpoint (OpenAI, Azure OpenAI, Together.ai, Groq, etc.) works with the <code>openai</code> provider:</p>
+    <pre><code>[model]
+provider = "openai"
+base_url = "https://api.openai.com/v1"   # or any compatible endpoint
+model    = "gpt-4o"
+api_key  = "${OPENAI_API_KEY}"           # reads from environment</code></pre>
+
+    <div class="callout warning">
+      <strong>⚠️ Privacy note</strong>
+      Using a cloud API sends your messages to a third-party server. For full privacy, use a local provider such as Ollama.
+    </div>
+
+    <h2>Option 3 — Local Qwen3 cluster (self-sovereign)</h2>
+    <p>For maximum capability and privacy, run Qwen3 235B-A22B distributed across multiple machines:</p>
+
+    <h3>Hardware requirements</h3>
+    <table>
+      <thead>
+        <tr><th>Setup</th><th>Hardware</th><th>Model</th><th>Speed</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Budget</td>
+          <td>1× 64 GB RAM machine</td>
+          <td>Qwen3 70B (Q4)</td>
+          <td>~15 tok/s</td>
+        </tr>
+        <tr>
+          <td>Optimal</td>
+          <td>3× Mac Mini M4 Pro (48 GB each)</td>
+          <td>Qwen3 235B-A22B</td>
+          <td>~30 tok/s</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Cluster setup</h3>
+    <pre><code># Provision a 3-node Qwen3 cluster
+pares agens setup-local-inference \
+    --nodes=3 \
+    --memory=48gb-each \
+    --model="qwen3-235b-a22b"
+
+# Verify inference is working
+pares agens test-inference</code></pre>
+
+    <pre><code>[model]
+provider    = "ollama"
+base_url    = "http://node-1.local:11434"
+model       = "qwen3-235b-a22b"
+fallback    = "http://node-2.local:11434"  # automatic failover</code></pre>
+
+    <h2>Multiple model profiles</h2>
+    <p>Define named profiles and switch between them per procedure:</p>
+    <pre><code>[model.profiles.fast]
+provider = "ollama"
+model    = "llama3"
+
+[model.profiles.heavy]
+provider = "ollama"
+model    = "qwen3-235b-a22b"
+
+[model]
+default = "fast"</code></pre>
+
+    <p>Reference a profile in a procedure:</p>
+    <pre><code>let model = ctx.model("heavy");  // uses the heavy profile</code></pre>
+
+    <h2>Environment variables</h2>
+    <table>
+      <thead>
+        <tr><th>Variable</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>OPENAI_API_KEY</code></td><td>API key for OpenAI or compatible provider</td></tr>
+        <tr><td><code>PARES_MODEL_URL</code></td><td>Overrides <code>base_url</code> at runtime</td></tr>
+        <tr><td><code>PARES_MODEL</code></td><td>Overrides the default model name at runtime</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Testing connectivity</h2>
+    <pre><code>pares agens model-test "Respond with OK"
+# ✅ Model responded in 342ms</code></pre>
+  </main>
+</div>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-logo">
+      <span style="width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block"></span>
+      pares agens
+    </div>
+    <ul class="footer-links">
+      <li><a href="./">Docs</a></li>
+      <li><a href="https://github.com/plures/pares-agens">GitHub</a></li>
+      <li><a href="https://github.com/plures/pares-agens/blob/main/LICENSE">License (AGPL-3.0)</a></li>
+    </ul>
+    <span class="footer-copy">© 2026 Plures. AGPL-3.0.</span>
+  </div>
+</footer>
+
+</body>
+</html>

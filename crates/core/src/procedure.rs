@@ -63,22 +63,13 @@ impl ProcedureConfig {
 /// Use [`enable`][Self::enable] / [`disable`][Self::disable] to toggle
 /// procedures at runtime, and [`list_configs`][Self::list_configs] to
 /// retrieve the current configuration for all registered procedures.
+#[derive(Default)]
 pub struct ProcedureRegistry {
     procedures: Vec<Box<dyn Procedure>>,
     /// Per-name enabled flag; absent entries default to `true`.
     enabled: HashMap<String, bool>,
     /// Per-name priority; absent entries default to `0`.
     priority: HashMap<String, i32>,
-}
-
-impl Default for ProcedureRegistry {
-    fn default() -> Self {
-        Self {
-            procedures: Vec::new(),
-            enabled: HashMap::new(),
-            priority: HashMap::new(),
-        }
-    }
 }
 
 impl ProcedureRegistry {

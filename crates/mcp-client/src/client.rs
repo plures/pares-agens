@@ -33,6 +33,21 @@ impl McpClient {
         }
     }
 
+    /// Create a new client, gated behind the Pro license.
+    ///
+    /// MCP tool orchestration is a Pro feature.  Pass a valid Pro [`License`]
+    /// to proceed; a Free-tier license returns
+    /// [`pares_agens_core::license::LicenseError::FeatureNotAvailable`].
+    ///
+    /// [`License`]: pares_agens_core::license::License
+    pub fn new_guarded(
+        transport: impl Transport + 'static,
+        license: &pares_agens_core::license::License,
+    ) -> std::result::Result<Self, pares_agens_core::license::LicenseError> {
+        license.check_feature(pares_agens_core::license::Feature::McpToolOrchestration)?;
+        Ok(Self::new(transport))
+    }
+
     fn next_id(&mut self) -> Value {
         let id = self.next_id;
         self.next_id += 1;
