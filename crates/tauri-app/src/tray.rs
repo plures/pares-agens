@@ -8,7 +8,7 @@
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    App, Manager,
+    App, Emitter, Manager,
 };
 
 /// Register the system tray icon and context menu with the Tauri application.
