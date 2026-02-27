@@ -172,15 +172,6 @@ mod tests {
         }
     }
 
-    fn msg() -> Event {
-        Event::Message {
-            id: "1".into(),
-            channel: "c".into(),
-            sender: "u".into(),
-            content: "hi".into(),
-        }
-    }
-
     #[test]
     fn list_configs_reflects_registered_procedures() {
         let mut registry = ProcedureRegistry::new();
