@@ -14,7 +14,7 @@
 //!   IDENTITY.md          — agent identity (optional)
 //! ```
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
