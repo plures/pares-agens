@@ -9,11 +9,13 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Pares Agens",
         "width": 1200,
         "height": 800,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "decorations": true
       }
     ],
     "security": {

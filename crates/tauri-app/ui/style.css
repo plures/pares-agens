@@ -376,6 +376,13 @@ body {
   color: var(--text-secondary);
 }
 
+/* Inline labels (e.g. checkbox rows) */
+.settings-section label.label-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
 .settings-section input,
 .settings-section textarea,
 .settings-section select {

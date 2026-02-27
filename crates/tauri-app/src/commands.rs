@@ -71,11 +71,27 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String
 }
 
 /// Persist updated application settings.
+///
+/// When `settings.auto_start` changes this command also enables or disables
+/// the OS-level autostart entry via `tauri-plugin-autostart`.
 #[tauri::command]
 pub async fn set_settings(
     settings: Settings,
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        let manager = app.autolaunch();
+        if settings.auto_start {
+            manager.enable().map_err(|e| e.to_string())?;
+        } else {
+            manager.disable().map_err(|e| e.to_string())?;
+        }
+    }
+    #[cfg(not(desktop))]
+    let _ = app;
     *state.settings.lock().await = settings;
     Ok(())
 }
