@@ -2,3 +2,7 @@
 Cargo.lock
 # Tauri generated files
 crates/tauri-app/gen/
+# UI build artifacts
+crates/tauri-app/ui/node_modules/
+crates/tauri-app/ui/dist/
+crates/desktop/gen/

@@ -4,7 +4,8 @@
   "version": "0.2.0",
   "identifier": "com.plures.pares-agens",
   "build": {
-    "frontendDist": "ui"
+    "frontendDist": "ui/dist",
+    "devUrl": "http://localhost:5173"
   },
   "app": {
     "windows": [
