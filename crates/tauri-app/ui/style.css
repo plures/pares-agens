@@ -438,3 +438,325 @@ body {
 
 /* ── Scrollbar (Firefox) ─────────────────────────────────────────────────── */
 * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+
+/* ── Procedure Editor Dialog ─────────────────────────────────────────────── */
+.procedures-dialog {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+  color: var(--text-primary);
+  width: min(900px, 96vw);
+  max-height: 86vh;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.procedures-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+}
+
+.procedures-dialog .dialog-header {
+  flex-shrink: 0;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.procedures-body {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ── Procedure List Panel ───────────────────────────────────────────────── */
+.proc-list-panel {
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.proc-list-toolbar {
+  display: flex;
+  gap: 6px;
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.proc-list-toolbar select {
+  flex: 1;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+  min-width: 0;
+}
+
+.proc-list-toolbar select:focus { border-color: var(--accent); }
+
+.proc-list {
+  list-style: none;
+  overflow-y: auto;
+  flex: 1;
+  padding: 6px;
+}
+
+.proc-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition);
+  font-size: 13px;
+}
+
+.proc-list li:hover            { background: var(--bg-hover); }
+.proc-list li[aria-selected="true"] { background: var(--accent-dim); color: var(--text-primary); }
+
+.proc-list-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proc-list-type {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+
+.proc-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.proc-status-dot.enabled  { background: var(--success); }
+.proc-status-dot.disabled { background: var(--danger); }
+
+/* ── Procedure Editor Panel ─────────────────────────────────────────────── */
+.proc-editor-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-base);
+}
+
+.proc-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.proc-editor-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.proc-editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+  gap: 12px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.proc-meta { display: flex; align-items: center; gap: 8px; min-width: 0; }
+
+.proc-detail-name {
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  background: var(--accent-dim);
+  color: var(--accent-hover);
+  border-radius: 4px;
+  padding: 2px 6px;
+  flex-shrink: 0;
+}
+
+.proc-editor-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+/* Toggle switch */
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.toggle-label input[type="checkbox"] { position: absolute; opacity: 0; width: 0; height: 0; }
+
+.toggle-track {
+  width: 32px;
+  height: 18px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  position: relative;
+  transition: background var(--transition), border-color var(--transition);
+  flex-shrink: 0;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  transition: transform var(--transition), background var(--transition);
+}
+
+.toggle-label input:checked ~ .toggle-track             { background: var(--accent-dim); border-color: var(--accent); }
+.toggle-label input:checked ~ .toggle-track .toggle-thumb { background: var(--accent); transform: translateX(14px); }
+.toggle-label input:focus-visible ~ .toggle-track       { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.proc-body {
+  flex: 1;
+  background: var(--bg-base);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 14px 16px;
+  resize: none;
+  outline: none;
+  overflow-y: auto;
+  white-space: pre;
+  tab-size: 2;
+  min-height: 160px;
+}
+
+.proc-body[readonly] { color: var(--text-secondary); cursor: default; }
+.proc-body:not([readonly]):focus { box-shadow: inset 0 0 0 1px var(--accent); }
+
+/* Execution log */
+.proc-log-section {
+  flex-shrink: 0;
+  max-height: 180px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.proc-log-summary {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  padding: 8px 14px;
+  cursor: pointer;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  user-select: none;
+  list-style: none;
+}
+
+.proc-log-summary::-webkit-details-marker { display: none; }
+
+.proc-log-section[open] .proc-log-summary::before { content: "▾ "; }
+.proc-log-section:not([open]) .proc-log-summary::before { content: "▸ "; }
+
+.proc-log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  overflow-y: auto;
+}
+
+.proc-log-table th {
+  text-align: left;
+  padding: 4px 14px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  position: sticky;
+  top: 0;
+}
+
+.proc-log-table td {
+  padding: 5px 14px;
+  color: var(--text-secondary);
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+}
+
+.log-empty {
+  text-align: center;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  padding: 12px !important;
+}
+
+/* Shared button helpers (used in procedure editor toolbar) */
+.btn-secondary {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 5px 12px;
+  transition: background var(--transition), color var(--transition);
+}
+
+.btn-secondary:hover  { background: var(--bg-hover); color: var(--text-primary); }
+.btn-secondary[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+
+.proc-list-toolbar .btn-primary,
+.proc-editor-actions .btn-primary {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 5px 12px;
+  transition: background var(--transition);
+}
+
+.proc-list-toolbar .btn-primary:hover,
+.proc-editor-actions .btn-primary:hover { background: var(--accent-hover); }
