@@ -2,3 +2,7 @@
 Cargo.lock
 # Tauri generated files
 crates/tauri-app/gen/
+# Frontend build artifacts and dependencies
+crates/tauri-app/ui/node_modules/
+crates/tauri-app/ui/dist/
+crates/tauri-app/ui/.svelte-kit/

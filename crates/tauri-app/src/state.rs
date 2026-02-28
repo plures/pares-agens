@@ -23,6 +23,10 @@ pub struct Settings {
     pub system_prompt: String,
     /// Launch at system startup, minimised to the system tray.
     pub auto_start: bool,
+    /// UI colour scheme: `"dark"` (default) or `"light"`.
+    pub theme: String,
+    /// Enable vi-style input mode in the chat input area.
+    pub vi_mode: bool,
 }
 
 impl Default for Settings {
@@ -33,6 +37,8 @@ impl Default for Settings {
             channel: "tauri".to_string(),
             system_prompt: "You are Pares Agens, a helpful desktop AI assistant.".to_string(),
             auto_start: false,
+            theme: "dark".to_string(),
+            vi_mode: false,
         }
     }
 }

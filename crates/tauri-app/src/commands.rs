@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use pares_agens_channels::tauri_ipc::TauriIpcMessage;
 use pares_agens_core::memory::store::MemoryStore;
@@ -13,6 +13,7 @@ use crate::state::{AppState, Settings};
 pub async fn send_message(
     content: String,
     state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<String, String> {
     let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
@@ -23,14 +24,28 @@ pub async fn send_message(
         .await
         .map_err(|e| format!("IPC send failed: {e}"))?;
 
-    match response_rx
+    let response_text = match response_rx
         .await
         .map_err(|e| format!("IPC receive failed: {e}"))?
     {
-        Some(pares_agens_core::Event::ModelResponse { content, .. }) => Ok(content),
-        Some(pares_agens_core::Event::Message { content, .. }) => Ok(content),
-        _ => Ok(String::new()),
+        Some(pares_agens_core::Event::ModelResponse { content, .. }) => content,
+        Some(pares_agens_core::Event::Message { content, .. }) => content,
+        _ => String::new(),
+    };
+
+    // Emit SSE-style streaming events so the frontend can display tokens as
+    // they arrive.  We simulate per-word streaming here; a real LLM integration
+    // would emit tokens directly from the model response stream.
+    // TODO: replace this simulation with real token streaming once the LLM
+    // backend produces incremental ModelResponse events.
+    for word in response_text.split_inclusive(' ') {
+        app.emit("stream-token", word).ok();
+        // Yield to allow the webview to process each event.
+        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
     }
+    app.emit("stream-done", ()).ok();
+
+    Ok(response_text)
 }
 
 /// Return up to 20 recent memories for the memory sidebar.
