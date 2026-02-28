@@ -146,7 +146,7 @@ pub async fn get_procedure_log(
     let entries: Vec<ProcedureLogEntry> = log
         .iter()
         .rev()
-        .filter(|e| name.as_deref().map_or(true, |n| e.procedure_name == n))
+        .filter(|e| name.as_deref().is_none_or(|n| e.procedure_name == n))
         .take(cap)
         .cloned()
         .collect();
