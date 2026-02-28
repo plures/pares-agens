@@ -65,10 +65,7 @@ pub async fn update_provider(
         .ok_or_else(|| format!("Provider '{name}' not found"))?;
 
     // Preserve the stored key if the frontend echoes back the masked sentinel.
-    let api_key = match provider.api_key.as_deref() {
-        Some(k) if k == MASKED_KEY => existing.api_key.clone(),
-        other => other.map(str::to_owned),
-    };
+    let api_key = resolve_api_key(provider.api_key.as_deref(), &existing.api_key);
 
     *existing = ProviderEntry {
         name: provider.name,
@@ -144,6 +141,15 @@ fn mask_provider(p: &ProviderEntry) -> serde_json::Value {
     })
 }
 
+/// Resolve the API key to store: preserve the existing key when the frontend
+/// echoes back the [`MASKED_KEY`] sentinel, otherwise use the new value.
+fn resolve_api_key(new_key: Option<&str>, existing_key: &Option<String>) -> Option<String> {
+    match new_key {
+        Some(k) if k == MASKED_KEY => existing_key.clone(),
+        other => other.map(str::to_owned),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -174,5 +180,26 @@ mod tests {
         let p = make_provider("test", None);
         let v = mask_provider(&p);
         assert!(v["apiKey"].is_null());
+    }
+
+    #[test]
+    fn resolve_api_key_preserves_key_on_sentinel() {
+        let existing = Some("sk-real-key".to_string());
+        let result = resolve_api_key(Some(MASKED_KEY), &existing);
+        assert_eq!(result, existing);
+    }
+
+    #[test]
+    fn resolve_api_key_clears_key_on_empty() {
+        let existing = Some("sk-real-key".to_string());
+        let result = resolve_api_key(None, &existing);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn resolve_api_key_updates_key_on_new_value() {
+        let existing = Some("sk-old-key".to_string());
+        let result = resolve_api_key(Some("sk-new-key"), &existing);
+        assert_eq!(result, Some("sk-new-key".to_string()));
     }
 }

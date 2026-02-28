@@ -168,8 +168,8 @@ function _showForm(container, existing, invoke, onRefresh) {
   saveBtn.addEventListener("click", async () => {
     const name    = document.getElementById("pf-name").value.trim();
     const baseUrl = document.getElementById("pf-url").value.trim();
-    const rawKey  = document.getElementById("pf-key").value;
-    const apiKey  = rawKey.trim() || null;
+    const inputApiKey  = document.getElementById("pf-key").value;
+    const apiKey  = inputApiKey.trim() || null;
     const models  = document
       .getElementById("pf-models")
       .value.split(",")

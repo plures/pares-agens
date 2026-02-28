@@ -791,13 +791,13 @@ body {
   color: var(--text-primary);
 }
 
-.btn-primary {
-  background: var(--accent) !important;
-  border-color: var(--accent) !important;
-  color: #fff !important;
+.dialog-footer .btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 
-.btn-primary:hover { background: var(--accent-hover) !important; border-color: var(--accent-hover) !important; }
+.dialog-footer .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 
 /* ── Scrollbar (Firefox) ─────────────────────────────────────────────────── */
 * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
