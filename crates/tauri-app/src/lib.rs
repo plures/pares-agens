@@ -12,6 +12,7 @@ use pares_agens_core::Event;
 use crate::state::{AppState, Settings};
 
 mod commands;
+mod settings;
 mod state;
 pub mod tray;
 
@@ -78,6 +79,12 @@ pub fn run() {
             commands::get_memories,
             commands::get_settings,
             commands::set_settings,
+            settings::list_providers,
+            settings::add_provider,
+            settings::update_provider,
+            settings::remove_provider,
+            settings::upsert_channel_adapter,
+            settings::set_routing,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Pares Agens");

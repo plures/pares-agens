@@ -330,9 +330,12 @@ body {
   border-radius: var(--radius-md);
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
   color: var(--text-primary);
-  max-width: 520px;
-  width: 90%;
+  max-width: 680px;
+  width: 94%;
   padding: 0;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .settings-dialog::backdrop {
@@ -340,35 +343,151 @@ body {
   backdrop-filter: blur(2px);
 }
 
+.settings-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
 .dialog-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 24px 0;
+  padding: 18px 24px 0;
+  flex-shrink: 0;
 }
 
 .dialog-header h2 { font-size: 16px; font-weight: 600; }
 
 .close-btn { font-size: 14px; }
 
-.settings-section {
+/* ── Tab navigation ──────────────────────────────────────────────────────── */
+.settings-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 14px 24px 0;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.tab-btn {
+  background: transparent;
   border: none;
-  padding: 20px 24px 0;
+  border-bottom: 2px solid transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  padding: 6px 12px 10px;
+  margin-bottom: -1px;
+  transition: color var(--transition), border-color var(--transition);
+}
+
+.tab-btn:hover { color: var(--text-primary); }
+
+.tab-btn.active {
+  border-bottom-color: var(--accent);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* ── Tab panels ──────────────────────────────────────────────────────────── */
+.settings-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+
+.tab-panel {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
-.settings-section legend {
+/* ── Shared form helpers ─────────────────────────────────────────────────── */
+.settings-description {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.settings-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 16px 0;
+}
+
+.btn-secondary {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  padding: 7px 14px;
+  transition: background var(--transition), color var(--transition);
+}
+
+.btn-secondary:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* ── Provider table ──────────────────────────────────────────────────────── */
+.provider-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.provider-table th {
+  text-align: left;
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   color: var(--text-muted);
-  margin-bottom: 12px;
-  padding: 0;
+  padding: 0 8px 8px;
+  border-bottom: 1px solid var(--border);
 }
 
-.settings-section label {
+.provider-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-table tbody tr:hover td { background: var(--bg-hover); }
+
+.provider-actions { display: flex; gap: 4px; }
+
+.icon-btn.danger { color: var(--danger); }
+.icon-btn.danger:hover { background: rgba(224, 92, 92, 0.12); color: var(--danger); }
+
+/* ── Inline add/edit form ────────────────────────────────────────────────── */
+.settings-inline-form {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+.settings-inline-form h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.settings-inline-form label {
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -376,16 +495,202 @@ body {
   color: var(--text-secondary);
 }
 
-/* Inline labels (e.g. checkbox rows) */
-.settings-section label.label-inline {
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
+.settings-inline-form input {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  padding: 7px 10px;
+  outline: none;
+  transition: border-color var(--transition);
 }
 
-.settings-section input,
-.settings-section textarea,
-.settings-section select {
+.settings-inline-form input:focus { border-color: var(--accent); }
+.settings-inline-form input:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.inline-form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ── Routing grid ────────────────────────────────────────────────────────── */
+.routing-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto auto;
+  gap: 6px 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.routing-group:last-child { border-bottom: none; }
+
+.routing-label {
+  grid-column: 1;
+  grid-row: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.routing-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  grid-column: 2;
+  grid-row: 1;
+  text-align: right;
+}
+
+.routing-group select {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  padding: 6px 8px;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.routing-group select:focus { border-color: var(--accent); }
+.routing-group select option { background: var(--bg-elevated); }
+
+/* ── Channel adapter cards ───────────────────────────────────────────────── */
+.channel-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.channel-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 16px;
+}
+
+.channel-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.channel-fields {
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+}
+
+.channel-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.channel-fields input {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  padding: 7px 10px;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.channel-fields input:focus { border-color: var(--accent); }
+
+/* ── Toggle switch ───────────────────────────────────────────────────────── */
+.toggle {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.toggle-input {
+  /* Visually hidden but still accessible */
+  clip: rect(0, 0, 0, 0);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+.toggle-slider {
+  background: var(--border);
+  border-radius: 12px;
+  display: inline-block;
+  height: 22px;
+  position: relative;
+  transition: background var(--transition);
+  width: 40px;
+  flex-shrink: 0;
+}
+
+.toggle-slider::after {
+  background: var(--text-muted);
+  border-radius: 50%;
+  content: "";
+  height: 16px;
+  left: 3px;
+  position: absolute;
+  top: 3px;
+  transition: transform var(--transition), background var(--transition);
+  width: 16px;
+}
+
+.toggle-input:checked + .toggle-slider {
+  background: var(--accent-dim);
+}
+
+.toggle-input:checked + .toggle-slider::after {
+  background: var(--accent);
+  transform: translateX(18px);
+}
+
+.toggle-input:focus-visible + .toggle-slider {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Preferences ─────────────────────────────────────────────────────────── */
+.pref-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pref-section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.pref-section label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.pref-section input[type="text"],
+.pref-section textarea {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -394,22 +699,79 @@ body {
   font-size: 13px;
   padding: 8px 10px;
   outline: none;
+  resize: vertical;
   transition: border-color var(--transition);
 }
 
-.settings-section input:focus,
-.settings-section textarea:focus,
-.settings-section select:focus { border-color: var(--accent); }
+.pref-section input[type="text"]:focus,
+.pref-section textarea:focus { border-color: var(--accent); }
 
-.settings-section textarea { resize: vertical; min-height: 60px; }
+.pref-toggle-row {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
 
-.settings-section select option { background: var(--bg-elevated); }
+.pref-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 
+.pref-label {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.pref-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.pref-checkbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.checkbox-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.checkbox-item {
+  align-items: center;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  font-size: 12px;
+  gap: 6px;
+  padding: 5px 10px;
+  transition: background var(--transition), color var(--transition);
+  user-select: none;
+}
+
+.checkbox-item:has(input:checked) {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.checkbox-item input { cursor: pointer; }
+
+/* ── Dialog footer ───────────────────────────────────────────────────────── */
 .dialog-footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 20px 24px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .dialog-footer button {
@@ -418,6 +780,7 @@ body {
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   cursor: pointer;
+  font-family: var(--font-sans);
   font-size: 13px;
   padding: 7px 16px;
   transition: background var(--transition), color var(--transition);
@@ -428,13 +791,13 @@ body {
   color: var(--text-primary);
 }
 
-.dialog-footer .btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+.btn-primary {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: #fff !important;
 }
 
-.dialog-footer .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn-primary:hover { background: var(--accent-hover) !important; border-color: var(--accent-hover) !important; }
 
 /* ── Scrollbar (Firefox) ─────────────────────────────────────────────────── */
 * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }

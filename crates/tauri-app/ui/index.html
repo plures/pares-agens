@@ -53,53 +53,56 @@
 
     <!-- ── Settings Dialog ────────────────────────────────────────────── -->
     <dialog id="settings-dialog" class="settings-dialog" aria-label="Settings">
-      <form method="dialog" id="settings-form">
+      <div class="settings-layout">
         <header class="dialog-header">
           <h2>Settings</h2>
-          <button class="icon-btn close-btn" value="cancel" aria-label="Close settings">✕</button>
+          <button id="btn-close-settings" class="icon-btn close-btn" aria-label="Close settings">✕</button>
         </header>
 
-        <fieldset class="settings-section">
-          <legend>Model</legend>
-          <label>
-            Model ID
-            <input type="text" id="s-model" name="model" placeholder="qwen3:235b" />
-          </label>
-          <label>
-            Endpoint URL
-            <input type="url" id="s-endpoint" name="endpoint" placeholder="http://localhost:11434/v1" />
-          </label>
-          <label>
-            System Prompt
-            <textarea id="s-system-prompt" name="systemPrompt" rows="3"></textarea>
-          </label>
-        </fieldset>
+        <!-- Tab navigation -->
+        <nav class="settings-tabs" role="tablist" aria-label="Settings sections">
+          <button role="tab" id="tab-btn-providers"   class="tab-btn active"
+                  aria-controls="tab-panel-providers"   aria-selected="true">Model Providers</button>
+          <button role="tab" id="tab-btn-routing"     class="tab-btn"
+                  aria-controls="tab-panel-routing"     aria-selected="false">Routing</button>
+          <button role="tab" id="tab-btn-channels"    class="tab-btn"
+                  aria-controls="tab-panel-channels"    aria-selected="false">Channels</button>
+          <button role="tab" id="tab-btn-preferences" class="tab-btn"
+                  aria-controls="tab-panel-preferences" aria-selected="false">Preferences</button>
+        </nav>
 
-        <fieldset class="settings-section">
-          <legend>Channel</legend>
-          <label>
-            Active Channel
-            <select id="s-channel" name="channel">
-              <option value="tauri">tauri (desktop)</option>
-              <option value="stdin">stdin</option>
-              <option value="telegram">telegram</option>
-            </select>
-          </label>
-        </fieldset>
+        <!-- Tab panels -->
+        <div class="settings-body">
+          <section id="tab-panel-providers"
+                   role="tabpanel" aria-labelledby="tab-btn-providers"
+                   class="tab-panel">
+            <div id="providers-content"></div>
+          </section>
 
-        <fieldset class="settings-section">
-          <legend>Startup</legend>
-          <label class="label-inline">
-            <input type="checkbox" id="s-auto-start" name="autoStart" />
-            Launch at login (minimised to tray)
-          </label>
-        </fieldset>
+          <section id="tab-panel-routing"
+                   role="tabpanel" aria-labelledby="tab-btn-routing"
+                   class="tab-panel" hidden>
+            <div id="routing-content"></div>
+          </section>
+
+          <section id="tab-panel-channels"
+                   role="tabpanel" aria-labelledby="tab-btn-channels"
+                   class="tab-panel" hidden>
+            <div id="channels-content"></div>
+          </section>
+
+          <section id="tab-panel-preferences"
+                   role="tabpanel" aria-labelledby="tab-btn-preferences"
+                   class="tab-panel" hidden>
+            <div id="preferences-content"></div>
+          </section>
+        </div>
 
         <footer class="dialog-footer">
-          <button type="button" id="btn-cancel-settings" value="cancel">Cancel</button>
+          <button type="button" id="btn-cancel-settings">Cancel</button>
           <button type="button" id="btn-save-settings" class="btn-primary">Save</button>
         </footer>
-      </form>
+      </div>
     </dialog>
 
   </div><!-- /#app -->
