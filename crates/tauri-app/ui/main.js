@@ -11,6 +11,7 @@
  */
 
 const { invoke } = window.__TAURI__.core;
+const { listen } = window.__TAURI__.event;
 
 // ── DOM refs ──────────────────────────────────────────────────────────────
 
@@ -226,6 +227,7 @@ async function openSettings() {
     document.getElementById("s-endpoint").value      = s.endpoint      ?? "";
     document.getElementById("s-system-prompt").value = s.systemPrompt  ?? "";
     document.getElementById("s-channel").value       = s.channel       ?? "tauri";
+    document.getElementById("s-auto-start").checked  = s.autoStart     ?? false;
   } catch (_) { /* proceed with whatever is in the inputs */ }
   settingsDialog.showModal();
 }
@@ -236,6 +238,7 @@ async function saveSettings() {
     endpoint:     document.getElementById("s-endpoint").value,
     systemPrompt: document.getElementById("s-system-prompt").value,
     channel:      document.getElementById("s-channel").value,
+    autoStart:    document.getElementById("s-auto-start").checked,
   };
   try {
     await invoke("set_settings", { settings });
@@ -255,6 +258,12 @@ settingsDialog.addEventListener("click", (e) => {
 });
 
 // ── Init ──────────────────────────────────────────────────────────────────
+
+// Open settings dialog when the tray "Settings" menu item is clicked.
+// listen() returns a Promise resolving to an unlisten fn; since this
+// listener must live for the entire app lifetime we fire-and-forget but
+// surface any registration errors to the console.
+listen("show-settings", () => openSettings()).catch(console.error);
 
 refreshMemories();
 chatInput.focus();
