@@ -2758,6 +2758,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pares-agens-marketplace"
+version = "0.2.0"
+dependencies = [
+ "pares-trainer",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "pares-agens-privacy"
 version = "0.2.0"
 dependencies = [
