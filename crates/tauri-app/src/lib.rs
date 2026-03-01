@@ -15,6 +15,7 @@ mod commands;
 mod migration;
 mod procedures;
 mod state;
+mod wizard;
 pub mod tray;
 
 /// Entry point called from `main.rs`.
@@ -68,6 +69,7 @@ pub fn run() {
                 ipc_handle: handle,
                 memory_store,
                 settings: Mutex::new(Settings::default()),
+                wizard_completed: Mutex::new(false),
                 procedures: Mutex::new(Vec::new()),
                 procedure_log: Mutex::new(Vec::new()),
             });
@@ -82,6 +84,10 @@ pub fn run() {
             commands::get_memories,
             commands::get_settings,
             commands::set_settings,
+            wizard::detect_docker_runner,
+            wizard::validate_api_key,
+            wizard::is_wizard_completed,
+            wizard::complete_wizard,
             migration::migration_detect,
             migration::migration_preview,
             migration::migration_run,
