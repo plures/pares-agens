@@ -209,8 +209,8 @@ validateBtn.addEventListener("click", async () => {
 
 document.getElementById("wizard-next-1").addEventListener("click", () => {
   if (state.modelSource === "cloud" && !state.apiKey) {
-    // Warn but allow proceeding — user can add the key in Settings later
-    apiKeyStatus.textContent = "⚠ No API key entered — you can add one in Settings later.";
+    // Warn but allow proceeding — cloud model will not work until an API key is configured
+    apiKeyStatus.textContent = "⚠ No API key entered — cloud model will be unavailable until an API key is configured.";
     apiKeyStatus.className = "wizard-hint hint-warn";
   }
   saveState();
