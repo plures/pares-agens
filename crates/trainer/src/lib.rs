@@ -3,6 +3,8 @@
 //! Provides LoRA-based fine-tuning, training data preparation, evaluation,
 //! and scheduling for periodic model refresh.
 
+pub mod skill_detection;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -28,6 +30,16 @@ pub enum TrainerError {
     /// JSON (de)serialisation failed.
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+}
+
+/// A single supervised training example with a prompt and its target completion.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrainingExample {
+    /// The input prompt presented to the model.
+    pub prompt: String,
+
+    /// The desired model completion for the given prompt.
+    pub completion: String,
 }
 
 /// Configuration for a LoRA fine-tuning run.
