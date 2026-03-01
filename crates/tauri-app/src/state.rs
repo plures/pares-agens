@@ -23,6 +23,9 @@ pub struct Settings {
     pub channel: String,
     /// System prompt prepended to every conversation.
     pub system_prompt: String,
+    /// Optional API key for cloud model providers (OpenAI, Anthropic, Google).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
     /// Launch at system startup, minimised to the system tray.
     pub auto_start: bool,
 }
@@ -34,6 +37,7 @@ impl Default for Settings {
             endpoint: "http://localhost:11434/v1".to_string(),
             channel: "tauri".to_string(),
             system_prompt: "You are Pares Agens, a helpful desktop AI assistant.".to_string(),
+            api_key: None,
             auto_start: false,
         }
     }
@@ -49,6 +53,12 @@ pub struct AppState {
     pub memory_store: Arc<InMemoryStore>,
     /// User-configurable settings (model, endpoint, channel, …).
     pub settings: Mutex<Settings>,
+    /// Whether the first-run wizard has been completed in this session.
+    ///
+    /// Durable completion is tracked in the frontend via `localStorage`; this
+    /// flag lets the backend acknowledge the wizard completion for the lifetime
+    /// of the current process.
+    pub wizard_completed: Mutex<bool>,
     /// All registered procedure records (config + DSL body).
     pub procedures: Mutex<Vec<ProcedureRecord>>,
     /// Execution log for all procedures (most recent last).

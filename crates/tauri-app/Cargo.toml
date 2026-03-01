@@ -17,5 +17,6 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+reqwest.workspace = true
 pares-agens-core = { path = "../core" }
 pares-agens-channels = { path = "../channels" }
