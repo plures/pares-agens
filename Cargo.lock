@@ -2761,6 +2761,7 @@ dependencies = [
 name = "pares-agens-tauri"
 version = "0.2.0"
 dependencies = [
+ "pares-agens",
  "pares-agens-channels",
  "pares-agens-core",
  "serde",
@@ -2787,6 +2788,16 @@ dependencies = [
  "tokio",
  "tracing",
  "wiremock",
+]
+
+[[package]]
+name = "pares-trainer"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

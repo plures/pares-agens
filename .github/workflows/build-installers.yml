@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - "release/**"
   workflow_dispatch:
     inputs:
       tag:
@@ -35,12 +37,15 @@ jobs:
             bundle_target: dmg
             artifact_glob: "crates/desktop/target/universal-apple-darwin/release/bundle/dmg/*.dmg"
 
-          # ── Linux x86-64: AppImage ──────────────────────────────────────
+          # ── Linux x86-64: AppImage + deb + rpm ─────────────────────────
           - name: Linux AppImage
             platform: ubuntu-22.04
             rust_target: x86_64-unknown-linux-gnu
-            bundle_target: appimage
-            artifact_glob: "crates/desktop/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage"
+            bundle_target: appimage,deb,rpm
+            artifact_glob: |
+              crates/desktop/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
+              crates/desktop/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
+              crates/desktop/target/x86_64-unknown-linux-gnu/release/bundle/rpm/*.rpm
 
     runs-on: ${{ matrix.platform }}
 
@@ -121,6 +126,23 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: cargo tauri build --target ${{ matrix.rust_target }} --bundles ${{ matrix.bundle_target }}
 
+      # ── Windows code signing (SignPath) ───────────────────────────────
+      - name: Sign MSI (SignPath)
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ secrets.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_POLICY_SLUG: ${{ secrets.SIGNPATH_POLICY_SLUG }}
+        run: |
+          if [[ -z "${SIGNPATH_API_TOKEN}" ]]; then
+            echo "SIGNPATH_API_TOKEN not set – skipping code signing"
+            exit 0
+          fi
+          MSI=$(ls crates/desktop/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi)
+          bash scripts/sign-windows.sh "${MSI}"
+
       - name: Build and bundle (macOS)
         if: matrix.platform == 'macos-latest'
         working-directory: crates/desktop
@@ -153,6 +175,8 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: build
+    # Only publish a release on tag pushes or manual dispatch (not branch pushes).
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write

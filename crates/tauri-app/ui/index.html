@@ -26,6 +26,7 @@
         <span id="agent-status" class="status-dot online" title="Online"></span>
         <h1>Pares Agens</h1>
         <nav class="header-nav">
+          <button id="btn-procedures" class="icon-btn" title="Procedures" aria-haspopup="dialog">⚡</button>
           <button id="btn-settings" class="icon-btn" title="Settings" aria-haspopup="dialog">⚙</button>
         </nav>
       </header>
@@ -102,6 +103,85 @@
           <button type="button" id="btn-cancel-settings">Cancel</button>
           <button type="button" id="btn-save-settings" class="btn-primary">Save</button>
         </footer>
+      </div>
+    </dialog>
+
+    <!-- ── Procedure Editor Dialog ────────────────────────────────────── -->
+    <dialog id="procedures-dialog" class="procedures-dialog" aria-label="Procedure Editor">
+      <header class="dialog-header">
+        <h2>⚡ Procedures</h2>
+        <button class="icon-btn close-btn" id="btn-close-procedures" aria-label="Close procedure editor">✕</button>
+      </header>
+
+      <div class="procedures-body">
+
+        <!-- Left: procedure list -->
+        <aside class="proc-list-panel" aria-label="Procedure list">
+          <div class="proc-list-toolbar">
+            <select id="proc-template-select" aria-label="Select template" title="Select a template">
+              <option value="">— New from template —</option>
+              <option value="greeting">greeting</option>
+              <option value="scheduled_task">scheduled task</option>
+              <option value="approval_gate">approval gate</option>
+              <option value="memory_pattern">memory pattern</option>
+            </select>
+            <button type="button" id="btn-create-proc" class="btn-primary" aria-label="Create procedure from template">＋</button>
+          </div>
+          <ul id="proc-list" class="proc-list" role="listbox" aria-label="Procedures"></ul>
+        </aside>
+
+        <!-- Right: editor + log -->
+        <section class="proc-editor-panel" aria-label="Procedure editor">
+          <!-- Placeholder when nothing is selected -->
+          <div id="proc-empty" class="proc-empty">
+            <p>Select a procedure to view or edit it.</p>
+          </div>
+
+          <!-- Editor view (hidden until a procedure is selected) -->
+          <div id="proc-editor-view" class="proc-editor-view" hidden>
+            <div class="proc-editor-toolbar">
+              <div class="proc-meta">
+                <span id="proc-detail-name" class="proc-detail-name"></span>
+                <span id="proc-detail-type" class="proc-detail-type badge"></span>
+              </div>
+              <div class="proc-editor-actions">
+                <label class="toggle-label" title="Enable / disable this procedure">
+                  <input type="checkbox" id="proc-enabled-toggle" role="switch" aria-label="Enabled" />
+                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                  <span class="toggle-text">Enabled</span>
+                </label>
+                <button type="button" id="btn-edit-proc" class="btn-secondary" aria-pressed="false">Edit</button>
+                <button type="button" id="btn-save-proc" class="btn-primary" hidden>Save</button>
+              </div>
+            </div>
+
+            <textarea
+              id="proc-body"
+              class="proc-body"
+              spellcheck="false"
+              aria-label="Procedure definition"
+              readonly
+            ></textarea>
+
+            <!-- Execution log -->
+            <details class="proc-log-section" open>
+              <summary class="proc-log-summary">Execution Log</summary>
+              <table class="proc-log-table" aria-label="Execution log">
+                <thead>
+                  <tr>
+                    <th scope="col">Time</th>
+                    <th scope="col">Duration</th>
+                    <th scope="col">Trigger</th>
+                  </tr>
+                </thead>
+                <tbody id="proc-log-body">
+                  <tr><td colspan="3" class="log-empty">No executions recorded yet.</td></tr>
+                </tbody>
+              </table>
+            </details>
+          </div>
+        </section>
+
       </div>
     </dialog>
 

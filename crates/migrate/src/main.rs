@@ -3,14 +3,14 @@
 //! # Usage
 //!
 //! ```text
-//! pares-agens migrate --from ~/.openclaw [--output ./migration] [--dry-run]
+//! pares-agens migrate [--from ~/.openclaw] [--output ./migration] [--dry-run]
 //! ```
 
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use pares_agens_migrate::migrate;
+use pares_agens_migrate::{migrate, openclaw};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -29,8 +29,11 @@ enum Commands {
     /// Migrate data from an existing OpenClaw installation.
     Migrate {
         /// Path to the OpenClaw installation directory.
+        ///
+        /// When omitted, the tool auto-detects the default location
+        /// (`~/.openclaw`).
         #[arg(long, value_name = "PATH")]
-        from: PathBuf,
+        from: Option<PathBuf>,
 
         /// Directory to write migrated output files.
         ///
@@ -49,7 +52,17 @@ fn main() {
 
     match cli.command {
         Commands::Migrate { from, output, dry_run } => {
-            match migrate::run(&from, &output, dry_run) {
+            let source = match from.or_else(openclaw::auto_detect) {
+                Some(p) => p,
+                None => {
+                    eprintln!(
+                        "No OpenClaw installation found. \
+                         Use --from <PATH> to specify one."
+                    );
+                    std::process::exit(1);
+                }
+            };
+            match migrate::run(&source, &output, dry_run) {
                 Ok(report) => {
                     report.print();
                 }

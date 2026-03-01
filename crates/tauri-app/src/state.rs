@@ -119,6 +119,7 @@ impl Default for AgentPreferences {
 // ---------------------------------------------------------------------------
 // Top-level Settings
 // ---------------------------------------------------------------------------
+use crate::procedures::{ProcedureLogEntry, ProcedureRecord};
 
 /// User-configurable settings stored in PluresDB state.
 ///
@@ -199,4 +200,8 @@ pub struct AppState {
     pub memory_store: Arc<InMemoryStore>,
     /// User-configurable settings (model, endpoint, channel, …).
     pub settings: Mutex<Settings>,
+    /// All registered procedure records (config + DSL body).
+    pub procedures: Mutex<Vec<ProcedureRecord>>,
+    /// Execution log for all procedures (most recent last).
+    pub procedure_log: Mutex<Vec<ProcedureLogEntry>>,
 }

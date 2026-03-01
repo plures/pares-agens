@@ -13,6 +13,8 @@ use crate::state::{AppState, Settings};
 
 mod commands;
 mod settings;
+mod migration;
+mod procedures;
 mod state;
 pub mod tray;
 
@@ -67,6 +69,8 @@ pub fn run() {
                 ipc_handle: handle,
                 memory_store,
                 settings: Mutex::new(Settings::default()),
+                procedures: Mutex::new(Vec::new()),
+                procedure_log: Mutex::new(Vec::new()),
             });
 
             // ── System tray ───────────────────────────────────────────────
@@ -85,6 +89,15 @@ pub fn run() {
             settings::remove_provider,
             settings::upsert_channel_adapter,
             settings::set_routing,
+            migration::migration_detect,
+            migration::migration_preview,
+            migration::migration_run,
+            procedures::list_procedures,
+            procedures::get_procedure,
+            procedures::save_procedure,
+            procedures::toggle_procedure,
+            procedures::get_procedure_log,
+            procedures::create_from_template,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Pares Agens");
