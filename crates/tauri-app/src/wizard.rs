@@ -83,7 +83,9 @@ pub async fn validate_api_key(provider: String, api_key: String) -> Result<bool,
             .get(url)
             .header("x-api-key", &api_key)
             .header("anthropic-version", "2023-06-01"),
-        "google" => client.get(url).query(&[("key", &api_key)]),
+        "google" => client
+            .get(url)
+            .header("x-goog-api-key", &api_key),
         _ => unreachable!("models_endpoint already filtered unknown providers"),
     };
 
