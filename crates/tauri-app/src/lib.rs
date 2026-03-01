@@ -1,10 +1,6 @@
 use std::sync::Arc;
 
-use tauri::{
-    menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
-    App, Manager,
-};
+use tauri::Manager;
 use tokio::sync::Mutex;
 use tracing::info;
 
@@ -17,17 +13,26 @@ use crate::state::{AppState, Settings};
 
 mod commands;
 mod migration;
+mod procedures;
 mod state;
+pub mod tray;
 
 /// Entry point called from `main.rs`.
 ///
 /// Wires up:
 /// - Tauri IPC adapter ↔ core agent event loop (background task)
-/// - System tray with Show / Quit menu items
+/// - System tray with Show/Hide, Settings, and Quit menu items
+/// - Window-state persistence (size and position restored on next launch)
+/// - Auto-start at system login when [`Settings::auto_start`] is enabled
 /// - Shared [`AppState`] exposed to every Tauri command
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|app| {
             // ── IPC bridge ────────────────────────────────────────────────
             let (adapter, handle) = tauri_ipc_channel("user");
@@ -63,10 +68,12 @@ pub fn run() {
                 ipc_handle: handle,
                 memory_store,
                 settings: Mutex::new(Settings::default()),
+                procedures: Mutex::new(Vec::new()),
+                procedure_log: Mutex::new(Vec::new()),
             });
 
             // ── System tray ───────────────────────────────────────────────
-            setup_tray(app)?;
+            tray::setup_tray(app)?;
 
             Ok(())
         })
@@ -78,33 +85,13 @@ pub fn run() {
             migration::migration_detect,
             migration::migration_preview,
             migration::migration_run,
+            procedures::list_procedures,
+            procedures::get_procedure,
+            procedures::save_procedure,
+            procedures::toggle_procedure,
+            procedures::get_procedure_log,
+            procedures::create_from_template,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Pares Agens");
-}
-
-/// Build and register the system tray icon with a minimal context menu.
-fn setup_tray(app: &mut App) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &quit])?;
-
-    TrayIconBuilder::new()
-        .menu(&menu)
-        .show_menu_on_left_click(true)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
-            }
-            "quit" => {
-                app.exit(0);
-            }
-            _ => {}
-        })
-        .build(app)?;
-
-    Ok(())
 }

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PluresLM Memory — Pares Agens</title>
+  <meta name="description" content="How pluresLM memory works in Pares Agens — automatic recall, manual store/search, categories, and cross-device sync." />
+  <link rel="stylesheet" href="../style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <a href="../" class="nav-logo" style="text-decoration:none">
+      <span class="dot"></span>
+      pares&nbsp;agens
+    </a>
+    <ul class="nav-links">
+      <li><a href="../#features">Features</a></li>
+      <li><a href="../#pricing">Pricing</a></li>
+      <li><a href="../#downloads">Downloads</a></li>
+      <li><a href="./" style="color:var(--text)">Docs</a></li>
+      <li>
+        <a href="https://github.com/plures/pares-agens" class="btn btn-outline" style="padding:7px 14px">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          GitHub
+        </a>
+      </li>
+    </ul>
+  </div>
+</nav>
+
+<div class="docs-shell">
+  <aside class="docs-sidebar">
+    <div class="docs-sidebar-section">
+      <h4>Get started</h4>
+      <ul class="docs-nav">
+        <li><a href="getting-started.html">Installation &amp; first message</a></li>
+      </ul>
+    </div>
+    <div class="docs-sidebar-section">
+      <h4>Guides</h4>
+      <ul class="docs-nav">
+        <li><a href="procedure-authoring.html">Procedure authoring</a></li>
+        <li><a href="model-configuration.html">Model configuration</a></li>
+        <li><a href="channel-setup.html">Channel setup</a></li>
+        <li><a href="memory.html" class="active">PluresLM memory</a></li>
+        <li><a href="migration.html">Migration from OpenClaw</a></li>
+        <li><a href="pro-features.html">Pro features</a></li>
+      </ul>
+    </div>
+    <div class="docs-sidebar-section">
+      <h4>Reference</h4>
+      <ul class="docs-nav">
+        <li><a href="api-reference.html">API reference</a></li>
+      </ul>
+    </div>
+  </aside>
+
+  <main class="docs-content">
+    <h1>PluresLM Memory</h1>
+    <p class="docs-lead">Pares Agens uses <strong>pluresLM</strong> as its memory substrate. Every conversation, code pattern, and decision is stored in a local vector store and recalled automatically to provide the agent with relevant context.</p>
+
+    <h2>How it works</h2>
+    <p>When you send a message the agent:</p>
+    <ol>
+      <li><strong>Recalls</strong> the top-k most semantically similar memories via <code>MemoryClient::recall</code></li>
+      <li>Injects those memories as context into the model prompt</li>
+      <li>Generates a response</li>
+      <li><strong>Captures</strong> the full turn (user message + response) back into memory via <code>MemoryClient::capture</code></li>
+    </ol>
+    <p>This loop happens automatically through the built-in <code>AutoRecall</code> and <code>AutoCapture</code> procedures.</p>
+
+    <h2>Memory categories</h2>
+    <p>Each memory entry has a <code>category</code> field that controls how it is indexed and recalled:</p>
+    <table>
+      <thead>
+        <tr><th>Category</th><th>Description</th><th>Stored automatically</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>conversation</code></td><td>Chat turns (user + assistant)</td><td>✅ Yes</td></tr>
+        <tr><td><code>code-pattern</code></td><td>Code snippets and explanations</td><td>✅ Yes (when code detected)</td></tr>
+        <tr><td><code>error-fix</code></td><td>Error messages paired with their solutions</td><td>✅ Yes</td></tr>
+        <tr><td><code>preference</code></td><td>Expressed user preferences</td><td>✅ Yes</td></tr>
+        <tr><td><code>decision</code></td><td>Significant decisions and their rationale</td><td>✅ Yes</td></tr>
+        <tr><td><code>custom</code></td><td>Any category you define</td><td>Manual only</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Manually storing a memory</h2>
+    <pre><code>pares agens memory store \
+  --content "Prefer tabs over spaces in all Rust files" \
+  --category preference \
+  --tags "rust,formatting"</code></pre>
+    <p>Or from within the chat:</p>
+    <pre><code>You: /memory store "Deploy always runs on Friday afternoons" --category decision</code></pre>
+
+    <h2>Manually searching memories</h2>
+    <pre><code>pares agens memory search "rust formatting preferences"</code></pre>
+    <pre><code>Score  Category     Content
+0.94   preference   Prefer tabs over spaces in all Rust files
+0.81   decision     Agreed to use rustfmt defaults for new crates
+0.72   code-pattern Example of cargo fmt configuration in Cargo.toml</code></pre>
+
+    <h2>Viewing recent memories</h2>
+    <pre><code># List recent memories
+pares agens memory list --limit 20
+
+# Filter by category
+pares agens memory list --category preference</code></pre>
+
+    <h2>Memory storage</h2>
+    <p>By default memory is stored in a local PluresDB database at:</p>
+    <pre><code>~/.local/share/pares-agens/memory.db</code></pre>
+    <p>The database uses a flat-file format with AES-256 encryption at rest. No cloud sync occurs on the Free plan.</p>
+
+    <h2>Clearing memory</h2>
+    <pre><code># Clear all memories (irreversible)
+pares agens memory clear
+
+# Clear a specific category
+pares agens memory clear --category conversation</code></pre>
+
+    <h2>Semantic search under the hood</h2>
+    <p>pluresLM uses a local embedding model (sentence-transformers compatible) to convert text into vectors. Recall queries perform approximate nearest-neighbour search using HNSW. The embedding model runs entirely on your CPU — no network calls are made.</p>
+
+    <h2>Cross-device memory sync (Pro)</h2>
+    <p>With a Pro licence, memories sync across all your devices via Hyperswarm P2P. Add to <code>config.toml</code>:</p>
+    <pre><code>[sync]
+enabled = true
+topic   = "my-private-topic-key"   # shared secret between your devices</code></pre>
+    <p>See <a href="pro-features.html">Pro Features</a> for details.</p>
+  </main>
+</div>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-logo">
+      <span style="width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block"></span>
+      pares agens
+    </div>
+    <ul class="footer-links">
+      <li><a href="./">Docs</a></li>
+      <li><a href="https://github.com/plures/pares-agens">GitHub</a></li>
+      <li><a href="https://github.com/plures/pares-agens/blob/main/LICENSE">License (AGPL-3.0)</a></li>
+    </ul>
+    <span class="footer-copy">© 2026 Plures. AGPL-3.0.</span>
+  </div>
+</footer>
+
+</body>
+</html>

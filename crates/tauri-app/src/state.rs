@@ -6,6 +6,8 @@ use tokio::sync::Mutex;
 use pares_agens_channels::tauri_ipc::TauriIpcHandle;
 use pares_agens_core::memory::store::InMemoryStore;
 
+use crate::procedures::{ProcedureLogEntry, ProcedureRecord};
+
 /// User-configurable settings stored in PluresDB state.
 ///
 /// Persisted across sessions via [`crate::commands::get_settings`] /
@@ -21,6 +23,8 @@ pub struct Settings {
     pub channel: String,
     /// System prompt prepended to every conversation.
     pub system_prompt: String,
+    /// Launch at system startup, minimised to the system tray.
+    pub auto_start: bool,
 }
 
 impl Default for Settings {
@@ -30,6 +34,7 @@ impl Default for Settings {
             endpoint: "http://localhost:11434/v1".to_string(),
             channel: "tauri".to_string(),
             system_prompt: "You are Pares Agens, a helpful desktop AI assistant.".to_string(),
+            auto_start: false,
         }
     }
 }
@@ -44,4 +49,8 @@ pub struct AppState {
     pub memory_store: Arc<InMemoryStore>,
     /// User-configurable settings (model, endpoint, channel, …).
     pub settings: Mutex<Settings>,
+    /// All registered procedure records (config + DSL body).
+    pub procedures: Mutex<Vec<ProcedureRecord>>,
+    /// Execution log for all procedures (most recent last).
+    pub procedure_log: Mutex<Vec<ProcedureLogEntry>>,
 }
