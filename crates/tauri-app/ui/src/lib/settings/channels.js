@@ -123,7 +123,10 @@ export function readChannelAdapters(container) {
 
     for (const f of def.fields) {
       // Always include the field so users can explicitly clear a stored value.
-      entry[_camel(f.id)] = container.querySelector(`#ch-${def.kind}-${f.id}`)?.value?.trim() ?? "";
+      const input = container.querySelector(`#ch-${def.kind}-${f.id}`);
+      const rawValue = input ? input.value : null;
+      const trimmed = typeof rawValue === "string" ? rawValue.trim() : null;
+      entry[_camel(f.id)] = trimmed === "" || trimmed === null ? null : trimmed;
     }
 
     adapters.push(entry);
