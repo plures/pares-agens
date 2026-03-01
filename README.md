@@ -102,15 +102,15 @@ model = "gpt-5"
 | | Free | Pro $9/mo |
 |---|---|---|
 | Local models | ✅ | ✅ |
-| Cloud models | ✅ (bring your key) | ✅ |
-| PluresLM memory | ✅ Unlimited | ✅ |
-| Devices | 1 | Unlimited |
+| Cloud models | ✅ | ✅ |
+| PluresLM memory | ✅ | ✅ |
+| Devices | 3 | 6 |
 | Model routing | — | ✅ |
-| P2P sync | — | ✅ |
-| MCP tools | — | ✅ |
-| Praxis audit export | — | ✅ |
+| P2P sync | ✅ | ✅ |
+| MCP tools | ✅ | ✅ |
+| Praxis audit | — | ✅ |
 
-## Part of Pares
+## Pares Sociorum
 
 | Product | Role |
 |---|---|
@@ -118,6 +118,7 @@ model = "gpt-5"
 | **Pares Agens** | AI agent ← *you are here* |
 | **Pares Manus** | Capability nodes (Windows/macOS/mobile) |
 | **Pares Rector** | Goal-based orchestrator |
+| **Pares Saxum** | Rock-Lobster plugin (ops interface) |
 
 All built on [PluresDB](https://github.com/plures/pluresdb) + [Hyperswarm](https://github.com/plures/hyperswarm).
 
