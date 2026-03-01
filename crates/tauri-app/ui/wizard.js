@@ -407,9 +407,18 @@ function initWizard() {
   applyStoredModelSource();
   applyStoredSystemPrompt();
 
+  // Normalize step from persisted state (localStorage) to a safe, in-range value
+  const rawStep = typeof state.step === "number"
+    ? state.step
+    : parseInt(state.step, 10);
+  let step = Number.isFinite(rawStep) ? rawStep : 0;
+  if (step < 0) step = 0;
+  if (step >= TOTAL_STEPS) step = TOTAL_STEPS - 1;
+  state.step = step;
+
   overlay.hidden = false;
   overlay.removeAttribute("aria-hidden");
-  showStep(state.step);
+  showStep(step);
 
   // Probe Docker in background in case user arrives at step 1 quickly
   runDockerDetect();
