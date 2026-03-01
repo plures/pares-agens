@@ -1,0 +1,12 @@
+[book]
+title = "Pares Agens Documentation"
+authors = ["Plures"]
+description = "User-facing documentation for Pares Agens — the local-first AI agent framework."
+language = "en"
+multilingual = false
+src = "src"
+
+[output.html]
+site-url = "/docs/book/"
+git-repository-url = "https://github.com/plures/pares-agens"
+edit-url-template = "https://github.com/plures/pares-agens/edit/main/docs/book/src/{path}"

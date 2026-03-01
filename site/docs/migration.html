@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Migration from OpenClaw — Pares Agens</title>
+  <meta name="description" content="Step-by-step guide to migrating an existing OpenClaw installation to Pares Agens." />
+  <link rel="stylesheet" href="../style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <a href="../" class="nav-logo" style="text-decoration:none">
+      <span class="dot"></span>
+      pares&nbsp;agens
+    </a>
+    <ul class="nav-links">
+      <li><a href="../#features">Features</a></li>
+      <li><a href="../#pricing">Pricing</a></li>
+      <li><a href="../#downloads">Downloads</a></li>
+      <li><a href="./" style="color:var(--text)">Docs</a></li>
+      <li>
+        <a href="https://github.com/plures/pares-agens" class="btn btn-outline" style="padding:7px 14px">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          GitHub
+        </a>
+      </li>
+    </ul>
+  </div>
+</nav>
+
+<div class="docs-shell">
+  <aside class="docs-sidebar">
+    <div class="docs-sidebar-section">
+      <h4>Get started</h4>
+      <ul class="docs-nav">
+        <li><a href="getting-started.html">Installation &amp; first message</a></li>
+      </ul>
+    </div>
+    <div class="docs-sidebar-section">
+      <h4>Guides</h4>
+      <ul class="docs-nav">
+        <li><a href="procedure-authoring.html">Procedure authoring</a></li>
+        <li><a href="model-configuration.html">Model configuration</a></li>
+        <li><a href="channel-setup.html">Channel setup</a></li>
+        <li><a href="memory.html">PluresLM memory</a></li>
+        <li><a href="migration.html" class="active">Migration from OpenClaw</a></li>
+        <li><a href="pro-features.html">Pro features</a></li>
+      </ul>
+    </div>
+    <div class="docs-sidebar-section">
+      <h4>Reference</h4>
+      <ul class="docs-nav">
+        <li><a href="api-reference.html">API reference</a></li>
+      </ul>
+    </div>
+  </aside>
+
+  <main class="docs-content">
+    <h1>Migration from OpenClaw</h1>
+    <p class="docs-lead">Step-by-step guide to migrating an existing OpenClaw installation to Pares Agens.</p>
+
+    <h2>Overview of changes</h2>
+    <table>
+      <thead>
+        <tr><th>Concept</th><th>OpenClaw</th><th>Pares Agens</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Configuration</td><td><code>openclaw.json</code></td><td><code>~/.config/pares-agens/config.toml</code></td></tr>
+        <tr><td>Plugin system</td><td>TypeScript plugins</td><td>Rust procedures</td></tr>
+        <tr><td>Memory store</td><td>SQLite + custom schema</td><td>PluresDB (local vector store)</td></tr>
+        <tr><td>Model config</td><td>Per-plugin model key</td><td>Central <code>[model]</code> section</td></tr>
+        <tr><td>Telegram channel</td><td>Plugin: <code>@openclaw/telegram</code></td><td>Built-in <code>[[channels]]</code> entry</td></tr>
+        <tr><td>CLI</td><td><code>openclaw</code></td><td><code>pares</code></td></tr>
+      </tbody>
+    </table>
+
+    <h2>Before you start</h2>
+    <ol>
+      <li>
+        <strong>Back up your OpenClaw data:</strong>
+        <pre><code>cp -r ~/.openclaw ~/.openclaw-backup-$(date +%Y%m%d)</code></pre>
+      </li>
+      <li><strong>Note your current model and API key settings</strong> — you will re-enter them in the new config.</li>
+      <li>
+        <strong>Export your OpenClaw memory</strong> (if you want to migrate conversation history):
+        <pre><code>openclaw memory export --format json &gt; openclaw-memory.json</code></pre>
+      </li>
+    </ol>
+
+    <h2>Step 1 — Install Pares Agens</h2>
+    <pre><code>curl -sSL install-pares.plures.io | sh</code></pre>
+    <p>Verify the install:</p>
+    <pre><code>pares --version
+# pares-agens 0.1.0</code></pre>
+
+    <h2>Step 2 — Initialise</h2>
+    <pre><code>pares agens init --name="my-assistant"</code></pre>
+    <p>This creates <code>~/.config/pares-agens/config.toml</code>.</p>
+
+    <h2>Step 3 — Migrate model configuration</h2>
+    <p>Open your old <code>openclaw.json</code> and locate the model settings. Translate them into the new format:</p>
+
+    <p><strong>OpenClaw (<code>openclaw.json</code>)</strong></p>
+    <pre><code>{
+  "model": {
+    "provider": "openai",
+    "apiKey": "sk-...",
+    "model": "gpt-4o"
+  }
+}</code></pre>
+
+    <p><strong>Pares Agens (<code>config.toml</code>)</strong></p>
+    <pre><code>[model]
+provider = "openai"
+base_url = "https://api.openai.com/v1"
+model    = "gpt-4o"
+# Set OPENAI_API_KEY env var instead of storing the key here</code></pre>
+
+    <p>See the <a href="model-configuration.html">Model Configuration</a> guide for the full reference.</p>
+
+    <h2>Step 4 — Migrate channel configuration</h2>
+    <p><strong>OpenClaw</strong></p>
+    <pre><code>{
+  "plugins": [
+    { "name": "@openclaw/telegram", "token": "123456789:ABCdef..." }
+  ]
+}</code></pre>
+
+    <p><strong>Pares Agens</strong></p>
+    <pre><code>[[channels]]
+type  = "telegram"
+token = "123456789:ABCdef..."
+allowed_ids = [987654321]</code></pre>
+
+    <p>See <a href="channel-setup.html">Channel Setup</a> for all options.</p>
+
+    <h2>Step 5 — Import OpenClaw memory (optional)</h2>
+    <p>If you exported your memory in Step 0, import it into pluresLM:</p>
+    <pre><code>pares agens memory import --format openclaw openclaw-memory.json</code></pre>
+    <p>This converts each OpenClaw memory entry into a pluresLM <code>conversation</code> memory with the original timestamp preserved.</p>
+    <div class="callout">
+      <strong>Note:</strong> Only text-based memories are migrated. Attachments and binary data are skipped.
+    </div>
+
+    <h2>Step 6 — Migrate custom plugins</h2>
+    <p>OpenClaw plugins written in TypeScript need to be rewritten as Rust procedures. The concepts map directly:</p>
+    <table>
+      <thead>
+        <tr><th>OpenClaw plugin</th><th>Pares Agens equivalent</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>onMessage</code> handler</td><td><code>Procedure</code> with <code>handles(Event::Message)</code></td></tr>
+        <tr><td><code>onTimer</code> handler</td><td><code>Procedure</code> with <code>handles(Event::Timer)</code></td></tr>
+        <tr><td><code>memory.store()</code></td><td><code>MemoryClient::capture()</code></td></tr>
+        <tr><td><code>memory.search()</code></td><td><code>MemoryClient::recall()</code></td></tr>
+        <tr><td><code>model.complete()</code></td><td><code>ModelClient::complete()</code></td></tr>
+      </tbody>
+    </table>
+    <p>See <a href="procedure-authoring.html">Procedure Authoring</a> for full examples.</p>
+
+    <h2>Step 7 — Test the migration</h2>
+    <pre><code>pares agens start
+pares agens chat</code></pre>
+    <p>Send a test message. Verify the agent responds and memory is working:</p>
+    <pre><code>pares agens memory list --limit 5</code></pre>
+
+    <div class="callout success">
+      <strong>✅ Migration complete!</strong>
+      Your agent is now running on Pares Agens with the same model and channel configuration as OpenClaw.
+    </div>
+
+    <h2>Getting help</h2>
+    <p>If you run into issues during migration, open an issue on <a href="https://github.com/plures/pares-agens/issues">GitHub</a> with the <code>migration</code> label.</p>
+  </main>
+</div>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-logo">
+      <span style="width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block"></span>
+      pares agens
+    </div>
+    <ul class="footer-links">
+      <li><a href="./">Docs</a></li>
+      <li><a href="https://github.com/plures/pares-agens">GitHub</a></li>
+      <li><a href="https://github.com/plures/pares-agens/blob/main/LICENSE">License (AGPL-3.0)</a></li>
+    </ul>
+    <span class="footer-copy">© 2026 Plures. AGPL-3.0.</span>
+  </div>
+</footer>
+
+</body>
+</html>
