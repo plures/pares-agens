@@ -91,13 +91,21 @@ function saveState() {
 
 // ── Navigation helpers ────────────────────────────────────────────────────────
 
+/** Clamp a step index to the valid range [0, TOTAL_STEPS - 1]. */
+function clampStep(n) {
+  const raw = parseInt(n, 10);
+  return Number.isFinite(raw) ? Math.max(0, Math.min(raw, TOTAL_STEPS - 1)) : 0;
+}
+
 function showStep(n) {
-  steps.forEach((s, i) => s.hidden = (i !== n));
-  progressFill.style.width = `${((n + 1) / TOTAL_STEPS) * 100}%`;
-  state.step = n;
+  // Guard against out-of-range indices from corrupted localStorage state
+  const safe = clampStep(n);
+  steps.forEach((s, i) => s.hidden = (i !== safe));
+  progressFill.style.width = `${((safe + 1) / TOTAL_STEPS) * 100}%`;
+  state.step = safe;
   saveState();
   // Focus first interactive element in the new step
-  const first = steps[n].querySelector("input, select, textarea, button");
+  const first = steps[safe].querySelector("input, select, textarea, button");
   if (first) first.focus();
 }
 
@@ -366,6 +374,7 @@ async function finishWizard() {
     channel,
     systemPrompt,
     ...(apiKey ? { apiKey } : {}),
+    ...(state.telegramToken ? { telegramToken: state.telegramToken } : {}),
   };
 
   try {
@@ -407,17 +416,12 @@ function initWizard() {
   applyStoredModelSource();
   applyStoredSystemPrompt();
 
-  // Normalize step from persisted state (localStorage) to a safe, in-range value
-  const rawStep = typeof state.step === "number"
-    ? state.step
-    : parseInt(state.step, 10);
-  let step = Number.isFinite(rawStep) ? rawStep : 0;
-  if (step < 0) step = 0;
-  if (step >= TOTAL_STEPS) step = TOTAL_STEPS - 1;
-  state.step = step;
-
   overlay.hidden = false;
   overlay.removeAttribute("aria-hidden");
+
+  // Normalize step from persisted state to a safe, in-range value
+  const step = clampStep(state.step);
+  state.step = step;
   showStep(step);
 
   // Probe Docker in background in case user arrives at step 1 quickly

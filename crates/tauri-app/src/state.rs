@@ -26,6 +26,9 @@ pub struct Settings {
     /// Optional API key for cloud model providers (OpenAI, Anthropic, Google).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
+    /// Optional Telegram bot token for the Telegram channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram_token: Option<String>,
     /// Launch at system startup, minimised to the system tray.
     pub auto_start: bool,
 }
@@ -38,6 +41,7 @@ impl Default for Settings {
             channel: "tauri".to_string(),
             system_prompt: "You are Pares Agens, a helpful desktop AI assistant.".to_string(),
             api_key: None,
+            telegram_token: None,
             auto_start: false,
         }
     }

@@ -25,6 +25,7 @@ const btnSettings   = document.getElementById("btn-settings");
 const settingsDialog = document.getElementById("settings-dialog");
 const btnSave       = document.getElementById("btn-save-settings");
 const btnCancel     = document.getElementById("btn-cancel-settings");
+const agentNameHeading = document.getElementById("agent-name-heading");
 
 // ── Utilities ─────────────────────────────────────────────────────────────
 
@@ -71,7 +72,9 @@ function appendMessage(role, content) {
 
   const sender = document.createElement("span");
   sender.className = "message-sender";
-  sender.textContent = role === "user" ? "You" : "Pares Agens";
+  sender.textContent = role === "user"
+    ? "You"
+    : (agentNameHeading?.textContent || "Pares Agens");
 
   const bubble = document.createElement("div");
   bubble.className = "message-bubble";

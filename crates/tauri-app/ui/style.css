@@ -934,6 +934,11 @@ body {
 
 .wizard-model-card:hover { border-color: var(--accent); }
 
+.wizard-model-card:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .wizard-model-card:has(.wizard-radio:checked) {
   border-color: var(--accent);
   background: var(--accent-dim);
@@ -942,8 +947,9 @@ body {
 .wizard-radio {
   position: absolute;
   opacity: 0;
-  width: 0;
-  height: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
 }
 
 .wizard-model-card-icon { font-size: 22px; flex-shrink: 0; }

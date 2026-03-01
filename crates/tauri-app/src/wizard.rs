@@ -54,8 +54,9 @@ pub async fn detect_docker_runner() -> Result<bool, String> {
 /// Supported `provider` values: `"openai"`, `"anthropic"`, `"google"`.
 ///
 /// Returns `true` when the server responds with HTTP 2xx (key accepted),
-/// `false` when it responds with 4xx (key rejected), or an `Err` on network
-/// failure.
+/// `false` when it responds with 4xx (key rejected), or an `Err` when the
+/// provider is unreachable, rate-limiting (429), or returns 5xx so the
+/// caller can show a retryable error rather than misreporting the key as bad.
 ///
 /// The API key is used only for the validation request and is never stored or
 /// logged by this function.
@@ -90,7 +91,17 @@ pub async fn validate_api_key(provider: String, api_key: String) -> Result<bool,
     };
 
     let status = req.send().await.map_err(|e| e.to_string())?.status();
-    Ok(status.is_success())
+
+    if status.is_success() {
+        Ok(true)
+    } else if status.is_client_error() {
+        // 4xx → key is wrong (unauthorized, forbidden, not-found)
+        Ok(false)
+    } else {
+        // 5xx or 429 → provider-side issue; surface as an error so the UI
+        // can tell the user to retry rather than reporting the key as invalid.
+        Err(format!("provider returned {status} — try again later"))
+    }
 }
 
 /// Return whether the first-run wizard has been completed in this session.
