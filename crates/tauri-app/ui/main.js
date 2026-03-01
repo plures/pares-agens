@@ -237,15 +237,28 @@ let _currentSettings = null;
 
 const tabBtns   = settingsDialog.querySelectorAll(".tab-btn");
 const tabPanels = settingsDialog.querySelectorAll(".tab-panel");
+const tabBtnArray = Array.from(tabBtns);
 
 function activateTab(targetId) {
+  let activeBtn = null;
+
   for (const btn of tabBtns) {
-    const active = btn.getAttribute("aria-controls") === targetId;
+    const controls = btn.getAttribute("aria-controls");
+    const active = controls === targetId;
     btn.classList.toggle("active", active);
     btn.setAttribute("aria-selected", String(active));
+    btn.setAttribute("tabindex", active ? "0" : "-1");
+    if (active) {
+      activeBtn = btn;
+    }
   }
+
   for (const panel of tabPanels) {
     panel.hidden = panel.id !== targetId;
+  }
+
+  if (activeBtn) {
+    activeBtn.focus();
   }
 }
 
@@ -253,6 +266,43 @@ for (const btn of tabBtns) {
   btn.addEventListener("click", () =>
     activateTab(btn.getAttribute("aria-controls")),
   );
+
+  btn.addEventListener("keydown", (event) => {
+    const { key } = event;
+    const currentIndex = tabBtnArray.indexOf(btn);
+    if (currentIndex === -1) {
+      return;
+    }
+
+    let newIndex = null;
+
+    if (key === "ArrowRight") {
+      newIndex = (currentIndex + 1) % tabBtnArray.length;
+    } else if (key === "ArrowLeft") {
+      newIndex = (currentIndex - 1 + tabBtnArray.length) % tabBtnArray.length;
+    } else if (key === "Home") {
+      newIndex = 0;
+    } else if (key === "End") {
+      newIndex = tabBtnArray.length - 1;
+    } else if (key === "Enter" || key === " ") {
+      // Activate currently focused tab
+      const targetId = btn.getAttribute("aria-controls");
+      if (targetId) {
+        event.preventDefault();
+        activateTab(targetId);
+      }
+      return;
+    }
+
+    if (newIndex !== null) {
+      const nextBtn = tabBtnArray[newIndex];
+      const targetId = nextBtn && nextBtn.getAttribute("aria-controls");
+      if (targetId) {
+        event.preventDefault();
+        activateTab(targetId);
+      }
+    }
+  });
 }
 
 // Open / close ───────────────────────────────────────────────────────────
