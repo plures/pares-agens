@@ -322,25 +322,8 @@ async function saveSettings() {
     document.getElementById("preferences-content"),
   );
 
-  // Persist routing via dedicated command so providers list stays untouched.
-  try {
-    await invoke("set_routing", { routing: routingData });
-  } catch (err) {
-    alert(`Failed to save routing: ${err}`);
-    return;
-  }
-
-  // Persist each channel adapter.
-  for (const adapter of channelData) {
-    try {
-      await invoke("upsert_channel_adapter", { adapter });
-    } catch (err) {
-      alert(`Failed to save channel "${adapter.kind}": ${err}`);
-      return;
-    }
-  }
-
-  // Persist the rest of the settings (preferences + system prompt).
+  // Persist all settings (including routing and channel adapters) in a single call
+  // to avoid partial updates if a later step fails.
   const updated = {
     ...(_currentSettings ?? {}),
     systemPrompt,
