@@ -69,6 +69,7 @@ pub fn run() {
                 settings: Mutex::new(Settings::default()),
                 procedures: Mutex::new(Vec::new()),
                 procedure_log: Mutex::new(Vec::new()),
+                license: Mutex::new(pares_agens_core::license::License::free()),
             });
 
             // ── System tray ───────────────────────────────────────────────
@@ -81,6 +82,8 @@ pub fn run() {
             commands::get_memories,
             commands::get_settings,
             commands::set_settings,
+            commands::get_license_status,
+            commands::activate_license,
             procedures::list_procedures,
             procedures::get_procedure,
             procedures::save_procedure,

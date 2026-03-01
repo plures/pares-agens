@@ -16,3 +16,4 @@ tracing.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
 subtle = "2"
+reqwest.workspace = true

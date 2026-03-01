@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use pares_agens_channels::tauri_ipc::TauriIpcHandle;
+use pares_agens_core::license::License;
 use pares_agens_core::memory::store::InMemoryStore;
 
 use crate::procedures::{ProcedureLogEntry, ProcedureRecord};
@@ -53,4 +54,6 @@ pub struct AppState {
     pub procedures: Mutex<Vec<ProcedureRecord>>,
     /// Execution log for all procedures (most recent last).
     pub procedure_log: Mutex<Vec<ProcedureLogEntry>>,
+    /// Current license — Free by default; updated on successful activation.
+    pub license: Mutex<License>,
 }

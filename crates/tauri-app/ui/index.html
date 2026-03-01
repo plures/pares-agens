@@ -96,6 +96,14 @@
           </label>
         </fieldset>
 
+        <fieldset class="settings-section">
+          <legend>License</legend>
+          <div id="license-status-row" class="license-status-row">
+            <span id="license-badge" class="license-badge license-free">Free</span>
+            <button type="button" id="btn-upgrade" class="btn-primary btn-upgrade">Upgrade to Pro</button>
+          </div>
+        </fieldset>
+
         <footer class="dialog-footer">
           <button type="button" id="btn-cancel-settings" value="cancel">Cancel</button>
           <button type="button" id="btn-save-settings" class="btn-primary">Save</button>
@@ -179,6 +187,46 @@
           </div>
         </section>
 
+      </div>
+    </dialog>
+
+    <!-- ── Upgrade Dialog ─────────────────────────────────────────────── -->
+    <dialog id="upgrade-dialog" class="settings-dialog" aria-label="Upgrade to Pro">
+      <div id="upgrade-panel">
+        <header class="dialog-header">
+          <h2>Upgrade to Pro</h2>
+          <button class="icon-btn close-btn" id="btn-close-upgrade" aria-label="Close">✕</button>
+        </header>
+
+        <section class="upgrade-features">
+          <p>Unlock the full power of Pares Agens:</p>
+          <ul class="feature-list">
+            <li>✅ Multiple channel adapters</li>
+            <li>✅ Multi-provider model routing</li>
+            <li>✅ Hyperswarm P2P sync</li>
+            <li>✅ MCP tool orchestration</li>
+            <li>✅ Praxis audit export</li>
+            <li>✅ Procedure editor</li>
+          </ul>
+        </section>
+
+        <section class="upgrade-activate">
+          <label for="license-key-input">License Key</label>
+          <input
+            type="text"
+            id="license-key-input"
+            class="license-key-input"
+            placeholder="XXXX-XXXX-XXXX-XXXX"
+            autocomplete="off"
+            aria-label="License key"
+          />
+          <p id="upgrade-error" class="upgrade-error" role="alert" hidden></p>
+        </section>
+
+        <footer class="dialog-footer">
+          <button type="button" id="btn-cancel-upgrade">Cancel</button>
+          <button type="button" id="btn-activate" class="btn-primary">Activate</button>
+        </footer>
       </div>
     </dialog>
 

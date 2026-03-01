@@ -760,3 +760,89 @@ body {
 
 .proc-list-toolbar .btn-primary:hover,
 .proc-editor-actions .btn-primary:hover { background: var(--accent-hover); }
+
+/* ── License / Upgrade ───────────────────────────────────────────────────── */
+.license-status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.license-badge {
+  display: inline-block;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  text-transform: uppercase;
+}
+
+.license-free {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.license-pro {
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+}
+
+.btn-upgrade {
+  font-size: 12px;
+  padding: 4px 12px;
+}
+
+.upgrade-features {
+  padding: 16px 0 8px;
+}
+
+.feature-list {
+  list-style: none;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.upgrade-activate {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 0 4px;
+}
+
+.upgrade-activate label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-transform: none;
+  font-weight: 400;
+}
+
+.license-key-input {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 8px 12px;
+  width: 100%;
+  transition: border-color var(--transition);
+}
+
+.license-key-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.upgrade-error {
+  color: var(--danger);
+  font-size: 12px;
+  margin-top: 2px;
+}

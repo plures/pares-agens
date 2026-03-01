@@ -229,6 +229,7 @@ async function openSettings() {
     document.getElementById("s-channel").value       = s.channel       ?? "tauri";
     document.getElementById("s-auto-start").checked  = s.autoStart     ?? false;
   } catch (_) { /* proceed with whatever is in the inputs */ }
+  await refreshLicenseStatus();
   settingsDialog.showModal();
 }
 
@@ -255,6 +256,87 @@ btnCancel.addEventListener("click", () => settingsDialog.close());
 // Close dialog on backdrop click
 settingsDialog.addEventListener("click", (e) => {
   if (e.target === settingsDialog) settingsDialog.close();
+});
+
+// ── License / Upgrade ────────────────────────────────────────────────────
+
+const licenseBadge     = document.getElementById("license-badge");
+const btnUpgrade       = document.getElementById("btn-upgrade");
+const upgradeDialog    = document.getElementById("upgrade-dialog");
+const btnCloseUpgrade  = document.getElementById("btn-close-upgrade");
+const btnCancelUpgrade = document.getElementById("btn-cancel-upgrade");
+const btnActivate      = document.getElementById("btn-activate");
+const licenseKeyInput  = document.getElementById("license-key-input");
+const upgradeError     = document.getElementById("upgrade-error");
+
+/**
+ * Refresh the license badge in the Settings > License fieldset.
+ * Called on open-settings and after activation.
+ */
+async function refreshLicenseStatus() {
+  try {
+    const status = await invoke("get_license_status");
+    const isPro  = status.tier === "pro" && status.valid;
+    licenseBadge.textContent = isPro ? "Pro" : "Free";
+    licenseBadge.className   = `license-badge ${isPro ? "license-pro" : "license-free"}`;
+    btnUpgrade.hidden         = isPro;
+  } catch (err) {
+    // Non-critical; leave badge in its current state.
+    console.warn("Failed to refresh license status:", err);
+  }
+}
+
+/** Show the upgrade/activation dialog. */
+function openUpgradeDialog() {
+  licenseKeyInput.value    = "";
+  upgradeError.hidden      = true;
+  upgradeError.textContent = "";
+  upgradeDialog.showModal();
+  licenseKeyInput.focus();
+}
+
+btnUpgrade.addEventListener("click", openUpgradeDialog);
+btnCloseUpgrade.addEventListener("click", () => upgradeDialog.close());
+btnCancelUpgrade.addEventListener("click", () => upgradeDialog.close());
+
+// Close on backdrop click.
+upgradeDialog.addEventListener("click", (e) => {
+  if (e.target === upgradeDialog) upgradeDialog.close();
+});
+
+/** Attempt to activate the entered license key. */
+async function activateLicense() {
+  const key = licenseKeyInput.value.trim();
+  if (!key) {
+    upgradeError.textContent = "Please enter a license key.";
+    upgradeError.hidden = false;
+    return;
+  }
+
+  btnActivate.disabled = true;
+  upgradeError.hidden  = true;
+
+  try {
+    const status = await invoke("activate_license", { key });
+    upgradeDialog.close();
+    await refreshLicenseStatus();
+
+    if (status.tier === "pro" && status.valid) {
+      appendMessage("agent", "🎉 Pro license activated! All Pro features are now unlocked.");
+    }
+  } catch (err) {
+    upgradeError.textContent = `Activation failed: ${err}`;
+    upgradeError.hidden = false;
+  } finally {
+    btnActivate.disabled = false;
+  }
+}
+
+btnActivate.addEventListener("click", activateLicense);
+
+// Allow Enter key in the key input to trigger activation.
+licenseKeyInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") activateLicense();
 });
 
 // ── Init ──────────────────────────────────────────────────────────────────
