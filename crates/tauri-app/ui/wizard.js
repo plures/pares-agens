@@ -61,16 +61,30 @@ let state = {
 function loadState() {
   try {
     const raw = localStorage.getItem(LS_STATE);
-    if (raw) Object.assign(state, JSON.parse(raw));
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      // Never load or keep a persisted Telegram token from localStorage.
+      const hadTelegramToken = Object.prototype.hasOwnProperty.call(parsed, "telegramToken");
+      if (hadTelegramToken) {
+        delete parsed.telegramToken;
+        // Overwrite stored state without the credential to clean up old data.
+        localStorage.setItem(LS_STATE, JSON.stringify(parsed));
+      }
+      Object.assign(state, parsed);
+    }
   } catch (_) { /* start fresh */ }
 }
 
 function saveState() {
   try {
-    // Deliberately exclude apiKey from localStorage — the user must re-enter
-    // their key if they reopen the wizard, preventing a sensitive credential
-    // from being written to disk in plain text.
-    const { apiKey: _omit, ...persistable } = state;
+    // Deliberately exclude apiKey and telegramToken from localStorage — the user
+    // must re-enter these credentials if they reopen the wizard, preventing
+    // sensitive values from being written to disk in plain text.
+    const {
+      apiKey: _omitApiKey,
+      telegramToken: _omitTelegramToken,
+      ...persistable
+    } = state;
     localStorage.setItem(LS_STATE, JSON.stringify(persistable));
   } catch (_) { /* non-critical */ }
 }
