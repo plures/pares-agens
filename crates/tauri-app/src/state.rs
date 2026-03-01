@@ -72,10 +72,10 @@ pub struct ChannelAdapterConfig {
     /// Whether this adapter is currently active.
     pub enabled: bool,
     /// Telegram bot token (Telegram adapters only).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing)]
     pub bot_token: Option<String>,
     /// Phone number for Signal / SMS adapters.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing)]
     pub phone_number: Option<String>,
 }
 
