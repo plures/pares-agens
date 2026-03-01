@@ -260,8 +260,10 @@ for (const btn of tabBtns) {
 async function openSettings() {
   try {
     _currentSettings = await invoke("get_settings");
-  } catch (_) {
-    _currentSettings = {};
+  } catch (err) {
+    console.error("Failed to load settings from backend:", err);
+    // Abort opening the settings dialog to avoid saving invalid settings.
+    return;
   }
 
   const providers = await _loadProviders();
