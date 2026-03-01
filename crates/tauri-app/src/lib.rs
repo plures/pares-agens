@@ -12,6 +12,7 @@ use pares_agens_core::Event;
 use crate::state::{AppState, Settings};
 
 mod commands;
+mod migration;
 mod procedures;
 mod state;
 pub mod tray;
@@ -81,6 +82,9 @@ pub fn run() {
             commands::get_memories,
             commands::get_settings,
             commands::set_settings,
+            migration::migration_detect,
+            migration::migration_preview,
+            migration::migration_run,
             procedures::list_procedures,
             procedures::get_procedure,
             procedures::save_procedure,
