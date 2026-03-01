@@ -68,7 +68,7 @@ pub async fn update_provider(
     let api_key = resolve_api_key(provider.api_key.as_deref(), &existing.api_key);
 
     *existing = ProviderEntry {
-        name: provider.name,
+        name,  // preserve original name — renames are not permitted via this command
         base_url: provider.base_url,
         api_key,
         models: provider.models,

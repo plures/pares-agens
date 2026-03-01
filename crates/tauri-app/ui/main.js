@@ -374,13 +374,21 @@ async function saveSettings() {
     document.getElementById("preferences-content"),
   );
 
-  // Persist all settings (including routing and channel adapters) in a single call
-  // to avoid partial updates if a later step fails.
+  // Reload the latest settings snapshot so that provider mutations made
+  // during this dialog session (add/edit/remove via the Providers tab) are
+  // not overwritten by the stale snapshot taken at dialog-open time.
+  let latestSettings;
+  try {
+    latestSettings = await invoke("get_settings");
+  } catch (err) {
+    alert(`Failed to load current settings: ${err}`);
+    return;
+  }
+
   const updated = {
-    ...(_currentSettings ?? {}),
+    ...latestSettings,
     systemPrompt,
     preferences: prefs,
-    // Keep routing and channelAdapters in sync on the full settings object.
     routing: routingData,
     channelAdapters: channelData,
   };
