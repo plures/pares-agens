@@ -74,9 +74,14 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String
 ///
 /// When `settings.auto_start` changes this command also enables or disables
 /// the OS-level autostart entry via `tauri-plugin-autostart`.
+///
+/// Secrets that are never serialised to the frontend (`api_key`,
+/// `bot_token`, `phone_number`) are re-merged from the current in-memory
+/// state so that calling this command from the UI cannot accidentally clear
+/// a stored credential.
 #[tauri::command]
 pub async fn set_settings(
-    settings: Settings,
+    mut settings: Settings,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
@@ -92,6 +97,45 @@ pub async fn set_settings(
     }
     #[cfg(not(desktop))]
     let _ = app;
-    *state.settings.lock().await = settings;
+
+    let mut current = state.settings.lock().await;
+    // Re-attach secrets the frontend never received so they are not cleared.
+    merge_secrets(&current, &mut settings);
+    *current = settings;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Re-merge secrets from `existing` into `incoming`.
+///
+/// Fields marked `#[serde(skip_serializing)]` are never sent to the
+/// frontend, so `set_settings` would otherwise clear them on every save.
+/// This helper copies:
+/// - `ProviderEntry.api_key`      — matched by provider name
+/// - `ChannelAdapterConfig.bot_token` / `phone_number` — matched by kind
+fn merge_secrets(existing: &Settings, incoming: &mut Settings) {
+    for provider in &mut incoming.providers {
+        if provider.api_key.is_none() {
+            if let Some(ex) = existing.providers.iter().find(|p| p.name == provider.name) {
+                provider.api_key = ex.api_key.clone();
+            }
+        }
+    }
+    for adapter in &mut incoming.channel_adapters {
+        if let Some(ex) = existing
+            .channel_adapters
+            .iter()
+            .find(|a| a.kind == adapter.kind)
+        {
+            if adapter.bot_token.is_none() {
+                adapter.bot_token = ex.bot_token.clone();
+            }
+            if adapter.phone_number.is_none() {
+                adapter.phone_number = ex.phone_number.clone();
+            }
+        }
+    }
 }
