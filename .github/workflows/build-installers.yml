@@ -102,11 +102,15 @@ jobs:
 
       # ── macOS code signing ─────────────────────────────────────────────
       - name: Import macOS signing certificate
-        if: matrix.platform == 'macos-latest' && secrets.APPLE_CERTIFICATE != ''
+        if: matrix.platform == 'macos-latest'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
+          if [[ -z "${APPLE_CERTIFICATE}" ]]; then
+            echo "APPLE_CERTIFICATE not set – skipping code signing"
+            exit 0
+          fi
           echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/certificate.p12
           security create-keychain -p "" build.keychain
           security import /tmp/certificate.p12 -k build.keychain \
