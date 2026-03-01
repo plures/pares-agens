@@ -106,6 +106,25 @@ pub struct OpenClawInstallation {
     pub personality_files: Vec<PersonalityFile>,
 }
 
+/// Return the default OpenClaw installation directory (`~/.openclaw`), or
+/// `None` if the directory does not exist.
+///
+/// The home directory is resolved from the `HOME` environment variable on
+/// Unix and `USERPROFILE` on Windows.
+pub fn auto_detect() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))?;
+    openclaw_dir_under(std::path::Path::new(&home))
+}
+
+/// Return the `.openclaw` subdirectory under `home` if it exists, else `None`.
+///
+/// Extracted so tests can call it without modifying global environment state.
+fn openclaw_dir_under(home: &std::path::Path) -> Option<std::path::PathBuf> {
+    let path = home.join(".openclaw");
+    if path.is_dir() { Some(path) } else { None }
+}
+
 impl OpenClawInstallation {
     /// Load an OpenClaw installation from `root`.
     ///
@@ -244,6 +263,21 @@ mod tests {
         write_file(&dir, "memories.json", "not json");
         let result = OpenClawInstallation::load(dir.path());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn auto_detect_returns_none_for_nonexistent_dir() {
+        // Use a temp dir with no .openclaw sub-directory.
+        let dir = tempfile::tempdir().unwrap();
+        assert!(openclaw_dir_under(dir.path()).is_none());
+    }
+
+    #[test]
+    fn auto_detect_returns_path_when_dir_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let openclaw = dir.path().join(".openclaw");
+        std::fs::create_dir(&openclaw).unwrap();
+        assert_eq!(openclaw_dir_under(dir.path()), Some(openclaw));
     }
 
     #[test]
