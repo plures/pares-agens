@@ -2790,6 +2790,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pares-trainer"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
