@@ -23,7 +23,7 @@ pub struct ProviderEntry {
     /// Stored internally; never returned verbatim — masked before sending to
     /// the UI.  In a full PluresDB integration this value would be encrypted
     /// at rest.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
     /// Model IDs known to be available through this provider.
     #[serde(default)]
