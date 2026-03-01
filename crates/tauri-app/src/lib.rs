@@ -12,6 +12,7 @@ use pares_agens_core::Event;
 use crate::state::{AppState, Settings};
 
 mod commands;
+mod settings;
 mod migration;
 mod procedures;
 mod state;
@@ -88,6 +89,12 @@ pub fn run() {
             wizard::validate_api_key,
             wizard::is_wizard_completed,
             wizard::complete_wizard,
+            settings::list_providers,
+            settings::add_provider,
+            settings::update_provider,
+            settings::remove_provider,
+            settings::upsert_channel_adapter,
+            settings::set_routing,
             migration::migration_detect,
             migration::migration_preview,
             migration::migration_run,
