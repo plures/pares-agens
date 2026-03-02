@@ -1,0 +1,48 @@
+name: Repo Capacity Emitter
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  emit-capacity-cleared:
+    # only care about Copilot-authored PR closures
+    if: github.event.pull_request.user.login == 'app/copilot-swe-agent' || github.event.pull_request.user.login == 'copilot'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if Copilot PR capacity is now free
+        id: capacity
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const openPRs = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: 'open',
+              per_page: 100
+            });
+            const openCopilotPRs = openPRs.filter(pr =>
+              (pr.user?.login || '').toLowerCase() === 'app/copilot-swe-agent' ||
+              (pr.user?.login || '').toLowerCase() === 'copilot'
+            );
+            core.setOutput('free', openCopilotPRs.length === 0 ? 'true' : 'false');
+
+      - name: Dispatch repo-capacity-cleared to orchestration hub
+        if: steps.capacity.outputs.free == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PLURES_PROJECTS }}
+          script: |
+            const sourceRepo = `${context.repo.owner}/${context.repo.repo}`;
+            await github.rest.repos.createDispatchEvent({
+              owner: 'plures',
+              repo: 'praxis-business',
+              event_type: 'repo-capacity-cleared',
+              client_payload: { repo: sourceRepo }
+            });
+            core.info(`Dispatched repo-capacity-cleared for ${sourceRepo}`);
