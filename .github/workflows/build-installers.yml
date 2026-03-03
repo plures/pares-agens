@@ -29,7 +29,7 @@ jobs:
             platform: windows-latest
             rust_target: x86_64-pc-windows-msvc
             bundle_target: msi
-            artifact_glob: "crates/desktop/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi"
+            artifact_glob: "target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi"
 
           # ── macOS universal: DMG ────────────────────────────────────────
           - name: macOS DMG (universal)
@@ -37,7 +37,7 @@ jobs:
             rust_target: universal-apple-darwin
             toolchain_targets: aarch64-apple-darwin,x86_64-apple-darwin
             bundle_target: dmg
-            artifact_glob: "crates/desktop/target/universal-apple-darwin/release/bundle/dmg/*.dmg"
+            artifact_glob: "target/universal-apple-darwin/release/bundle/dmg/*.dmg"
 
           # ── Linux x86-64: AppImage + deb + rpm ─────────────────────────
           - name: Linux AppImage
@@ -45,9 +45,9 @@ jobs:
             rust_target: x86_64-unknown-linux-gnu
             bundle_target: appimage,deb,rpm
             artifact_glob: |
-              crates/desktop/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
-              crates/desktop/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
-              crates/desktop/target/x86_64-unknown-linux-gnu/release/bundle/rpm/*.rpm
+              target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
+              target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
+              target/x86_64-unknown-linux-gnu/release/bundle/rpm/*.rpm
 
     runs-on: ${{ matrix.platform }}
 
@@ -150,7 +150,7 @@ jobs:
             echo "SIGNPATH_API_TOKEN not set – skipping code signing"
             exit 0
           fi
-          MSI=$(ls crates/desktop/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi)
+          MSI=$(ls target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi)
           bash scripts/sign-windows.sh "${MSI}"
 
       - name: Build and bundle (macOS)
