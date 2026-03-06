@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client", "crates/tauri-app", "crates/desktop", "crates/migrate", "crates/trainer", "crates/privacy", "crates/marketplace", "crates/arca", "crates/faber", "crates/agenda"]
+members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client", "crates/tauri-app", "crates/desktop", "crates/migrate", "crates/trainer", "crates/privacy", "crates/marketplace", "crates/arca", "crates/faber", "crates/agenda", "crates/optimizer"]
 
 [workspace.package]
 version = "0.2.0"
