@@ -47,6 +47,23 @@ pub trait Policy: Send + Sync {
     ) -> Result<Vec<f64>, OptimizerError>;
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Compute one damped gradient-free step that nudges `score` toward `min_score`.
+///
+/// The update rule is:
+///
+/// ```text
+/// new = score + step_size × sign(min_score − score) × √|score − min_score|
+/// ```
+///
+/// The square-root dampening slows convergence as the score approaches the
+/// minimum, preventing overshoot when scores are nearly equal.
+fn damped_step(score: f64, min_score: f64, step_size: f64) -> f64 {
+    let gap = score - min_score;
+    score + step_size * (-gap).signum() * gap.abs().sqrt()
+}
+
 // ── DefaultPolicy ─────────────────────────────────────────────────────────────
 
 /// Default gradient-free policy that nudges each score toward the current
@@ -81,7 +98,7 @@ impl Policy for DefaultPolicy {
 
         let new_scores = current_scores
             .iter()
-            .map(|&s| s + self.step_size * (min_score - s).signum() * (s - min_score).abs().sqrt())
+            .map(|&s| damped_step(s, min_score, self.step_size))
             .collect();
 
         Ok(new_scores)
@@ -319,26 +336,18 @@ pub fn offline_evaluate(
 /// Evaluate a single episode in the online (live) loop and return the
 /// objective score after optimization.
 ///
-/// This is a thin wrapper around [`MaxMinOptimizer::run`] that unwraps
-/// non-convergence into the best-effort score rather than an error.
+/// Non-convergence is propagated as [`OptimizerError::NoConvergence`] so callers
+/// can distinguish it from a legitimate score of zero.
 ///
 /// # Errors
 ///
-/// Returns [`OptimizerError`] for hard failures (invalid config, objective
-/// evaluation errors).
+/// Returns [`OptimizerError`] for any failure including non-convergence.
 pub fn online_evaluate(
     input: OptimizerInput,
     emitter: TelemetryEmitter,
 ) -> Result<f64, OptimizerError> {
     let optimizer = MaxMinOptimizer::new(emitter);
-    match optimizer.run(input) {
-        Ok(r) => Ok(r.objective_score),
-        Err(OptimizerError::NoConvergence(_)) => {
-            // Return 0.0 as a sentinel — caller can compare against baseline.
-            Ok(0.0)
-        }
-        Err(e) => Err(e),
-    }
+    Ok(optimizer.run(input)?.objective_score)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

@@ -137,13 +137,9 @@ impl BenchmarkHarness {
         &self,
         episodes: Vec<OptimizerInput>,
     ) -> Result<BenchmarkReport, OptimizerError> {
-        let baseline_policy: Box<dyn Policy> =
-            Box::new(DefaultPolicy::new(self.config.baseline_step_size));
         let optimized_policy: Box<dyn Policy> =
             Box::new(DefaultPolicy::new(self.config.optimized_step_size));
 
-        let _baseline_opt =
-            MaxMinOptimizer::with_policy(TelemetryEmitter::noop(), baseline_policy);
         let optimized_opt =
             MaxMinOptimizer::with_policy(TelemetryEmitter::noop(), optimized_policy);
 
