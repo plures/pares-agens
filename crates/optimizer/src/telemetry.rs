@@ -69,6 +69,36 @@ pub enum ObservabilityEvent {
         /// Names of any constraints violated in the final solution.
         violated_constraints: Vec<String>,
     },
+
+    /// Emitted when an optimization run is blocked by the safety gate.
+    ///
+    /// The `safety_state` field carries the gate label (`"insufficient_data"`
+    /// or `"unsafe_solution"`) so consumers can distinguish and count each
+    /// block category separately.
+    ExecutionBlocked {
+        /// Run identifier from the blocked episode.
+        run_id: String,
+        /// Policy identifier from the blocked episode.
+        policy_id: String,
+        /// Safety state label that caused the block (e.g. `"insufficient_data"`).
+        safety_state: String,
+        /// Evidence items requested to unblock the run.
+        required_evidence: Vec<String>,
+    },
+
+    /// Emitted alongside [`ExecutionBlocked`](Self::ExecutionBlocked) to signal
+    /// that the runtime requires additional evidence before the run can proceed.
+    ///
+    /// Consumers can subscribe to this event to route evidence collection
+    /// requests to the appropriate data-gathering pipeline.
+    EvidenceRequested {
+        /// Run identifier from the blocked episode.
+        run_id: String,
+        /// Policy identifier from the blocked episode.
+        policy_id: String,
+        /// Evidence items that must be supplied before the run can proceed.
+        required_evidence: Vec<String>,
+    },
 }
 
 impl ObservabilityEvent {
@@ -79,7 +109,9 @@ impl ObservabilityEvent {
             Self::EpisodeStarted { run_id, .. }
             | Self::IterationCompleted { run_id, .. }
             | Self::ConstraintViolated { run_id, .. }
-            | Self::EpisodeCompleted { run_id, .. } => run_id,
+            | Self::EpisodeCompleted { run_id, .. }
+            | Self::ExecutionBlocked { run_id, .. }
+            | Self::EvidenceRequested { run_id, .. } => run_id,
         }
     }
 }

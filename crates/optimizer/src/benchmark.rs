@@ -7,7 +7,7 @@
 //! # Example
 //!
 //! ```rust
-//! use pares_agens_optimizer::{OptimizerInput, Objective, Constraint};
+//! use pares_agens_optimizer::{OptimizerInput, Objective, Constraint, SafetyState};
 //! use pares_agens_optimizer::benchmark::{BenchmarkConfig, BenchmarkHarness};
 //! use std::collections::HashMap;
 //!
@@ -20,6 +20,7 @@
 //!         max_iterations: 30,
 //!         convergence_tolerance: 1e-4,
 //!         context: HashMap::new(),
+//!         safety_state: SafetyState::Ready,
 //!     },
 //! ];
 //!
@@ -226,7 +227,7 @@ fn mean_score(results: &[EpisodeResult]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Objective, OptimizerInput};
+    use crate::{Objective, OptimizerInput, SafetyState};
     use std::collections::HashMap;
 
     fn episode(run_id: &str, scores: Vec<f64>) -> OptimizerInput {
@@ -241,6 +242,7 @@ mod tests {
             max_iterations: 50,
             convergence_tolerance: 1e-5,
             context: HashMap::new(),
+            safety_state: SafetyState::Ready,
         }
     }
 

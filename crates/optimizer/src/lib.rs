@@ -21,10 +21,15 @@
 //!   [`ObservabilityEvent`](telemetry::ObservabilityEvent) for structured observability.
 //! - [`benchmark`] — [`BenchmarkHarness`](benchmark::BenchmarkHarness) for comparing
 //!   baseline policy vs optimized policy.
+//! - [`safety`]    — [`SafetyState`](safety::SafetyState) gate outputs consumed from
+//!   the control-plane and [`EvidenceRequest`](safety::EvidenceRequest) for blocked runs.
 
 pub mod benchmark;
 pub mod engine;
+pub mod safety;
 pub mod telemetry;
+
+pub use safety::{EvidenceRequest, SafetyState};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -49,6 +54,19 @@ pub enum OptimizerError {
     /// The objective function returned a non-finite value.
     #[error("objective evaluation failed: {0}")]
     ObjectiveError(String),
+
+    /// The optimization run was blocked by the control-plane safety gate.
+    ///
+    /// The `state` field contains the gate label (`"insufficient_data"` or
+    /// `"unsafe_solution"`) and `evidence` lists the data items that must be
+    /// supplied before the run can be retried as [`SafetyState::Ready`].
+    #[error("execution blocked by safety gate ({state}): required evidence — {evidence:?}")]
+    SafetyBlocked {
+        /// The safety state label that caused the block.
+        state: String,
+        /// Evidence items requested to unblock the run.
+        evidence: Vec<String>,
+    },
 
     /// JSON (de)serialisation failed.
     #[error("JSON error: {0}")]
@@ -175,6 +193,17 @@ pub struct OptimizerInput {
     /// Arbitrary key-value context forwarded to telemetry (e.g. model version,
     /// environment tag).
     pub context: std::collections::HashMap<String, String>,
+
+    /// Safety gate output from the control-plane.
+    ///
+    /// The optimizer will only execute when this is [`SafetyState::Ready`].
+    /// Any other state causes the run to be blocked immediately and an
+    /// [`EvidenceRequest`] to be emitted via the telemetry channel.
+    ///
+    /// Defaults to [`SafetyState::Ready`] so that existing construction
+    /// sites that do not set this field remain valid.
+    #[serde(default)]
+    pub safety_state: SafetyState,
 }
 
 impl OptimizerInput {
@@ -334,6 +363,7 @@ mod tests {
             max_iterations: 10,
             convergence_tolerance: 1e-4,
             context: std::collections::HashMap::new(),
+            safety_state: SafetyState::Ready,
         };
         assert!(matches!(input.validate(), Err(OptimizerError::InvalidConfig(_))));
     }
@@ -348,6 +378,7 @@ mod tests {
             max_iterations: 0,
             convergence_tolerance: 1e-4,
             context: std::collections::HashMap::new(),
+            safety_state: SafetyState::Ready,
         };
         assert!(matches!(input.validate(), Err(OptimizerError::InvalidConfig(_))));
     }
@@ -362,6 +393,7 @@ mod tests {
             max_iterations: 10,
             convergence_tolerance: -0.1,
             context: std::collections::HashMap::new(),
+            safety_state: SafetyState::Ready,
         };
         assert!(matches!(input.validate(), Err(OptimizerError::InvalidConfig(_))));
     }

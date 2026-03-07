@@ -112,7 +112,7 @@ impl Policy for DefaultPolicy {
 /// # Example
 ///
 /// ```rust
-/// use pares_agens_optimizer::{OptimizerInput, Objective, Constraint};
+/// use pares_agens_optimizer::{OptimizerInput, Objective, Constraint, SafetyState};
 /// use pares_agens_optimizer::engine::MaxMinOptimizer;
 /// use pares_agens_optimizer::telemetry::TelemetryEmitter;
 /// use std::collections::HashMap;
@@ -125,6 +125,7 @@ impl Policy for DefaultPolicy {
 ///     max_iterations: 50,
 ///     convergence_tolerance: 1e-4,
 ///     context: HashMap::new(),
+///     safety_state: SafetyState::Ready,
 /// };
 ///
 /// let emitter = TelemetryEmitter::noop();
@@ -170,6 +171,31 @@ impl MaxMinOptimizer {
 
         let run_id = input.run_id.clone();
         let policy_id = input.policy_id.clone();
+
+        // ── Safety gate ────────────────────────────────────────────────────────
+        // Only proceed when the control-plane reports `Ready`.  Any other state
+        // causes a blocked-execution telemetry burst and an early error return.
+        if !input.safety_state.is_ready() {
+            let evidence = input.safety_state.required_evidence();
+
+            self.emitter.emit(ObservabilityEvent::ExecutionBlocked {
+                run_id: run_id.clone(),
+                policy_id: policy_id.clone(),
+                safety_state: input.safety_state.label().to_owned(),
+                required_evidence: evidence.clone(),
+            });
+
+            self.emitter.emit(ObservabilityEvent::EvidenceRequested {
+                run_id: run_id.clone(),
+                policy_id: policy_id.clone(),
+                required_evidence: evidence.clone(),
+            });
+
+            return Err(OptimizerError::SafetyBlocked {
+                state: input.safety_state.label().to_owned(),
+                evidence,
+            });
+        }
 
         let mut scores = input.objective.scores.clone();
         let weights = input.objective.weights.clone();
@@ -355,7 +381,7 @@ pub fn online_evaluate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Constraint, Objective, OptimizerInput};
+    use crate::{safety::SafetyState, Constraint, Objective, OptimizerInput};
     use std::collections::HashMap;
 
     fn simple_input(run_id: &str, scores: Vec<f64>) -> OptimizerInput {
@@ -370,6 +396,7 @@ mod tests {
             max_iterations: 100,
             convergence_tolerance: 1e-6,
             context: HashMap::new(),
+            safety_state: SafetyState::Ready,
         }
     }
 
@@ -464,5 +491,127 @@ mod tests {
         let emitter = TelemetryEmitter::noop();
         let score = online_evaluate(input, emitter).unwrap();
         assert!((score - 0.5).abs() < 1e-6);
+    }
+
+    // ── Safety gate tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn run_proceeds_when_safety_state_is_ready() {
+        let input = simple_input("safe-ready", vec![0.5, 0.5]);
+        let optimizer = MaxMinOptimizer::new(TelemetryEmitter::noop());
+        assert!(optimizer.run(input).is_ok());
+    }
+
+    #[test]
+    fn run_blocked_when_insufficient_data() {
+        let input = OptimizerInput {
+            safety_state: SafetyState::InsufficientData {
+                missing_fields: vec!["baseline_score".into(), "prior_runs".into()],
+            },
+            ..simple_input("safe-insuff", vec![0.5, 0.5])
+        };
+        let optimizer = MaxMinOptimizer::new(TelemetryEmitter::noop());
+        match optimizer.run(input) {
+            Err(OptimizerError::SafetyBlocked { state, evidence }) => {
+                assert_eq!(state, "insufficient_data");
+                assert!(evidence.contains(&"baseline_score".to_owned()));
+                assert!(evidence.contains(&"prior_runs".to_owned()));
+            }
+            other => panic!("expected SafetyBlocked, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_blocked_when_unsafe_solution() {
+        let input = OptimizerInput {
+            safety_state: SafetyState::UnsafeSolution {
+                reason: "exceeds risk tolerance".into(),
+                remediation: vec!["risk_assessment".into(), "safety_sign_off".into()],
+            },
+            ..simple_input("safe-unsafe", vec![0.5, 0.5])
+        };
+        let optimizer = MaxMinOptimizer::new(TelemetryEmitter::noop());
+        match optimizer.run(input) {
+            Err(OptimizerError::SafetyBlocked { state, evidence }) => {
+                assert_eq!(state, "unsafe_solution");
+                assert!(evidence.contains(&"risk_assessment".to_owned()));
+                assert!(evidence.contains(&"safety_sign_off".to_owned()));
+            }
+            other => panic!("expected SafetyBlocked, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn blocked_run_emits_execution_blocked_telemetry() {
+        use crate::telemetry::ObservabilityEvent;
+
+        let input = OptimizerInput {
+            safety_state: SafetyState::InsufficientData {
+                missing_fields: vec!["history".into()],
+            },
+            ..simple_input("telem-blocked", vec![0.5, 0.5])
+        };
+        let (emitter, events) = TelemetryEmitter::collecting();
+        let optimizer = MaxMinOptimizer::new(emitter);
+        let _ = optimizer.run(input);
+
+        let events = events.lock().unwrap();
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                ObservabilityEvent::ExecutionBlocked { safety_state, .. }
+                if safety_state == "insufficient_data"
+            )),
+            "should emit ExecutionBlocked with correct safety_state"
+        );
+    }
+
+    #[test]
+    fn blocked_run_emits_evidence_requested_telemetry() {
+        use crate::telemetry::ObservabilityEvent;
+
+        let input = OptimizerInput {
+            safety_state: SafetyState::UnsafeSolution {
+                reason: "policy risk too high".into(),
+                remediation: vec!["policy risk too high".into()],
+            },
+            ..simple_input("telem-evidence", vec![0.5, 0.5])
+        };
+        let (emitter, events) = TelemetryEmitter::collecting();
+        let optimizer = MaxMinOptimizer::new(emitter);
+        let _ = optimizer.run(input);
+
+        let events = events.lock().unwrap();
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                ObservabilityEvent::EvidenceRequested { required_evidence, .. }
+                if required_evidence.contains(&"policy risk too high".to_owned())
+            )),
+            "should emit EvidenceRequested with required evidence"
+        );
+    }
+
+    #[test]
+    fn blocked_run_emits_no_episode_started_event() {
+        use crate::telemetry::ObservabilityEvent;
+
+        let input = OptimizerInput {
+            safety_state: SafetyState::InsufficientData {
+                missing_fields: vec!["data".into()],
+            },
+            ..simple_input("telem-no-start", vec![0.5, 0.5])
+        };
+        let (emitter, events) = TelemetryEmitter::collecting();
+        let optimizer = MaxMinOptimizer::new(emitter);
+        let _ = optimizer.run(input);
+
+        let events = events.lock().unwrap();
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, ObservabilityEvent::EpisodeStarted { .. })),
+            "blocked run must not emit EpisodeStarted"
+        );
     }
 }
