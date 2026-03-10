@@ -7,6 +7,7 @@ use tracing::info;
 use pares_agens_channels::adapter::ChannelAdapter;
 use pares_agens_channels::tauri_ipc::tauri_ipc_channel;
 use pares_agens_core::memory::store::InMemoryStore;
+use pares_agens_core::optimization::OptimizationSafetyGate;
 use pares_agens_core::praxis::GuidanceService;
 use pares_agens_core::Event;
 
@@ -68,6 +69,7 @@ pub fn run() {
             // ── AppState ──────────────────────────────────────────────────
             let memory_store = Arc::new(InMemoryStore::new());
             let guidance_service = GuidanceService::new();
+            let optimization_safety_gate = OptimizationSafetyGate::new();
             app.manage(AppState {
                 ipc_handle: handle,
                 memory_store,
@@ -76,6 +78,7 @@ pub fn run() {
                 procedures: Mutex::new(Vec::new()),
                 procedure_log: Mutex::new(Vec::new()),
                 guidance_service,
+                optimization_safety_gate,
             });
 
             // ── System tray ───────────────────────────────────────────────
@@ -93,6 +96,11 @@ pub fn run() {
             commands::get_source_spans,
             commands::get_analysis_events,
             commands::trigger_praxis_analysis,
+            commands::check_optimization_safety,
+            commands::get_pending_evidence_requests,
+            commands::get_optimization_telemetry,
+            commands::update_optimization_outcome,
+            commands::execute_with_safety,
             wizard::detect_docker_runner,
             wizard::validate_api_key,
             wizard::is_wizard_completed,

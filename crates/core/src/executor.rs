@@ -1,8 +1,13 @@
 use tracing::{debug, info, warn};
 
-use crate::{event::Event, procedure::ProcedureRegistry, source::EventSource};
+use crate::{
+    event::Event, 
+    optimization::OptimizationSafetyGate, 
+    procedure::ProcedureRegistry, 
+    source::EventSource
+};
 
-/// Drives the reactive event loop.
+/// Drives the reactive event loop with optimization safety enforcement.
 ///
 /// ```text
 /// loop {
@@ -14,16 +19,33 @@ use crate::{event::Event, procedure::ProcedureRegistry, source::EventSource};
 /// ```
 pub struct Executor {
     registry: ProcedureRegistry,
+    safety_gate: OptimizationSafetyGate,
 }
 
 impl Executor {
     /// Create a new executor with the given procedure registry.
     pub fn new(registry: ProcedureRegistry) -> Self {
-        Self { registry }
+        Self { 
+            registry,
+            safety_gate: OptimizationSafetyGate::new(),
+        }
+    }
+
+    /// Create a new executor with custom safety gate.
+    pub fn with_safety_gate(registry: ProcedureRegistry, safety_gate: OptimizationSafetyGate) -> Self {
+        Self {
+            registry,
+            safety_gate,
+        }
+    }
+
+    /// Get a reference to the safety gate for external access.
+    pub fn safety_gate(&self) -> &OptimizationSafetyGate {
+        &self.safety_gate
     }
 
     /// Dispatch a single event to every matching procedure and return all
-    /// emitted follow-up events.
+    /// emitted follow-up events with safety enforcement.
     pub async fn dispatch(&self, event: &Event) -> Vec<Event> {
         let kind = event.kind();
         let mut follow_ups: Vec<Event> = Vec::new();
@@ -37,9 +59,52 @@ impl Executor {
         }
 
         for handler in handlers {
-            info!(procedure = handler.name(), kind, "executing procedure");
-            let emitted = handler.execute(event).await;
-            follow_ups.extend(emitted);
+            let procedure_name = handler.name();
+            info!(procedure = procedure_name, kind, "executing procedure with safety check");
+            
+            // Apply optimization safety check
+            let action = format!("execute_procedure:{}", procedure_name);
+            let safety = self.safety_gate.check_optimization_safety(&action);
+            
+            match safety {
+                crate::optimization::OptimizationSafety::Ready => {
+                    info!(procedure = procedure_name, "procedure execution permitted");
+                    let emitted = handler.execute(event).await;
+                    follow_ups.extend(emitted);
+                }
+                crate::optimization::OptimizationSafety::InsufficientData => {
+                    let evidence_req = self.safety_gate.request_evidence(
+                        format!("Insufficient data for procedure: {}", procedure_name),
+                        vec!["safety_metrics".into(), "execution_context".into()],
+                        action.clone(),
+                    );
+                    let telemetry = crate::optimization::OptimizationTelemetry::new(
+                        &action,
+                        safety.clone(),
+                        Some(evidence_req.id.clone()),
+                    );
+                    self.safety_gate.record_telemetry(telemetry);
+                    
+                    warn!(
+                        procedure = procedure_name,
+                        evidence_request_id = %evidence_req.id,
+                        "procedure execution blocked: insufficient data"
+                    );
+                }
+                crate::optimization::OptimizationSafety::UnsafeSolution => {
+                    let telemetry = crate::optimization::OptimizationTelemetry::new(
+                        &action,
+                        safety.clone(),
+                        None,
+                    );
+                    self.safety_gate.record_telemetry(telemetry);
+                    
+                    warn!(
+                        procedure = procedure_name,
+                        "procedure execution blocked: unsafe solution"
+                    );
+                }
+            }
         }
 
         follow_ups

@@ -2,6 +2,7 @@ use tauri::State;
 
 use pares_agens_channels::tauri_ipc::TauriIpcMessage;
 use pares_agens_core::memory::store::MemoryStore;
+use pares_agens_core::optimization::{EvidenceRequest, OptimizationSafety, OptimizationTelemetry};
 use pares_agens_core::praxis::{GuidanceCategory, GuidanceEntry, SourceSpan, AnalysisEvent};
 
 use crate::state::{AppState, Settings};
@@ -186,6 +187,66 @@ pub async fn trigger_praxis_analysis(
     }
 
     Ok(analysis_count)
+}
+
+/// Check optimization safety for a specific action.
+///
+/// Returns the safety assessment from the control plane.
+#[tauri::command]
+pub async fn check_optimization_safety(
+    action: String,
+    state: State<'_, AppState>,
+) -> Result<OptimizationSafety, String> {
+    Ok(state.optimization_safety_gate.check_optimization_safety(&action))
+}
+
+/// Get all pending evidence requests.
+///
+/// Returns evidence requests that were generated when actions were blocked
+/// due to insufficient data.
+#[tauri::command]
+pub async fn get_pending_evidence_requests(
+    state: State<'_, AppState>,
+) -> Result<Vec<EvidenceRequest>, String> {
+    Ok(state.optimization_safety_gate.get_pending_evidence_requests())
+}
+
+/// Get optimization telemetry records.
+///
+/// Returns telemetry data for blocked optimization executions with optional limit.
+#[tauri::command]
+pub async fn get_optimization_telemetry(
+    limit: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<Vec<OptimizationTelemetry>, String> {
+    Ok(state.optimization_safety_gate.get_telemetry(limit))
+}
+
+/// Update the eventual outcome for a blocked optimization action.
+///
+/// Records the final result of what happened after an optimization was initially blocked.
+#[tauri::command]
+pub async fn update_optimization_outcome(
+    telemetry_id: String,
+    outcome: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.optimization_safety_gate.update_telemetry_outcome(&telemetry_id, outcome)
+}
+
+/// Execute an action with optimization safety enforcement.
+///
+/// This is a test/demonstration command that shows how safety gates work.
+/// In production, safety enforcement happens automatically in the executor.
+#[tauri::command]
+pub async fn execute_with_safety(
+    action: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    state.optimization_safety_gate.execute_with_safety_check(
+        &action,
+        || Ok::<String, String>(format!("Executed: {}", action))
+    ).await
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
