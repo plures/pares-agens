@@ -2,6 +2,7 @@ use tauri::State;
 
 use pares_agens_channels::tauri_ipc::TauriIpcMessage;
 use pares_agens_core::memory::store::MemoryStore;
+use pares_agens_core::praxis::{GuidanceCategory, GuidanceEntry, SourceSpan, AnalysisEvent};
 
 use crate::state::{AppState, Settings};
 
@@ -105,9 +106,89 @@ pub async fn set_settings(
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+/// Get Praxis coprocessor guidance entries for a specific category.
+///
+/// Returns guidance entries sorted by priority and confidence.
+/// The frontend can use this to populate the Facts, Rules, Decisions,
+/// Risks, and Guidance sections in the memory sidebar.
+#[tauri::command]
+pub async fn get_praxis_guidance(
+    category: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<GuidanceEntry>, String> {
+    let category = match category.as_str() {
+        "facts" => GuidanceCategory::Facts,
+        "rules" => GuidanceCategory::Rules,
+        "constraints" => GuidanceCategory::Constraints,
+        "decisions" => GuidanceCategory::Decisions,
+        "risks" => GuidanceCategory::Risks,
+        "guidance" => GuidanceCategory::Guidance,
+        _ => return Err(format!("Unknown guidance category: {}", category)),
+    };
+
+    Ok(state.guidance_service.get_guidance(&category))
+}
+
+/// Get all Praxis guidance entries across all categories.
+///
+/// Returns all guidance entries for overview/search functionality.
+#[tauri::command]
+pub async fn get_all_praxis_guidance(
+    state: State<'_, AppState>,
+) -> Result<Vec<GuidanceEntry>, String> {
+    Ok(state.guidance_service.get_all_guidance())
+}
+
+/// Get source spans for traceability from guidance to memory.
+///
+/// Takes a list of span IDs and returns the corresponding source spans
+/// with memory references, positions, and relevance scores.
+#[tauri::command]
+pub async fn get_source_spans(
+    span_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<SourceSpan>, String> {
+    Ok(state.guidance_service.get_spans(&span_ids))
+}
+
+/// Get recent Praxis analysis events.
+///
+/// Returns recent analysis events that triggered guidance updates.
+/// Used for showing live analysis activity in the sidebar.
+#[tauri::command]
+pub async fn get_analysis_events(
+    limit: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<Vec<AnalysisEvent>, String> {
+    let limit = limit.unwrap_or(10);
+    Ok(state.guidance_service.get_recent_events(limit))
+}
+
+/// Trigger manual analysis of current memories.
+///
+/// Forces the Praxis coprocessor to re-analyze existing memories
+/// and update guidance entries. Useful for testing or when the user
+/// wants to refresh guidance after significant memory updates.
+#[tauri::command]
+pub async fn trigger_praxis_analysis(
+    state: State<'_, AppState>,
+) -> Result<u32, String> {
+    let memories = state
+        .memory_store
+        .all()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut analysis_count = 0;
+    for memory in memories.iter().take(10) { // Limit to 10 recent memories
+        state.guidance_service.generate_guidance_from_memory(&memory.content, &memory.id);
+        analysis_count += 1;
+    }
+
+    Ok(analysis_count)
+}
+
+// ── helpers ──────────────────────────────────────────────────────────────────
 
 /// Re-merge secrets from `existing` into `incoming`.
 ///

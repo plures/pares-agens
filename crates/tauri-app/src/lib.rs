@@ -7,6 +7,7 @@ use tracing::info;
 use pares_agens_channels::adapter::ChannelAdapter;
 use pares_agens_channels::tauri_ipc::tauri_ipc_channel;
 use pares_agens_core::memory::store::InMemoryStore;
+use pares_agens_core::praxis::GuidanceService;
 use pares_agens_core::Event;
 
 use crate::state::{AppState, Settings};
@@ -66,6 +67,7 @@ pub fn run() {
 
             // ── AppState ──────────────────────────────────────────────────
             let memory_store = Arc::new(InMemoryStore::new());
+            let guidance_service = GuidanceService::new();
             app.manage(AppState {
                 ipc_handle: handle,
                 memory_store,
@@ -73,6 +75,7 @@ pub fn run() {
                 wizard_completed: Mutex::new(false),
                 procedures: Mutex::new(Vec::new()),
                 procedure_log: Mutex::new(Vec::new()),
+                guidance_service,
             });
 
             // ── System tray ───────────────────────────────────────────────
@@ -85,6 +88,11 @@ pub fn run() {
             commands::get_memories,
             commands::get_settings,
             commands::set_settings,
+            commands::get_praxis_guidance,
+            commands::get_all_praxis_guidance,
+            commands::get_source_spans,
+            commands::get_analysis_events,
+            commands::trigger_praxis_analysis,
             wizard::detect_docker_runner,
             wizard::validate_api_key,
             wizard::is_wizard_completed,
