@@ -11,7 +11,7 @@
   const GUIDANCE_CATEGORIES = [
     { id: 'facts', name: 'Facts', icon: '📊' },
     { id: 'rules', name: 'Rules', icon: '📋' },
-    { id: 'constraints', name: 'Constraints', icon: '⚠️' },
+    { id: 'constraints', name: 'Constraints', icon: '🔒' },
     { id: 'decisions', name: 'Decisions', icon: '✅' },
     { id: 'risks', name: 'Risks', icon: '⚠️' },
     { id: 'guidance', name: 'Guidance', icon: '💡' },
@@ -23,7 +23,7 @@
   /** @type {Record<string, Array<{ id: string, content: string, confidence: number, priority: number, source_spans: string[] }>>} */
   let guidanceData = $state({});
   
-  /** @type {Array<{ id: string, event_type: string, timestamp: string, guidance_updated: number }}} */
+  /** @type {Array<{ id: string, event_type: string, timestamp: string, guidance_updated: number }>} */
   let analysisEvents = $state([]);
   
   let selectedGuidanceCategory = $state('facts');
@@ -131,7 +131,7 @@
       <h2>Praxis Guidance</h2>
       <button 
         class="refresh-btn {isAnalyzing ? 'analyzing' : ''}"
-        on:click={triggerAnalysis}
+        onclick={triggerAnalysis}
         disabled={isAnalyzing}
         title="Refresh guidance analysis"
       >
@@ -144,7 +144,7 @@
       {#each GUIDANCE_CATEGORIES as category (category.id)}
         <button 
           class="tab-btn {selectedGuidanceCategory === category.id ? 'active' : ''}"
-          on:click={() => selectedGuidanceCategory = category.id}
+          onclick={() => selectedGuidanceCategory = category.id}
           title="{category.name}"
         >
           <span class="tab-icon">{category.icon}</span>
@@ -172,7 +172,7 @@
               {#if guidance.source_spans?.length > 0}
                 <button 
                   class="source-link"
-                  on:click={() => showSourceSpans(guidance.source_spans)}
+                  onclick={() => showSourceSpans(guidance.source_spans)}
                   title="View source memories"
                 >
                   📎 {guidance.source_spans.length} source{guidance.source_spans.length !== 1 ? 's' : ''}
