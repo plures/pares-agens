@@ -1,8 +1,8 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
-use chrono::Utc;
 
 /// Categories of Praxis coprocessor guidance displayed in the sidebar.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -43,7 +43,7 @@ pub struct GuidanceEntry {
     /// Source memory span IDs this guidance is derived from.
     pub source_spans: Vec<String>,
     /// Timestamp when this guidance was generated.
-    pub generated_at: String,
+    pub generated_at: DateTime<Utc>,
     /// Priority level (1=highest, 5=lowest).
     pub priority: u8,
 }
@@ -71,7 +71,7 @@ pub struct AnalysisEvent {
     /// Event type (memory_updated, new_conversation, policy_change, etc.).
     pub event_type: String,
     /// Timestamp when the analysis completed.
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
     /// Number of guidance entries updated by this analysis.
     pub guidance_updated: u32,
     /// Memory IDs that were analyzed.
@@ -112,9 +112,6 @@ impl GuidanceService {
     pub fn add_guidance(&self, mut entry: GuidanceEntry) -> String {
         if entry.id.is_empty() {
             entry.id = Uuid::new_v4().to_string();
-        }
-        if entry.generated_at.is_empty() {
-            entry.generated_at = Utc::now().to_rfc3339();
         }
         let id = entry.id.clone();
         self.entries.lock().unwrap().insert(id.clone(), entry);
@@ -193,7 +190,7 @@ impl GuidanceService {
                 content: "Potential error condition detected in recent conversation".to_string(),
                 confidence: 0.7,
                 source_spans: vec![memory_id.to_string()],
-                generated_at: String::new(), // Will be auto-generated
+                generated_at: Utc::now(),
                 priority: 2,
             };
             self.add_guidance(entry);
@@ -206,7 +203,7 @@ impl GuidanceService {
                 content: "New decision context recorded".to_string(),
                 confidence: 0.8,
                 source_spans: vec![memory_id.to_string()],
-                generated_at: String::new(),
+                generated_at: Utc::now(),
                 priority: 1,
             };
             self.add_guidance(entry);
@@ -219,7 +216,7 @@ impl GuidanceService {
                 content: "Policy constraint identified".to_string(),
                 confidence: 0.9,
                 source_spans: vec![memory_id.to_string()],
-                generated_at: String::new(),
+                generated_at: Utc::now(),
                 priority: 1,
             };
             self.add_guidance(entry);
@@ -229,7 +226,7 @@ impl GuidanceService {
         let event = AnalysisEvent {
             id: Uuid::new_v4().to_string(),
             event_type: "memory_analyzed".to_string(),
-            timestamp: Utc::now().to_rfc3339(),
+            timestamp: Utc::now(),
             guidance_updated: 1,
             analyzed_memory_ids: vec![memory_id.to_string()],
         };
@@ -258,7 +255,7 @@ mod tests {
             content: "Test fact".to_string(),
             confidence: 0.9,
             source_spans: vec!["span-1".to_string()],
-            generated_at: "2026-01-01T00:00:00Z".to_string(),
+            generated_at: Utc::now(),
             priority: 1,
         };
 
@@ -284,7 +281,7 @@ mod tests {
             content: "Low priority".to_string(),
             confidence: 0.9,
             source_spans: vec![],
-            generated_at: "2026-01-01T00:00:00Z".to_string(),
+            generated_at: Utc::now(),
             priority: 3,
         });
 
@@ -294,7 +291,7 @@ mod tests {
             content: "High priority".to_string(),
             confidence: 0.7,
             source_spans: vec![],
-            generated_at: "2026-01-01T00:00:00Z".to_string(),
+            generated_at: Utc::now(),
             priority: 1,
         });
 
