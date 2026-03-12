@@ -1,14 +1,17 @@
 //! `pares-agens-marketplace` — Skill and extension marketplace for Pares Agens.
 //!
 //! Provides skill/extension discovery, metadata parsing and validation,
-//! installation workflows, and security checks for third-party code.
+//! installation workflows, security checks for third-party code, and
+//! LoRA adapter packaging and distribution.
 //!
 //! # Modules
 //!
+//! - [`adapter`] — [`Marketplace`](adapter::Marketplace) for packaging and listing LoRA adapters.
 //! - [`discovery`] — [`MarketplaceClient`](discovery::MarketplaceClient) for listing and searching skills.
 //! - [`installer`] — [`Installer`](installer::Installer) for managing skill installations.
 //! - [`security`] — [`SecurityChecker`](security::SecurityChecker) for validating third-party code.
 
+pub mod adapter;
 pub mod discovery;
 pub mod installer;
 pub mod security;
@@ -43,6 +46,10 @@ pub enum MarketplaceError {
     /// A requested skill was not found in the marketplace.
     #[error("skill not found: {0}")]
     NotFound(String),
+
+    /// Packaging a LoRA adapter for distribution failed.
+    #[error("packaging failed: {0}")]
+    PackagingFailed(String),
 
     /// JSON (de)serialisation failed.
     #[error("JSON error: {0}")]
