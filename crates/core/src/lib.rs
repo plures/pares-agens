@@ -36,6 +36,7 @@ pub mod handlers;
 pub mod license;
 pub mod memory;
 pub mod model;
+pub mod optimization;
 pub mod procedure;
 pub mod setup;
 pub mod source;

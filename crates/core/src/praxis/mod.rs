@@ -25,6 +25,8 @@
 //! 4. User calls [`Ledger::resolve_gate`] with `Approved` or `Rejected`.
 //! 5. Procedure continues or aborts based on the resolved status.
 
+pub mod guidance;
 pub mod ledger;
 
+pub use guidance::{AnalysisEvent, GuidanceCategory, GuidanceEntry, GuidanceService, SourceSpan};
 pub use ledger::{GateStatus, Ledger, LedgerEntry, ValidationStatus};

@@ -5,6 +5,8 @@ use tokio::sync::Mutex;
 
 use pares_agens_channels::tauri_ipc::TauriIpcHandle;
 use pares_agens_core::memory::store::InMemoryStore;
+use pares_agens_core::optimization::OptimizationSafetyGate;
+use pares_agens_core::praxis::GuidanceService;
 
 use crate::procedures::{ProcedureLogEntry, ProcedureRecord};
 
@@ -215,4 +217,8 @@ pub struct AppState {
     pub procedures: Mutex<Vec<ProcedureRecord>>,
     /// Execution log for all procedures (most recent last).
     pub procedure_log: Mutex<Vec<ProcedureLogEntry>>,
+    /// Praxis coprocessor guidance service for the memory sidebar.
+    pub guidance_service: GuidanceService,
+    /// Optimization safety gate for runtime enforcement of safety decisions.
+    pub optimization_safety_gate: OptimizationSafetyGate,
 }
