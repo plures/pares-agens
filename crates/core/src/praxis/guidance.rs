@@ -109,6 +109,12 @@ impl GuidanceService {
     }
 
     /// Add a guidance entry to the service.
+    ///
+    /// If `entry.id` is empty, a new UUID is generated automatically.
+    /// Unlike `id`, `generated_at` is not auto-populated — callers must
+    /// supply an explicit timestamp (typically `Utc::now()`). This is
+    /// enforced by the type system: `DateTime<Utc>` has no sentinel/empty
+    /// state, so there is no ambiguity about whether a timestamp was set.
     pub fn add_guidance(&self, mut entry: GuidanceEntry) -> String {
         if entry.id.is_empty() {
             entry.id = Uuid::new_v4().to_string();
