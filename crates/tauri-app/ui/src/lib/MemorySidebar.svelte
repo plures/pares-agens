@@ -131,7 +131,7 @@
       <h2>Praxis Guidance</h2>
       <button 
         class="refresh-btn {isAnalyzing ? 'analyzing' : ''}"
-        on:click={triggerAnalysis}
+        onclick={triggerAnalysis}
         disabled={isAnalyzing}
         title="Refresh guidance analysis"
       >
@@ -144,7 +144,7 @@
       {#each GUIDANCE_CATEGORIES as category (category.id)}
         <button 
           class="tab-btn {selectedGuidanceCategory === category.id ? 'active' : ''}"
-          on:click={() => selectedGuidanceCategory = category.id}
+          onclick={() => selectedGuidanceCategory = category.id}
           title="{category.name}"
         >
           <span class="tab-icon">{category.icon}</span>
@@ -172,7 +172,7 @@
               {#if guidance.source_spans?.length > 0}
                 <button 
                   class="source-link"
-                  on:click={() => showSourceSpans(guidance.source_spans)}
+                  onclick={() => showSourceSpans(guidance.source_spans)}
                   title="View source memories"
                 >
                   📎 {guidance.source_spans.length} source{guidance.source_spans.length !== 1 ? 's' : ''}
