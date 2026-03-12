@@ -11,7 +11,7 @@
   const GUIDANCE_CATEGORIES = [
     { id: 'facts', name: 'Facts', icon: '📊' },
     { id: 'rules', name: 'Rules', icon: '📋' },
-    { id: 'constraints', name: 'Constraints', icon: '🔒' },
+    { id: 'constraints', name: 'Constraints', icon: '🛡️' },
     { id: 'decisions', name: 'Decisions', icon: '✅' },
     { id: 'risks', name: 'Risks', icon: '⚠️' },
     { id: 'guidance', name: 'Guidance', icon: '💡' },
