@@ -3528,7 +3528,7 @@ dependencies = [
 [[package]]
 name = "pluresdb"
 version = "2.9.10"
-source = "git+https://github.com/plures/pluresdb#111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3"
+source = "git+https://github.com/plures/pluresdb?rev=111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3#111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3"
 dependencies = [
  "anyhow",
  "pluresdb-core",
@@ -3540,7 +3540,7 @@ dependencies = [
 [[package]]
 name = "pluresdb-core"
 version = "2.9.10"
-source = "git+https://github.com/plures/pluresdb#111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3"
+source = "git+https://github.com/plures/pluresdb?rev=111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3#111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3559,7 +3559,7 @@ dependencies = [
 [[package]]
 name = "pluresdb-storage"
 version = "2.9.10"
-source = "git+https://github.com/plures/pluresdb#111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3"
+source = "git+https://github.com/plures/pluresdb?rev=111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3#111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -3583,7 +3583,7 @@ dependencies = [
 [[package]]
 name = "pluresdb-sync"
 version = "2.9.10"
-source = "git+https://github.com/plures/pluresdb#111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3"
+source = "git+https://github.com/plures/pluresdb?rev=111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3#111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3"
 dependencies = [
  "anyhow",
  "async-trait",
