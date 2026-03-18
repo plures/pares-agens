@@ -60,6 +60,46 @@ pub enum Primitive {
     Fact { subject: String, predicate: String, object: String },
 }
 
+/// Find `needle` in `haystack` in a case-insensitive way.
+///
+/// Returns the byte index into `haystack` where the match starts.
+/// The index is always on a UTF-8 boundary because it is derived from
+/// `char_indices`.
+fn find_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+
+    let needle_chars: Vec<char> = needle.chars().collect();
+    let needle_len = needle_chars.len();
+
+    for (start, _) in haystack.char_indices() {
+        let mut h_iter = haystack[start..].chars();
+        let mut matched = true;
+
+        for &n_ch in &needle_chars {
+            match h_iter.next() {
+                Some(h_ch) => {
+                    // Prefixes are ASCII; eq_ignore_ascii_case is sufficient here
+                    if !h_ch.eq_ignore_ascii_case(&n_ch) {
+                        matched = false;
+                        break;
+                    }
+                }
+                None => {
+                    return None;
+                }
+            }
+        }
+
+        if matched {
+            return Some(start);
+        }
+    }
+
+    None
+}
+
 /// Pattern-based extraction of primitives from free-form text.
 ///
 /// Detects decisions, preferences, and simple subject-predicate-object facts
@@ -76,7 +116,7 @@ fn extract_primitives(text: &str) -> Vec<Primitive> {
         "we chose ",
         "chose ",
     ] {
-        if let Some(pos) = lower.find(prefix) {
+        if let Some(pos) = find_case_insensitive(text, prefix) {
             let rest = &text[pos + prefix.len()..];
             let end = rest
                 .find(['.', '!', '?', '\n'])
