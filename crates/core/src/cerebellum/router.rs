@@ -27,12 +27,12 @@ pub fn decide(event: &Event, learned_context: &str, config: &CerebellumConfig) -
 fn decide_message(content: &str, _learned_context: &str, config: &CerebellumConfig) -> Route {
     let signals = analyze(content);
 
-    // Drop noise
-    if signals.simple && signals.token_estimate < 5 {
+    // Drop noise (exact single-word acks like "ok", "yes", "no")
+    if signals.simple && signals.token_estimate == 1 {
         return Route::Drop;
     }
 
-    // Pure procedural (short commands)
+    // Short commands go to conscious
     if signals.simple && !signals.analytical {
         return Route::Conscious;
     }
@@ -81,13 +81,13 @@ fn estimate_complexity(signals: &Signals) -> f32 {
     // Length contributes
     if signals.token_estimate > 50 {
         score += 0.3;
-    } else if signals.token_estimate > 20 {
+    } else if signals.token_estimate > 10 {
         score += 0.15;
     }
 
     // Analytical intent is a strong signal
     if signals.analytical {
-        score += 0.5;
+        score += 0.6;
     }
 
     score.min(1.0)

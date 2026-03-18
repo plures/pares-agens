@@ -113,7 +113,7 @@ impl Cerebellum {
     /// 1. Autorecall — retrieve + compress memories
     /// 2. Route — decide conscious / deep / procedural / drop
     /// 3. Package context for downstream agents
-    #[instrument(skip(self, memory, registry))]
+    #[instrument(skip(self, memory, _registry))]
     pub async fn preprocess(
         &self,
         event: &Event,
