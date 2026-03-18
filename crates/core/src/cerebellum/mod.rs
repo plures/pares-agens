@@ -23,6 +23,7 @@
 //!                └────────────────┘  (results flow back)
 //! ```
 
+pub mod invoke;
 pub mod pipeline;
 pub mod router;
 
