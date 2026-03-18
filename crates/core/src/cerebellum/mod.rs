@@ -64,6 +64,13 @@ pub struct CerebellumConfig {
     /// Complexity threshold (0.0–1.0). Events scoring above this trigger
     /// the subconscious.
     pub complexity_threshold: f32,
+    /// Token budget for autorecall context injection (number of tokens).
+    pub context_token_budget: usize,
+    /// Number of days after which a memory entry is considered stale.
+    pub staleness_days: u32,
+    /// Cosine similarity threshold above which two entries are considered
+    /// duplicates during a cerebellum sweep.
+    pub similarity_threshold: f32,
 }
 
 impl Default for CerebellumConfig {
@@ -73,6 +80,9 @@ impl Default for CerebellumConfig {
             exclude_categories: vec![],
             enable_subconscious: true,
             complexity_threshold: 0.7,
+            context_token_budget: 4096,
+            staleness_days: 30,
+            similarity_threshold: 0.85,
         }
     }
 }

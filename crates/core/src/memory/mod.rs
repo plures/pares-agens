@@ -180,6 +180,20 @@ impl PluresLm {
         Ok(vec![id])
     }
 
+    /// Return all stored memory entries (unordered).
+    ///
+    /// Used by maintenance procedures such as `cerebellum-sweep` that need to
+    /// inspect the full memory store without a specific query.
+    ///
+    /// # Errors
+    /// Propagates store errors.
+    pub async fn scan_all(&self) -> Result<Vec<MemoryEntry>, Error> {
+        self.store
+            .all()
+            .await
+            .map_err(|e| Error::Store(e.to_string()))
+    }
+
     /// Format `memories` as a Markdown block for injection into the model prompt.
     ///
     /// `budget` overrides the default token budget (25 % of `context_window`).
