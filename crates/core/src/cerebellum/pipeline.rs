@@ -8,21 +8,286 @@
 //! - **cerebellum-sweep** — periodic background maintenance (prune stale,
 //!   consolidate duplicates, update ledger)
 
+use std::collections::HashSet;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use tracing::debug;
 
 use crate::event::Event;
+use crate::memory::PluresLm;
 use crate::procedure::Procedure;
+
+// ── stop-word list ────────────────────────────────────────────────────────────
+
+const STOPWORDS: &[&str] = &[
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "must", "shall", "can", "to", "of", "in",
+    "on", "at", "by", "for", "with", "about", "as", "into", "through",
+    "during", "before", "after", "above", "below", "from", "up", "down",
+    "out", "off", "over", "under", "again", "further", "then", "once",
+    "i", "me", "my", "we", "our", "you", "your", "he", "him", "his",
+    "she", "her", "it", "its", "they", "them", "their", "this", "that",
+    "these", "those", "and", "but", "or", "not", "no", "so", "if",
+    "how", "what", "which", "who", "when", "where", "why",
+];
+
+/// Extract key terms from `text` by tokenizing on non-alphanumeric characters,
+/// removing short tokens, and filtering common stop-words.
+///
+/// Returns a sorted, deduplicated list of lowercase terms.
+fn extract_key_terms(text: &str) -> Vec<String> {
+    let unique_terms: HashSet<String> = text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() > 2)
+        .map(|w| w.to_lowercase())
+        .filter(|w| !STOPWORDS.contains(&w.as_str()))
+        .collect();
+    let mut terms: Vec<String> = unique_terms.into_iter().collect();
+    terms.sort();
+    terms
+}
+
+// ── Primitive types ───────────────────────────────────────────────────────────
+
+/// Structured primitives that can be extracted from free-form conversation text.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Primitive {
+    Entity { name: String, kind: String },
+    Decision { text: String, context: String },
+    Preference { text: String },
+    Fact { subject: String, predicate: String, object: String },
+}
+
+/// Find `needle` in `haystack` in a case-insensitive way.
+///
+/// Returns the byte index into `haystack` where the match starts.
+/// The index is always on a UTF-8 boundary because it is derived from
+/// `char_indices`.
+fn find_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+
+    let needle_chars: Vec<char> = needle.chars().collect();
+    let needle_len = needle_chars.len();
+
+    for (start, _) in haystack.char_indices() {
+        let mut h_iter = haystack[start..].chars();
+        let mut matched = true;
+
+        for &n_ch in &needle_chars {
+            match h_iter.next() {
+                Some(h_ch) => {
+                    // Prefixes are ASCII; eq_ignore_ascii_case is sufficient here
+                    if !h_ch.eq_ignore_ascii_case(&n_ch) {
+                        matched = false;
+                        break;
+                    }
+                }
+                None => {
+                    return None;
+                }
+            }
+        }
+
+        if matched {
+            return Some(start);
+        }
+    }
+
+    None
+}
+
+/// Pattern-based extraction of primitives from free-form text.
+///
+/// Detects decisions, preferences, and simple subject-predicate-object facts
+/// using keyword prefixes. LLM-based extraction is a future enhancement.
+fn extract_primitives(text: &str) -> Vec<Primitive> {
+    let lower = text.to_lowercase();
+    let mut primitives = Vec::new();
+
+    // Decisions — "we decided to X", "decided to X", "going with X", etc.
+    for prefix in &[
+        "we decided to ",
+        "decided to ",
+        "going with ",
+        "we chose ",
+        "chose ",
+    ] {
+        if let Some(pos) = find_case_insensitive(text, prefix) {
+            let rest = &text[pos + prefix.len()..];
+            let end = rest
+                .find(['.', '!', '?', '\n'])
+                .unwrap_or(rest.len());
+            let decision_text = rest[..end].trim().to_string();
+            if !decision_text.is_empty() {
+                primitives.push(Primitive::Decision {
+                    text: decision_text,
+                    context: text.to_string(),
+                });
+            }
+        }
+    }
+
+    // Preferences — "I prefer X", "always use X", "never use X"
+    for prefix in &[
+        "i prefer ",
+        "always use ",
+        "never use ",
+        "prefer to use ",
+    ] {
+        if let Some(pos) = lower.find(prefix) {
+            let rest = &text[pos + prefix.len()..];
+            let end = rest
+                .find(['.', '!', '?', '\n'])
+                .unwrap_or(rest.len());
+            let pref_text = rest[..end].trim().to_string();
+            if !pref_text.is_empty() {
+                primitives.push(Primitive::Preference { text: pref_text });
+            }
+        }
+    }
+
+    // Facts — simple "X is Y" / "X are Y" (subject ≤ 4 words)
+    let words: Vec<&str> = text.split_whitespace().collect();
+    for i in 1..words.len().saturating_sub(1) {
+        let word_lower = words[i].to_lowercase();
+        if word_lower == "is" || word_lower == "are" {
+            let subject = words[..i].join(" ");
+            let object = words[i + 1..]
+                .iter()
+                .take(5)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !subject.is_empty()
+                && !object.is_empty()
+                && subject.split_whitespace().count() <= 4
+            {
+                primitives.push(Primitive::Fact {
+                    subject,
+                    predicate: words[i].to_string(),
+                    object,
+                });
+            }
+        }
+    }
+
+    primitives
+}
+
+/// Sanitize a string for use in an [`Event::StateChange`] key path.
+///
+/// Replaces any character that is not alphanumeric, a hyphen, or an underscore
+/// with an underscore to prevent malformed key paths.
+fn sanitize_key_segment(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect()
+}
+
+/// Convert a [`Primitive`] to a `(key, value)` pair for [`Event::StateChange`].
+fn primitive_to_state_change(primitive: &Primitive) -> (String, serde_json::Value) {
+    match primitive {
+        Primitive::Entity { name, kind } => (
+            format!("primitive.entity.{}", sanitize_key_segment(name)),
+            serde_json::json!({ "kind": kind }),
+        ),
+        Primitive::Decision { text, context } => (
+            "primitive.decision".into(),
+            serde_json::json!({ "text": text, "context": context }),
+        ),
+        Primitive::Preference { text } => (
+            "primitive.preference".into(),
+            serde_json::json!({ "text": text }),
+        ),
+        Primitive::Fact { subject, predicate, object } => (
+            format!("primitive.fact.{}", sanitize_key_segment(subject)),
+            serde_json::json!({ "predicate": predicate, "object": object }),
+        ),
+    }
+}
+
+// ── cosine similarity helper ──────────────────────────────────────────────────
+
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+    dot / (norm_a * norm_b)
+}
+
+/// Find groups of entries whose embeddings have cosine similarity ≥ `threshold`
+/// and that belong to the same category.
+///
+/// Returns each group as a list of entry IDs (only groups with ≥ 2 members).
+fn find_duplicate_groups(
+    entries: &[crate::memory::entry::MemoryEntry],
+    threshold: f32,
+) -> Vec<Vec<String>> {
+    let mut groups: Vec<Vec<String>> = Vec::new();
+    let mut grouped: HashSet<usize> = HashSet::new();
+
+    for i in 0..entries.len() {
+        if grouped.contains(&i) {
+            continue;
+        }
+        let mut group = vec![entries[i].id.clone()];
+        for j in (i + 1)..entries.len() {
+            if grouped.contains(&j) {
+                continue;
+            }
+            // Same category and high embedding similarity → duplicate
+            if entries[i].category == entries[j].category {
+                let sim = cosine_similarity(&entries[i].embedding, &entries[j].embedding);
+                if sim >= threshold {
+                    group.push(entries[j].id.clone());
+                    grouped.insert(j);
+                }
+            }
+        }
+        if group.len() > 1 {
+            grouped.insert(i);
+            groups.push(group);
+        }
+    }
+
+    groups
+}
 
 // ── autorecall ───────────────────────────────────────────────────────────────
 
 /// Autorecall procedure — retrieves and compresses memories into learned
 /// context before the conscious agent runs.
 ///
-/// In the full system this delegates to PluresDB's VectorSearch → Transform
-/// pipeline. This implementation provides the procedure interface; the actual
-/// memory operations are performed by the cerebellum's `preprocess` method.
-pub struct Autorecall;
+/// Pipeline:
+/// 1. Extract key terms from the message content (tokenisation + stop-word removal).
+/// 2. Run `Memory::recall()` with those terms.
+/// 3. Apply the configured token budget via `inject_context`.
+/// 4. Emit a `StateChange` event with the compressed context string as value.
+pub struct Autorecall {
+    memory: Arc<PluresLm>,
+    top_k: usize,
+    token_budget: usize,
+}
+
+impl Autorecall {
+    pub fn new(memory: Arc<PluresLm>, config: &super::CerebellumConfig) -> Self {
+        Self {
+            memory,
+            top_k: config.recall_limit,
+            token_budget: config.context_token_budget,
+        }
+    }
+}
 
 #[async_trait]
 impl Procedure for Autorecall {
@@ -35,22 +300,63 @@ impl Procedure for Autorecall {
     }
 
     async fn execute(&self, event: &Event) -> Vec<Event> {
-        debug!(event_kind = event.kind(), "autorecall: triggered");
-        // In production, this runs:
-        //   VectorSearch(query) → Filter(min_score > 0.3) → Transform(toon) → Emit("context")
-        // For now, the cerebellum.preprocess() handles this directly.
-        // This stub allows registration + priority ordering.
-        vec![]
+        let content = match event {
+            Event::Message { content, .. } => content.clone(),
+            _ => return vec![],
+        };
+
+        let terms = extract_key_terms(&content);
+        if terms.is_empty() {
+            debug!("autorecall: no key terms extracted, skipping");
+            return vec![];
+        }
+
+        let query = terms.join(" ");
+        debug!(query, top_k = self.top_k, "autorecall: recalling memories");
+
+        let memories = match self.memory.recall(&query, self.top_k, &[]).await {
+            Ok(m) => m,
+            Err(e) => {
+                debug!(error = %e, "autorecall: recall failed");
+                return vec![];
+            }
+        };
+
+        if memories.is_empty() {
+            debug!("autorecall: no memories found");
+            return vec![];
+        }
+
+        let context = self.memory.inject_context(&memories, Some(self.token_budget));
+        debug!(context_len = context.len(), "autorecall: context assembled");
+
+        vec![Event::StateChange {
+            key: "autorecall.context".into(),
+            old_value: None,
+            new_value: serde_json::json!(context),
+        }]
     }
 }
 
 // ── primitive extraction ─────────────────────────────────────────────────────
 
-/// Primitive extraction procedure — runs after capture to extract typed
-/// primitives (decisions, facts, risks, preferences) from conversation.
+/// Primitive extraction procedure — runs on message events to extract typed
+/// primitives (decisions, facts, preferences) from conversation content.
 ///
-/// This is the pares-agens equivalent of pluresLM issue #107.
-pub struct PrimitiveExtract;
+/// Initial implementation uses regex/keyword patterns. LLM-based extraction
+/// is a future enhancement.
+pub struct PrimitiveExtract {
+    /// Reserved for future LLM-based extraction; not used in the initial
+    /// pattern-matching implementation.
+    #[allow(dead_code)]
+    memory: Arc<PluresLm>,
+}
+
+impl PrimitiveExtract {
+    pub fn new(memory: Arc<PluresLm>) -> Self {
+        Self { memory }
+    }
+}
 
 #[async_trait]
 impl Procedure for PrimitiveExtract {
@@ -59,19 +365,40 @@ impl Procedure for PrimitiveExtract {
     }
 
     fn handles(&self) -> &str {
-        "state_change"
+        "message"
     }
 
     async fn execute(&self, event: &Event) -> Vec<Event> {
-        debug!(event_kind = event.kind(), "primitive-extract: triggered");
-        // In production, this runs after a memory capture (state_change on memory store):
-        //   1. Read the new memory content
-        //   2. Classify into primitive types (decision, fact, risk, preference, entity)
-        //   3. Store typed primitives as separate nodes with category tags
-        //   4. Link primitives to source memory via graph edges
-        //
-        // Requires agent_invoke step for LLM classification — Phase 1 dependency.
-        vec![]
+        let content = match event {
+            Event::Message { content, .. } => content.clone(),
+            _ => return vec![],
+        };
+
+        debug!(
+            content_len = content.len(),
+            "primitive-extract: scanning for primitives"
+        );
+
+        let primitives = extract_primitives(&content);
+        if primitives.is_empty() {
+            debug!("primitive-extract: no primitives found");
+            return vec![];
+        }
+
+        debug!(count = primitives.len(), "primitive-extract: found primitives");
+
+        // Emit one StateChange event per extracted primitive.
+        primitives
+            .iter()
+            .map(|p| {
+                let (key, value) = primitive_to_state_change(p);
+                Event::StateChange {
+                    key,
+                    old_value: None,
+                    new_value: value,
+                }
+            })
+            .collect()
     }
 }
 
@@ -80,11 +407,27 @@ impl Procedure for PrimitiveExtract {
 /// Periodic maintenance sweep — runs on timer events.
 ///
 /// Tasks:
-/// - Prune stale memories (not accessed in N days)
-/// - Consolidate near-duplicate memories
-/// - Update praxis ledger with new patterns
-/// - Recompute graph statistics for routing optimization
-pub struct CerebellumSweep;
+/// - Detect stale memories (created more than `staleness_days` ago).
+/// - Detect near-duplicate memories (same category + cosine similarity ≥
+///   `similarity_threshold`).
+///
+/// Results are reported as `StateChange` events so that other procedures or
+/// the application layer can act on them (e.g. prune, merge).
+pub struct CerebellumSweep {
+    memory: Arc<PluresLm>,
+    staleness_days: u32,
+    similarity_threshold: f32,
+}
+
+impl CerebellumSweep {
+    pub fn new(memory: Arc<PluresLm>, config: &super::CerebellumConfig) -> Self {
+        Self {
+            memory,
+            staleness_days: config.staleness_days,
+            similarity_threshold: config.similarity_threshold,
+        }
+    }
+}
 
 #[async_trait]
 impl Procedure for CerebellumSweep {
@@ -97,67 +440,156 @@ impl Procedure for CerebellumSweep {
     }
 
     async fn execute(&self, event: &Event) -> Vec<Event> {
-        debug!(event_kind = event.kind(), "cerebellum-sweep: triggered");
-        // In production, this runs:
-        //   1. GraphStats → identify clusters and orphans
-        //   2. Filter(accessed_before: now - 30d) → mark stale
-        //   3. AutoLink(cosine, threshold: 0.85) → merge near-duplicates
-        //   4. Emit("sweep_report") → log results
-        //
-        // Fully procedural — no LLM needed.
-        vec![]
+        match event {
+            Event::Timer { .. } => {}
+            _ => return vec![],
+        }
+
+        debug!(staleness_days = self.staleness_days, "cerebellum-sweep: starting");
+
+        let all_entries = match self.memory.scan_all().await {
+            Ok(entries) => entries,
+            Err(e) => {
+                debug!(error = %e, "cerebellum-sweep: failed to scan memory");
+                return vec![];
+            }
+        };
+
+        if all_entries.is_empty() {
+            debug!("cerebellum-sweep: no entries to sweep");
+            return vec![];
+        }
+
+        let now = chrono::Utc::now();
+        let staleness_cutoff =
+            chrono::Duration::days(i64::from(self.staleness_days));
+        let mut events = Vec::new();
+
+        // Identify stale entries.
+        let stale_ids: Vec<String> = all_entries
+            .iter()
+            .filter(|entry| {
+                match chrono::DateTime::parse_from_rfc3339(&entry.created_at) {
+                    Ok(created) => {
+                        now.signed_duration_since(created.with_timezone(&chrono::Utc))
+                            > staleness_cutoff
+                    }
+                    Err(e) => {
+                        debug!(
+                            id = entry.id,
+                            created_at = entry.created_at,
+                            error = %e,
+                            "cerebellum-sweep: skipping entry with unparseable timestamp"
+                        );
+                        false
+                    }
+                }
+            })
+            .map(|entry| entry.id.clone())
+            .collect();
+
+        if !stale_ids.is_empty() {
+            debug!(count = stale_ids.len(), "cerebellum-sweep: found stale entries");
+            events.push(Event::StateChange {
+                key: "cerebellum.sweep.stale".into(),
+                old_value: None,
+                new_value: serde_json::json!({ "ids": stale_ids }),
+            });
+        }
+
+        // Detect duplicate groups.
+        let duplicate_groups = find_duplicate_groups(&all_entries, self.similarity_threshold);
+        if !duplicate_groups.is_empty() {
+            debug!(
+                groups = duplicate_groups.len(),
+                "cerebellum-sweep: found duplicate groups"
+            );
+            events.push(Event::StateChange {
+                key: "cerebellum.sweep.duplicates".into(),
+                old_value: None,
+                new_value: serde_json::json!({ "groups": duplicate_groups }),
+            });
+        }
+
+        debug!(events = events.len(), "cerebellum-sweep: sweep complete");
+        events
     }
 }
 
 /// Register all built-in cerebellum procedures into a registry.
-pub fn register_builtins(registry: &mut crate::procedure::ProcedureRegistry) {
-    // Autorecall runs first (lowest priority number)
-    registry.register(Box::new(Autorecall));
+pub(crate) fn register_builtins(
+    registry: &mut crate::procedure::ProcedureRegistry,
+    memory: Arc<PluresLm>,
+    config: &super::CerebellumConfig,
+) {
+    // Cerebellum itself handles messages first (lowest priority number = runs first)
+    registry.register(Box::new(super::CerebellumProcedure));
+    registry.set_priority("cerebellum", -200);
+
+    // Autorecall runs next, injecting learned context
+    registry.register(Box::new(Autorecall::new(memory.clone(), config)));
     registry.set_priority("autorecall", -100);
 
-    // Primitive extraction runs on state changes
-    registry.register(Box::new(PrimitiveExtract));
+    // Primitive extraction runs on message events after autorecall
+    registry.register(Box::new(PrimitiveExtract::new(memory.clone())));
     registry.set_priority("primitive-extract", 0);
 
     // Sweep runs on timers
-    registry.register(Box::new(CerebellumSweep));
+    registry.register(Box::new(CerebellumSweep::new(memory, config)));
     registry.set_priority("cerebellum-sweep", 0);
-
-    // Cerebellum itself handles messages (orchestrator)
-    registry.register(Box::new(super::CerebellumProcedure));
-    registry.set_priority("cerebellum", -200); // runs before autorecall
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cerebellum::CerebellumConfig;
+    use crate::memory::{
+        embed::MockEmbedder,
+        entry::{Exchange, MemoryCategory, MemoryEntry},
+        store::{InMemoryStore, MemoryStore},
+        PluresLm,
+    };
     use crate::procedure::ProcedureRegistry;
+
+    fn test_memory() -> Arc<PluresLm> {
+        Arc::new(PluresLm::new(
+            Box::new(InMemoryStore::new()),
+            Box::new(MockEmbedder),
+            128_000,
+        ))
+    }
+
+    fn test_config() -> CerebellumConfig {
+        CerebellumConfig::default()
+    }
+
+    // ── registration ─────────────────────────────────────────────────────────
 
     #[test]
     fn register_builtins_adds_four_procedures() {
         let mut registry = ProcedureRegistry::new();
-        register_builtins(&mut registry);
+        register_builtins(&mut registry, test_memory(), &test_config());
         assert_eq!(registry.len(), 4);
     }
 
     #[test]
     fn cerebellum_has_highest_priority_for_messages() {
         let mut registry = ProcedureRegistry::new();
-        register_builtins(&mut registry);
+        register_builtins(&mut registry, test_memory(), &test_config());
 
         let message_procs: Vec<&str> = registry
             .matching("message")
             .map(|p| p.name())
             .collect();
 
-        // cerebellum should come before autorecall
-        assert_eq!(message_procs, vec!["cerebellum", "autorecall"]);
+        // cerebellum (-200) → autorecall (-100) → primitive-extract (0)
+        assert_eq!(message_procs, vec!["cerebellum", "autorecall", "primitive-extract"]);
     }
 
     #[test]
     fn sweep_handles_timer_events() {
         let mut registry = ProcedureRegistry::new();
-        register_builtins(&mut registry);
+        register_builtins(&mut registry, test_memory(), &test_config());
 
         let timer_procs: Vec<&str> = registry
             .matching("timer")
@@ -165,5 +597,302 @@ mod tests {
             .collect();
 
         assert_eq!(timer_procs, vec!["cerebellum-sweep"]);
+    }
+
+    // ── key-term extraction ───────────────────────────────────────────────────
+
+    #[test]
+    fn extract_key_terms_removes_stopwords() {
+        let terms = extract_key_terms("How does the autorecall work");
+        assert!(!terms.contains(&"how".to_string()));
+        assert!(!terms.contains(&"the".to_string()));
+        assert!(!terms.contains(&"does".to_string()));
+        assert!(terms.contains(&"autorecall".to_string()));
+        assert!(terms.contains(&"work".to_string()));
+    }
+
+    #[test]
+    fn extract_key_terms_deduplicates() {
+        let terms = extract_key_terms("rust rust rust memory memory");
+        assert_eq!(terms.iter().filter(|t| *t == "rust").count(), 1);
+        assert_eq!(terms.iter().filter(|t| *t == "memory").count(), 1);
+    }
+
+    #[test]
+    fn extract_key_terms_short_tokens_excluded() {
+        let terms = extract_key_terms("a to in the go");
+        assert!(terms.is_empty());
+    }
+
+    // ── primitive extraction ──────────────────────────────────────────────────
+
+    #[test]
+    fn extract_primitives_finds_decisions() {
+        let primitives = extract_primitives("We decided to use Rust for this project.");
+        assert!(primitives.iter().any(|p| matches!(
+            p,
+            Primitive::Decision { text, .. } if text.contains("Rust")
+        )));
+    }
+
+    #[test]
+    fn extract_primitives_finds_preferences_i_prefer() {
+        let primitives = extract_primitives("I prefer using snake_case for all identifiers.");
+        assert!(primitives.iter().any(|p| matches!(
+            p,
+            Primitive::Preference { text } if text.contains("snake_case")
+        )));
+    }
+
+    #[test]
+    fn extract_primitives_finds_preferences_always_use() {
+        let primitives = extract_primitives("Always use async/await for IO operations.");
+        assert!(primitives.iter().any(|p| matches!(p, Primitive::Preference { .. })));
+    }
+
+    #[test]
+    fn extract_primitives_returns_no_decisions_or_prefs_for_plain_text() {
+        let primitives = extract_primitives("The weather is nice today.");
+        assert!(!primitives.iter().any(|p| matches!(p, Primitive::Decision { .. })));
+        assert!(!primitives.iter().any(|p| matches!(p, Primitive::Preference { .. })));
+    }
+
+    // ── autorecall ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn autorecall_returns_empty_for_non_message_event() {
+        let proc = Autorecall::new(test_memory(), &test_config());
+        let event = Event::Timer { id: "t".into(), name: "sweep".into(), recurring: true };
+        assert!(proc.execute(&event).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn autorecall_returns_empty_when_no_memories() {
+        let proc = Autorecall::new(test_memory(), &test_config());
+        let event = Event::Message {
+            id: "1".into(),
+            channel: "c".into(),
+            sender: "u".into(),
+            content: "How does autorecall work?".into(),
+        };
+        assert!(
+            proc.execute(&event).await.is_empty(),
+            "empty store → no context to inject"
+        );
+    }
+
+    #[tokio::test]
+    async fn autorecall_returns_state_change_with_context() {
+        let memory = test_memory();
+        memory
+            .capture(&Exchange {
+                user: "What is autorecall?".into(),
+                assistant: "Autorecall retrieves relevant memories and compresses them into context.".into(),
+            })
+            .await
+            .unwrap();
+
+        let proc = Autorecall::new(memory, &test_config());
+        let event = Event::Message {
+            id: "1".into(),
+            channel: "c".into(),
+            sender: "u".into(),
+            content: "Tell me about autorecall memory retrieval".into(),
+        };
+        let results = proc.execute(&event).await;
+        assert_eq!(results.len(), 1);
+        assert!(matches!(
+            &results[0],
+            Event::StateChange { key, .. } if key == "autorecall.context"
+        ));
+    }
+
+    #[tokio::test]
+    async fn autorecall_respects_token_budget() {
+        let memory = test_memory();
+        for i in 0..5usize {
+            memory
+                .capture(&Exchange {
+                    user: format!(
+                        "memory item {i}: longer content about topic {i} for testing budget enforcement"
+                    ),
+                    assistant: format!(
+                        "detailed reply about topic {i} with explanation that fills token budget"
+                    ),
+                })
+                .await
+                .unwrap();
+        }
+
+        let mut config = test_config();
+        config.context_token_budget = 50; // 50 tokens ≈ 200 chars
+
+        let proc = Autorecall::new(memory, &config);
+        let event = Event::Message {
+            id: "1".into(),
+            channel: "c".into(),
+            sender: "u".into(),
+            content: "memory item topic content budget".into(),
+        };
+        let results = proc.execute(&event).await;
+        if let Some(Event::StateChange { new_value, .. }) = results.first() {
+            let ctx = new_value.as_str().unwrap_or("");
+            // 50 tokens * 4 chars/token = 200 chars maximum
+            assert!(
+                ctx.len() <= 200,
+                "context exceeded token budget: len={}",
+                ctx.len()
+            );
+        }
+    }
+
+    // ── primitive-extract ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn primitive_extract_returns_empty_for_non_message() {
+        let proc = PrimitiveExtract::new(test_memory());
+        let event = Event::Timer { id: "t".into(), name: "sweep".into(), recurring: true };
+        assert!(proc.execute(&event).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn primitive_extract_finds_decision_in_message() {
+        let proc = PrimitiveExtract::new(test_memory());
+        let event = Event::Message {
+            id: "1".into(),
+            channel: "c".into(),
+            sender: "u".into(),
+            content: "We decided to use tokio for async runtime.".into(),
+        };
+        let results = proc.execute(&event).await;
+        assert!(!results.is_empty());
+        assert!(results.iter().any(|e| matches!(
+            e,
+            Event::StateChange { key, .. } if key == "primitive.decision"
+        )));
+    }
+
+    #[tokio::test]
+    async fn primitive_extract_finds_preference_in_message() {
+        let proc = PrimitiveExtract::new(test_memory());
+        let event = Event::Message {
+            id: "1".into(),
+            channel: "c".into(),
+            sender: "u".into(),
+            content: "I prefer using rustfmt for all formatting.".into(),
+        };
+        let results = proc.execute(&event).await;
+        assert!(results.iter().any(|e| matches!(
+            e,
+            Event::StateChange { key, .. } if key == "primitive.preference"
+        )));
+    }
+
+    // ── cerebellum-sweep ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn sweep_returns_empty_for_non_timer() {
+        let proc = CerebellumSweep::new(test_memory(), &test_config());
+        let event = Event::Message {
+            id: "1".into(),
+            channel: "c".into(),
+            sender: "u".into(),
+            content: "hello".into(),
+        };
+        assert!(proc.execute(&event).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn sweep_returns_empty_for_empty_memory() {
+        let proc = CerebellumSweep::new(test_memory(), &test_config());
+        let event = Event::Timer { id: "t".into(), name: "sweep".into(), recurring: true };
+        assert!(proc.execute(&event).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn sweep_detects_stale_entries() {
+        let store = InMemoryStore::new();
+        let stale_entry = MemoryEntry {
+            id: "stale-1".into(),
+            content: "old memory from 2020".into(),
+            category: MemoryCategory::Conversation,
+            tags: vec![],
+            embedding: vec![0.1; 384],
+            score: 0.0,
+            created_at: "2020-01-01T00:00:00Z".into(),
+        };
+        store.insert(stale_entry).await.unwrap();
+
+        let memory = Arc::new(PluresLm::new(
+            Box::new(store),
+            Box::new(MockEmbedder),
+            128_000,
+        ));
+        let mut config = test_config();
+        config.staleness_days = 30;
+
+        let proc = CerebellumSweep::new(memory, &config);
+        let event = Event::Timer { id: "t".into(), name: "sweep".into(), recurring: true };
+        let results = proc.execute(&event).await;
+
+        let stale_event = results.iter().find(|e| matches!(
+            e,
+            Event::StateChange { key, .. } if key == "cerebellum.sweep.stale"
+        ));
+        assert!(stale_event.is_some(), "sweep should detect the stale entry");
+
+        if let Some(Event::StateChange { new_value, .. }) = stale_event {
+            let ids = new_value["ids"].as_array().unwrap();
+            assert!(ids.iter().any(|id| id.as_str() == Some("stale-1")));
+        }
+    }
+
+    #[tokio::test]
+    async fn sweep_detects_duplicate_groups() {
+        let store = InMemoryStore::new();
+        let recent = chrono::Utc::now().to_rfc3339();
+        // Unit vector — both entries have identical embeddings.
+        let unit = vec![1.0f32 / (384.0_f32.sqrt()); 384];
+
+        let entry1 = MemoryEntry {
+            id: "dup-1".into(),
+            content: "memory about rust async".into(),
+            category: MemoryCategory::CodePattern,
+            tags: vec![],
+            embedding: unit.clone(),
+            score: 0.0,
+            created_at: recent.clone(),
+        };
+        let entry2 = MemoryEntry {
+            id: "dup-2".into(),
+            content: "memory about rust async (duplicate)".into(),
+            category: MemoryCategory::CodePattern,
+            tags: vec![],
+            embedding: unit,
+            score: 0.0,
+            created_at: recent,
+        };
+        store.insert(entry1).await.unwrap();
+        store.insert(entry2).await.unwrap();
+
+        let memory = Arc::new(PluresLm::new(
+            Box::new(store),
+            Box::new(MockEmbedder),
+            128_000,
+        ));
+        let mut config = test_config();
+        config.similarity_threshold = 0.85;
+
+        let proc = CerebellumSweep::new(memory, &config);
+        let event = Event::Timer { id: "t".into(), name: "sweep".into(), recurring: true };
+        let results = proc.execute(&event).await;
+
+        assert!(
+            results.iter().any(|e| matches!(
+                e,
+                Event::StateChange { key, .. } if key == "cerebellum.sweep.duplicates"
+            )),
+            "sweep should detect duplicate group"
+        );
     }
 }
