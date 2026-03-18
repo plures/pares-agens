@@ -23,6 +23,7 @@
 //!                └────────────────┘  (results flow back)
 //! ```
 
+pub mod bridge;
 pub mod invoke;
 pub mod pipeline;
 pub mod router;
@@ -30,6 +31,7 @@ pub mod router;
 use crate::event::Event;
 use crate::memory::PluresLm;
 use crate::procedure::{Procedure, ProcedureRegistry};
+use crate::cerebellum::bridge::PluresDbBridge;
 
 use async_trait::async_trait;
 use tracing::{debug, info, instrument};
@@ -111,13 +113,26 @@ pub struct CerebellumContext {
 /// Stateless — all persistent state lives in PluresDB via the `PluresLm`
 /// memory client. The cerebellum reads from memory and procedures, makes
 /// routing decisions, and produces enriched contexts for downstream agents.
+///
+/// When `pluresdb` is `Some`, the cerebellum can delegate procedure pipelines
+/// (VectorSearch, Transform, etc.) to the native PluresDB engine for
+/// autorecall and compression.  When `None`, the pure-Rust implementations
+/// are used as fallback.
 pub struct Cerebellum {
     pub config: CerebellumConfig,
+    /// Optional PluresDB bridge for native procedure execution.
+    pub pluresdb: Option<PluresDbBridge>,
 }
 
 impl Cerebellum {
+    /// Create a cerebellum without a PluresDB bridge (pure-Rust fallback).
     pub fn new(config: CerebellumConfig) -> Self {
-        Self { config }
+        Self { config, pluresdb: None }
+    }
+
+    /// Create a cerebellum with an attached [`PluresDbBridge`].
+    pub fn with_bridge(config: CerebellumConfig, bridge: PluresDbBridge) -> Self {
+        Self { config, pluresdb: Some(bridge) }
     }
 
     /// Main entry point: preprocess an event into an enriched context.
