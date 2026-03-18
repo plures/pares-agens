@@ -53,6 +53,7 @@ pub enum Route {
 
 /// Tuning knobs for the cerebellum.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct CerebellumConfig {
     /// Maximum memories to recall per event.
     pub recall_limit: usize,
