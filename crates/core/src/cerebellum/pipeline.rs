@@ -477,7 +477,7 @@ impl Procedure for CerebellumSweep {
 }
 
 /// Register all built-in cerebellum procedures into a registry.
-pub fn register_builtins(
+pub(crate) fn register_builtins(
     registry: &mut crate::procedure::ProcedureRegistry,
     memory: Arc<PluresLm>,
     config: &super::CerebellumConfig,
