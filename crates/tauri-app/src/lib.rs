@@ -6,7 +6,7 @@ use tracing::info;
 
 use pares_agens_channels::adapter::ChannelAdapter;
 use pares_agens_channels::tauri_ipc::tauri_ipc_channel;
-use pares_agens_core::memory::store::InMemoryStore;
+use pares_agens_core::memory::store::PluresDbStore;
 use pares_agens_core::optimization::OptimizationSafetyGate;
 use pares_agens_core::praxis::GuidanceService;
 use pares_agens_core::Event;
@@ -67,7 +67,27 @@ pub fn run() {
             });
 
             // ── AppState ──────────────────────────────────────────────────
-            let memory_store = Arc::new(InMemoryStore::new());
+            // Open a persistent PluresDB-backed memory store under the app data
+            // directory.  Fall back to an ephemeral in-memory store if the data
+            // directory is unavailable (e.g. in sandboxed CI environments).
+            let memory_store = Arc::new(
+                app.path()
+                    .app_data_dir()
+                    .ok()
+                    .and_then(|dir| {
+                        let db_path = dir.join("memory.db");
+                        PluresDbStore::open(&db_path)
+                            .map_err(|e| {
+                                tracing::warn!(
+                                    "PluresDbStore::open failed ({}), falling back to in-memory",
+                                    e
+                                );
+                                e
+                            })
+                            .ok()
+                    })
+                    .unwrap_or_else(PluresDbStore::in_memory),
+            );
             let guidance_service = GuidanceService::new();
             let optimization_safety_gate = OptimizationSafetyGate::new();
             app.manage(AppState {

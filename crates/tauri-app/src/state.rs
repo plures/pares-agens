@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use pares_agens_channels::tauri_ipc::TauriIpcHandle;
-use pares_agens_core::memory::store::InMemoryStore;
+use pares_agens_core::memory::store::PluresDbStore;
 use pares_agens_core::optimization::OptimizationSafetyGate;
 use pares_agens_core::praxis::GuidanceService;
 
@@ -204,7 +204,7 @@ pub struct AppState {
     /// Handle to send user messages to the agent's IPC adapter.
     pub ipc_handle: TauriIpcHandle,
     /// In-process memory store — populated by the agent run-loop procedures.
-    pub memory_store: Arc<InMemoryStore>,
+    pub memory_store: Arc<PluresDbStore>,
     /// User-configurable settings (model, endpoint, channel, …).
     pub settings: Mutex<Settings>,
     /// Whether the first-run wizard has been completed in this session.
