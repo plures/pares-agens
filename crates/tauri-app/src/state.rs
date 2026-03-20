@@ -209,9 +209,9 @@ pub struct AppState {
     pub ipc_handle: TauriIpcHandle,
     /// In-process memory store — populated by the agent run-loop procedures.
     pub memory_store: Arc<PluresDbStore>,
-    /// Encrypted secret store for API keys, tokens, and other sensitive
-    /// configuration.  Secrets are **never** stored in [`Settings`] or any
-    /// serialisable struct.
+    /// Encrypted secret store for provider API keys and other sensitive
+    /// configuration. Provider API keys are persisted only in this store and
+    /// are not written to [`Settings`] when settings are saved.
     pub secret_store: Arc<dyn SecretStore>,
     /// User-configurable settings (model, endpoint, channel, …).
     pub settings: Mutex<Settings>,
