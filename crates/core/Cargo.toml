@@ -27,7 +27,7 @@ thiserror.workspace = true
 subtle = "2"
 pluresdb = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3" }
 pluresdb-procedures = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3" }
-vault-core = { git = "https://github.com/plures/plures-vault", package = "vault-core", optional = true }
+vault-core = { git = "https://github.com/plures/plures-vault", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3", package = "vault-core", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
