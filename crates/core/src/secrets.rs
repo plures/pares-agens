@@ -313,9 +313,29 @@ pub async fn migrate_from_env(store: &dyn SecretStore) -> Result<Vec<String>, Se
 /// assert_eq!(provider_api_key("openai"), "provider:openai:api_key");
 /// ```
 pub fn provider_api_key(provider_name: &str) -> String {
-    format!("provider:{provider_name}:api_key")
+    let normalised = normalise_provider_name_for_key(provider_name);
+    format!("provider:{normalised}:api_key")
 }
 
+/// Internal helper: normalise a provider name so it is safe to embed in a
+/// structured vault key. Currently we preserve existing behaviour for names
+/// that do not contain `:`, and hex-encode names that do.
+fn normalise_provider_name_for_key(provider_name: &str) -> String {
+    if !provider_name.contains(':') {
+        return provider_name.to_string();
+    }
+
+    // Encode the raw bytes as a hex string with a "hex:" prefix to avoid `:`
+    // collisions with the surrounding key format.
+    let mut encoded = String::from("hex:");
+    for byte in provider_name.as_bytes() {
+        use std::fmt::Write as _;
+        // Writing to a `String` cannot fail, so unwrap is safe here.
+        write!(&mut encoded, "{:02x}", byte).expect("writing to String cannot fail");
+    }
+
+    encoded
+}
 /// Derive the canonical vault key for a channel adapter token.
 ///
 /// ```
