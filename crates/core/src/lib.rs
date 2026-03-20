@@ -39,6 +39,7 @@ pub mod memory;
 pub mod model;
 pub mod optimization;
 pub mod procedure;
+pub mod secrets;
 pub mod setup;
 pub mod source;
 pub mod state;

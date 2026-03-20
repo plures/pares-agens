@@ -3169,7 +3169,7 @@ version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
- "pluresdb",
+ "pluresdb 2.9.10",
  "pluresdb-procedures",
  "serde",
  "serde_json",
@@ -3179,6 +3179,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "vault-core",
 ]
 
 [[package]]
@@ -3571,14 +3572,34 @@ dependencies = [
 
 [[package]]
 name = "pluresdb"
+version = "0.1.0"
+source = "git+https://github.com/plures/plures-vault#d4e4783ddd14f63af2699ea97f29ca5895ef6590"
+dependencies = [
+ "pluresdb-core 0.1.0",
+ "pluresdb-storage 0.1.0",
+ "pluresdb-sync 0.1.0",
+ "serde_json",
+]
+
+[[package]]
+name = "pluresdb"
 version = "2.9.10"
 source = "git+https://github.com/plures/pluresdb?rev=111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3#111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3"
 dependencies = [
  "anyhow",
- "pluresdb-core",
- "pluresdb-storage",
- "pluresdb-sync",
+ "pluresdb-core 2.9.10",
+ "pluresdb-storage 2.9.10",
+ "pluresdb-sync 2.9.10",
  "tokio",
+]
+
+[[package]]
+name = "pluresdb-core"
+version = "0.1.0"
+source = "git+https://github.com/plures/plures-vault#d4e4783ddd14f63af2699ea97f29ca5895ef6590"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3592,7 +3613,7 @@ dependencies = [
  "futures",
  "hnsw_rs",
  "parking_lot 0.12.5",
- "pluresdb-storage",
+ "pluresdb-storage 2.9.10",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -3610,7 +3631,7 @@ dependencies = [
  "parking_lot 0.12.5",
  "pest",
  "pest_derive",
- "pluresdb-core",
+ "pluresdb-core 2.9.10",
  "pluresdb-procedures-macros",
  "serde",
  "serde_json",
@@ -3627,6 +3648,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "pluresdb-storage"
+version = "0.1.0"
+source = "git+https://github.com/plures/plures-vault#d4e4783ddd14f63af2699ea97f29ca5895ef6590"
+dependencies = [
+ "pluresdb-core 0.1.0",
+ "serde_json",
+ "sled",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -3651,6 +3683,14 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "pluresdb-sync"
+version = "0.1.0"
+source = "git+https://github.com/plures/plures-vault#d4e4783ddd14f63af2699ea97f29ca5895ef6590"
+dependencies = [
+ "tokio",
 ]
 
 [[package]]
@@ -5992,6 +6032,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "vault-core"
+version = "0.2.0"
+source = "git+https://github.com/plures/plures-vault#d4e4783ddd14f63af2699ea97f29ca5895ef6590"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "base64 0.22.1",
+ "chrono",
+ "pluresdb 0.1.0",
+ "pluresdb-core 0.1.0",
+ "pluresdb-storage 0.1.0",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "uuid",
+ "vault-crypto",
+]
+
+[[package]]
+name = "vault-crypto"
+version = "0.1.0"
+source = "git+https://github.com/plures/plures-vault#d4e4783ddd14f63af2699ea97f29ca5895ef6590"
+dependencies = [
+ "aes-gcm",
+ "argon2",
+ "base64 0.21.7",
+ "rand 0.8.5",
+ "serde",
+ "thiserror 1.0.69",
+ "zeroize",
+]
+
+[[package]]
 name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7095,6 +7169,20 @@ name = "zeroize"
 version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
+dependencies = [
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85a5b4158499876c763cb03bc4e49185d3cccbabb15b33c627f7884f43db852e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
 
 [[package]]
 name = "zerotrie"

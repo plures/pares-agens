@@ -9,6 +9,7 @@ use pares_agens_channels::tauri_ipc::tauri_ipc_channel;
 use pares_agens_core::memory::store::PluresDbStore;
 use pares_agens_core::optimization::OptimizationSafetyGate;
 use pares_agens_core::praxis::GuidanceService;
+use pares_agens_core::secrets::InMemorySecretStore;
 use pares_agens_core::Event;
 
 use crate::state::{AppState, Settings};
@@ -90,9 +91,16 @@ pub fn run() {
             );
             let guidance_service = GuidanceService::new();
             let optimization_safety_gate = OptimizationSafetyGate::new();
+            // Initialise the secret store.  In production (with the `vault`
+            // feature enabled) this would open the plures-vault encrypted
+            // database from the app-data directory.  The in-memory store is
+            // used for the default build so that no external dependencies or
+            // vault unlocking are required on startup.
+            let secret_store = Arc::new(InMemorySecretStore::new());
             app.manage(AppState {
                 ipc_handle: handle,
                 memory_store,
+                secret_store,
                 settings: Mutex::new(Settings::default()),
                 wizard_completed: Mutex::new(false),
                 procedures: Mutex::new(Vec::new()),

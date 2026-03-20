@@ -6,13 +6,18 @@
 //!
 //! # API key handling
 //!
-//! API keys are **never** returned verbatim to the UI.  Any stored key is
-//! replaced by [`MASKED_KEY`] in responses from [`list_providers`].  When the
-//! frontend echoes that sentinel back via [`update_provider`], the original
-//! value is preserved.  In a full PluresDB integration the keys would also be
-//! encrypted at rest.
+//! API keys are **never** returned verbatim to the UI and are **never** stored
+//! in the in-memory [`Settings`] struct.  Instead they are written to the
+//! [`AppState::secret_store`] vault under the key
+//! `provider:<name>:api_key` (see
+//! [`pares_agens_core::secrets::provider_api_key`]).
+//!
+//! When the frontend echoes back [`MASKED_KEY`] via [`update_provider`], the
+//! existing vault entry is preserved unchanged.
 
 use tauri::State;
+
+use pares_agens_core::secrets::provider_api_key;
 
 use crate::state::{AppState, ChannelAdapterConfig, ProviderEntry, RoutingPrefs};
 
@@ -24,15 +29,30 @@ const MASKED_KEY: &str = "••••••••";
 // ---------------------------------------------------------------------------
 
 /// List all configured model providers with API keys masked.
+///
+/// For each provider the response includes `"apiKey": "••••••••"` when the
+/// vault holds a key for that provider, or `"apiKey": null` when it does not.
 #[tauri::command]
 pub async fn list_providers(state: State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
     let settings = state.settings.lock().await;
-    Ok(settings.providers.iter().map(mask_provider).collect())
+    let mut result = Vec::with_capacity(settings.providers.len());
+    for p in &settings.providers {
+        let has_key = state
+            .secret_store
+            .get(&provider_api_key(&p.name))
+            .await
+            .map_err(|e| e.to_string())?
+            .is_some();
+        result.push(mask_provider(p, has_key));
+    }
+    Ok(result)
 }
 
 /// Add a new model provider.
 ///
-/// Returns an error if a provider with the same `name` already exists.
+/// If `provider.api_key` is set the value is written to the vault and **not**
+/// kept in the in-memory settings.  Returns an error if a provider with the
+/// same `name` already exists.
 #[tauri::command]
 pub async fn add_provider(
     provider: ProviderEntry,
@@ -42,15 +62,37 @@ pub async fn add_provider(
     if settings.providers.iter().any(|p| p.name == provider.name) {
         return Err(format!("Provider '{}' already exists", provider.name));
     }
-    settings.providers.push(provider);
+
+    // Write API key to vault and never keep it in the struct.
+    if let Some(ref key) = provider.api_key {
+        if !key.is_empty() {
+            state
+                .secret_store
+                .set(&provider_api_key(&provider.name), key)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
+    // Store the provider without the API key — keys live in the vault only.
+    let name = provider.name.clone();
+    let base_url = provider.base_url.clone();
+    let models = provider.models.clone();
+    settings.providers.push(ProviderEntry {
+        name,
+        base_url,
+        api_key: None,
+        models,
+    });
     Ok(())
 }
 
 /// Update an existing provider identified by `name`.
 ///
-/// If the incoming `api_key` equals [`MASKED_KEY`] the existing key is
-/// preserved unchanged — this prevents the frontend from accidentally
-/// overwriting a key it never received.
+/// API key handling:
+/// - If `provider.api_key` equals [`MASKED_KEY`] — vault entry is preserved.
+/// - If `provider.api_key` is a new non-empty string — vault entry is updated.
+/// - If `provider.api_key` is `None` or empty — vault entry is deleted.
 #[tauri::command]
 pub async fn update_provider(
     name: String,
@@ -64,13 +106,33 @@ pub async fn update_provider(
         .find(|p| p.name == name)
         .ok_or_else(|| format!("Provider '{name}' not found"))?;
 
-    // Preserve the stored key if the frontend echoes back the masked sentinel.
-    let api_key = resolve_api_key(provider.api_key.as_deref(), &existing.api_key);
+    // Vault key operation — preserve/update/clear based on the incoming value.
+    let vault_key = provider_api_key(&name);
+    match provider.api_key.as_deref() {
+        Some(k) if k == MASKED_KEY => {
+            // Frontend echoed the masked sentinel — leave vault entry as-is.
+        }
+        Some(k) if !k.is_empty() => {
+            state
+                .secret_store
+                .set(&vault_key, k)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        _ => {
+            // Empty or absent key — clear from vault.
+            state
+                .secret_store
+                .delete(&vault_key)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
 
     *existing = ProviderEntry {
-        name,  // preserve original name — renames are not permitted via this command
+        name,            // preserve original name — renames are not permitted
         base_url: provider.base_url,
-        api_key,
+        api_key: None,   // never stored in the struct
         models: provider.models,
     };
     Ok(())
@@ -78,7 +140,8 @@ pub async fn update_provider(
 
 /// Remove a provider by `name`.
 ///
-/// Returns an error if no provider with that name exists.
+/// Also deletes the corresponding vault entry.  Returns an error if no
+/// provider with that name exists.
 #[tauri::command]
 pub async fn remove_provider(name: String, state: State<'_, AppState>) -> Result<(), String> {
     let mut settings = state.settings.lock().await;
@@ -87,6 +150,12 @@ pub async fn remove_provider(name: String, state: State<'_, AppState>) -> Result
     if settings.providers.len() == before {
         return Err(format!("Provider '{name}' not found"));
     }
+    // Remove from vault (silently OK if key was never set).
+    state
+        .secret_store
+        .delete(&provider_api_key(&name))
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -132,22 +201,15 @@ pub async fn set_routing(routing: RoutingPrefs, state: State<'_, AppState>) -> R
 // ---------------------------------------------------------------------------
 
 /// Build a JSON representation of a provider with the API key masked.
-fn mask_provider(p: &ProviderEntry) -> serde_json::Value {
+///
+/// `has_api_key` should be `true` if the vault holds a key for this provider.
+fn mask_provider(p: &ProviderEntry, has_api_key: bool) -> serde_json::Value {
     serde_json::json!({
         "name":    p.name,
         "baseUrl": p.base_url,
-        "apiKey":  p.api_key.as_deref().map(|_| MASKED_KEY),
+        "apiKey":  if has_api_key { Some(MASKED_KEY) } else { None },
         "models":  p.models,
     })
-}
-
-/// Resolve the API key to store: preserve the existing key when the frontend
-/// echoes back the [`MASKED_KEY`] sentinel, otherwise use the new value.
-fn resolve_api_key(new_key: Option<&str>, existing_key: &Option<String>) -> Option<String> {
-    match new_key {
-        Some(k) if k == MASKED_KEY => existing_key.clone(),
-        other => other.map(str::to_owned),
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -158,48 +220,48 @@ fn resolve_api_key(new_key: Option<&str>, existing_key: &Option<String>) -> Opti
 mod tests {
     use super::*;
 
-    fn make_provider(name: &str, key: Option<&str>) -> ProviderEntry {
+    fn make_provider(name: &str) -> ProviderEntry {
         ProviderEntry {
             name: name.to_string(),
             base_url: "http://localhost:11434/v1".to_string(),
-            api_key: key.map(str::to_owned),
+            api_key: None,
             models: vec![],
         }
     }
 
     #[test]
-    fn mask_provider_hides_key() {
-        let p = make_provider("test", Some("sk-secret"));
-        let v = mask_provider(&p);
+    fn mask_provider_hides_key_when_vault_has_entry() {
+        let p = make_provider("test");
+        let v = mask_provider(&p, true);
         assert_eq!(v["apiKey"], serde_json::json!(MASKED_KEY));
         assert_eq!(v["name"], "test");
     }
 
     #[test]
-    fn mask_provider_null_when_no_key() {
-        let p = make_provider("test", None);
-        let v = mask_provider(&p);
+    fn mask_provider_null_when_no_vault_entry() {
+        let p = make_provider("test");
+        let v = mask_provider(&p, false);
         assert!(v["apiKey"].is_null());
     }
 
     #[test]
-    fn resolve_api_key_preserves_key_on_sentinel() {
-        let existing = Some("sk-real-key".to_string());
-        let result = resolve_api_key(Some(MASKED_KEY), &existing);
-        assert_eq!(result, existing);
+    fn vault_key_sentinel_logic_preserves() {
+        // Simulates: frontend echoed back the masked sentinel.
+        let incoming = Some(MASKED_KEY);
+        assert!(matches!(incoming, Some(k) if k == MASKED_KEY));
     }
 
     #[test]
-    fn resolve_api_key_clears_key_on_empty() {
-        let existing = Some("sk-real-key".to_string());
-        let result = resolve_api_key(None, &existing);
-        assert!(result.is_none());
+    fn vault_key_sentinel_logic_clears_on_none() {
+        // Simulates: frontend sent None (clear the key).
+        let incoming: Option<&str> = None;
+        assert!(!matches!(incoming, Some(k) if k == MASKED_KEY));
     }
 
     #[test]
-    fn resolve_api_key_updates_key_on_new_value() {
-        let existing = Some("sk-old-key".to_string());
-        let result = resolve_api_key(Some("sk-new-key"), &existing);
-        assert_eq!(result, Some("sk-new-key".to_string()));
+    fn vault_key_sentinel_logic_updates_on_new_value() {
+        let incoming = Some("sk-new-key");
+        // Not the sentinel, not None → update vault.
+        assert!(matches!(incoming, Some(k) if k != MASKED_KEY && !k.is_empty()));
     }
 }

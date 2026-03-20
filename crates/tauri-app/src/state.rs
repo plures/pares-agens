@@ -7,6 +7,7 @@ use pares_agens_channels::tauri_ipc::TauriIpcHandle;
 use pares_agens_core::memory::store::PluresDbStore;
 use pares_agens_core::optimization::OptimizationSafetyGate;
 use pares_agens_core::praxis::GuidanceService;
+use pares_agens_core::secrets::SecretStore;
 
 use crate::procedures::{ProcedureLogEntry, ProcedureRecord};
 
@@ -22,12 +23,15 @@ pub struct ProviderEntry {
     pub name: String,
     /// OpenAI-compatible base URL (e.g. `"http://localhost:11434/v1"`).
     pub base_url: String,
-    /// Bearer token / API key.
+    /// Bearer token / API key received from the frontend.
     ///
-    /// Stored internally; never returned verbatim — masked before sending to
-    /// the UI.  In a full PluresDB integration this value would be encrypted
-    /// at rest.
-    #[serde(skip_serializing, skip_serializing_if = "Option::is_none")]
+    /// **Never stored in this struct at rest.**  When `add_provider` or
+    /// `update_provider` receives a non-empty, non-masked value here it is
+    /// written to the [`AppState::secret_store`] vault and then this field is
+    /// cleared to `None`.  The vault key is
+    /// `provider:<name>:api_key` (see
+    /// [`pares_agens_core::secrets::provider_api_key`]).
+    #[serde(skip_serializing, default)]
     pub api_key: Option<String>,
     /// Model IDs known to be available through this provider.
     #[serde(default)]
@@ -205,6 +209,10 @@ pub struct AppState {
     pub ipc_handle: TauriIpcHandle,
     /// In-process memory store — populated by the agent run-loop procedures.
     pub memory_store: Arc<PluresDbStore>,
+    /// Encrypted secret store for API keys, tokens, and other sensitive
+    /// configuration.  Secrets are **never** stored in [`Settings`] or any
+    /// serialisable struct.
+    pub secret_store: Arc<dyn SecretStore>,
     /// User-configurable settings (model, endpoint, channel, …).
     pub settings: Mutex<Settings>,
     /// Whether the first-run wizard has been completed in this session.
