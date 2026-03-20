@@ -3573,7 +3573,7 @@ dependencies = [
 [[package]]
 name = "pluresdb"
 version = "0.1.0"
-source = "git+https://github.com/plures/plures-vault#d4e4783ddd14f63af2699ea97f29ca5895ef6590"
+source = "git+https://github.com/plures/plures-vault?rev=d4e4783ddd14f63af2699ea97f29ca5895ef6590#d4e4783ddd14f63af2699ea97f29ca5895ef6590"
 dependencies = [
  "pluresdb-core 0.1.0",
  "pluresdb-storage 0.1.0",
@@ -3596,7 +3596,7 @@ dependencies = [
 [[package]]
 name = "pluresdb-core"
 version = "0.1.0"
-source = "git+https://github.com/plures/plures-vault#d4e4783ddd14f63af2699ea97f29ca5895ef6590"
+source = "git+https://github.com/plures/plures-vault?rev=d4e4783ddd14f63af2699ea97f29ca5895ef6590#d4e4783ddd14f63af2699ea97f29ca5895ef6590"
 dependencies = [
  "serde",
  "serde_json",
@@ -3653,7 +3653,7 @@ dependencies = [
 [[package]]
 name = "pluresdb-storage"
 version = "0.1.0"
-source = "git+https://github.com/plures/plures-vault#d4e4783ddd14f63af2699ea97f29ca5895ef6590"
+source = "git+https://github.com/plures/plures-vault?rev=d4e4783ddd14f63af2699ea97f29ca5895ef6590#d4e4783ddd14f63af2699ea97f29ca5895ef6590"
 dependencies = [
  "pluresdb-core 0.1.0",
  "serde_json",
@@ -3688,7 +3688,7 @@ dependencies = [
 [[package]]
 name = "pluresdb-sync"
 version = "0.1.0"
-source = "git+https://github.com/plures/plures-vault#d4e4783ddd14f63af2699ea97f29ca5895ef6590"
+source = "git+https://github.com/plures/plures-vault?rev=d4e4783ddd14f63af2699ea97f29ca5895ef6590#d4e4783ddd14f63af2699ea97f29ca5895ef6590"
 dependencies = [
  "tokio",
 ]
@@ -6034,7 +6034,7 @@ dependencies = [
 [[package]]
 name = "vault-core"
 version = "0.2.0"
-source = "git+https://github.com/plures/plures-vault#d4e4783ddd14f63af2699ea97f29ca5895ef6590"
+source = "git+https://github.com/plures/plures-vault?rev=d4e4783ddd14f63af2699ea97f29ca5895ef6590#d4e4783ddd14f63af2699ea97f29ca5895ef6590"
 dependencies = [
  "anyhow",
  "argon2",
@@ -6054,7 +6054,7 @@ dependencies = [
 [[package]]
 name = "vault-crypto"
 version = "0.1.0"
-source = "git+https://github.com/plures/plures-vault#d4e4783ddd14f63af2699ea97f29ca5895ef6590"
+source = "git+https://github.com/plures/plures-vault?rev=d4e4783ddd14f63af2699ea97f29ca5895ef6590#d4e4783ddd14f63af2699ea97f29ca5895ef6590"
 dependencies = [
  "aes-gcm",
  "argon2",

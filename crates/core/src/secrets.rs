@@ -308,12 +308,17 @@ pub async fn migrate_from_env(store: &dyn SecretStore) -> Result<Vec<String>, Se
 
 /// Derive the canonical vault key for a model provider's API key.
 ///
+/// Provider names containing `:` are hex-encoded to avoid collisions with the
+/// key separator.  Plain names (the common case) are used as-is.
+///
 /// ```
 /// use pares_agens_core::secrets::provider_api_key;
 /// assert_eq!(provider_api_key("openai"), "provider:openai:api_key");
+/// assert_eq!(provider_api_key("azure:openai"), "provider:hex:617a7572653a6f70656e6169:api_key");
 /// ```
 pub fn provider_api_key(provider_name: &str) -> String {
-    format!("provider:{provider_name}:api_key")
+    let segment = normalise_key_segment(provider_name);
+    format!("provider:{segment}:api_key")
 }
 
 /// Derive the canonical vault key for a channel adapter token.
@@ -324,6 +329,24 @@ pub fn provider_api_key(provider_name: &str) -> String {
 /// ```
 pub fn channel_token(channel_kind: &str) -> String {
     format!("channel:{channel_kind}:bot_token")
+}
+
+/// Normalize a string for safe embedding inside a `:` -delimited vault key.
+///
+/// Names that do not contain `:` are returned unchanged.  Names that do
+/// contain `:` are hex-encoded with a `hex:` prefix so they cannot be
+/// confused with key separators (and so the encoding is reversible).
+fn normalise_key_segment(s: &str) -> String {
+    if !s.contains(':') {
+        return s.to_string();
+    }
+    // Encode the raw bytes as a lowercase hex string with a "hex:" prefix.
+    let mut encoded = String::from("hex:");
+    for byte in s.as_bytes() {
+        use std::fmt::Write as _;
+        write!(&mut encoded, "{:02x}", byte).expect("hex-encoding a provider name for vault key cannot fail");
+    }
+    encoded
 }
 
 // ---------------------------------------------------------------------------
@@ -425,9 +448,18 @@ mod tests {
     // ── Convenience helpers ───────────────────────────────────────────────
 
     #[test]
-    fn provider_api_key_format() {
+    fn provider_api_key_plain_name() {
         assert_eq!(provider_api_key("openai"), "provider:openai:api_key");
         assert_eq!(provider_api_key("anthropic"), "provider:anthropic:api_key");
+    }
+
+    #[test]
+    fn provider_api_key_encodes_colon_in_name() {
+        // Names containing `:` must be encoded to avoid colliding with the
+        // key separator format `provider:<name>:api_key`.
+        let key = provider_api_key("azure:openai");
+        assert!(!key.contains("azure:openai"), "raw colon must not appear");
+        assert_eq!(key, "provider:hex:617a7572653a6f70656e6169:api_key");
     }
 
     #[test]
