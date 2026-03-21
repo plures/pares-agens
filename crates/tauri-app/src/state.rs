@@ -349,12 +349,27 @@ pub async fn rebuild_model_router(state: &AppState) {
         .or_else(|| provider_entries.first().map(|p| p.name.clone()))
         .unwrap_or_else(|| "ollama".to_string());
 
-    let config = RouterConfig {
+    let mut config = RouterConfig {
         providers,
         rules: vec![],
         default_provider,
     };
 
+    // Ensure we don't accidentally enable multi-provider routing when using
+    // ModelRouter::new. If multiple providers are configured, restrict the
+    // router config to only the default provider.
+    if config.providers.len() > 1 {
+        if let Some(default_cfg) = config
+            .providers
+            .get(&config.default_provider)
+            .cloned()
+        {
+            config.providers.clear();
+            config
+                .providers
+                .insert(config.default_provider.clone(), default_cfg);
+        }
+    }
     *state.model_router.write().await = ModelRouter::new(config);
 }
 
