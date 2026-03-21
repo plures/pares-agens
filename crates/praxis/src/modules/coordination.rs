@@ -15,8 +15,8 @@
 //!   when `votes_for` / `total_votes` ≥ 0.51 (simple majority)
 //!
 //! ## Data rules
-//! - `conflict_score_actionable` — warn when `conflict_score` > 0.7; block
-//!   when > 0.95 (deadlock territory)
+//! - `conflict_score_actionable` — warn when `conflict_score` > 0.7; enter
+//!   an approval gate when > 0.95 (deadlock territory)
 //! - `collaborator_count_sane` — warn when collaborator count > 20 (overhead
 //!   concern)
 
