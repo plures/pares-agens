@@ -14,7 +14,7 @@ use std::time::Duration;
 use tauri::State;
 use tracing::warn;
 
-use crate::state::{AppState, Settings};
+use crate::state::{rebuild_model_router, AppState, Settings};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -114,5 +114,11 @@ pub async fn complete_wizard(
 ) -> Result<(), String> {
     *state.settings.lock().await = settings;
     *state.wizard_completed.lock().await = true;
+
+    // Rebuild the model router so wizard-entered provider settings take
+    // effect on the very first message without requiring a separate
+    // settings mutation.
+    rebuild_model_router(&state).await;
+
     Ok(())
 }

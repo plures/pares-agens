@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use tauri::Manager;
-use tokio::sync::Mutex;
-use tracing::info;
+use tokio::sync::{Mutex, RwLock};
+use tracing::{error, info};
 
 use pares_agens_channels::adapter::ChannelAdapter;
 use pares_agens_channels::tauri_ipc::tauri_ipc_channel;
@@ -16,8 +16,10 @@ use pares_agens_core::optimization::OptimizationSafetyGate;
 use pares_agens_core::praxis::GuidanceService;
 use pares_agens_core::secrets::InMemorySecretStore;
 use pares_agens_core::Event;
+use pares_models::types::{ChatCompletionRequest, ChatMessage, Role};
+use pares_models::ModelRouter;
 
-use crate::state::{AppState, Settings};
+use crate::state::{build_router_config, rebuild_model_router, AppState, Settings};
 
 mod commands;
 mod settings;
@@ -71,6 +73,17 @@ pub fn run() {
                 None => Arc::new(InMemoryStore::new()),
             };
 
+            // ── Shared settings & model router ────────────────────────────
+            let default_settings = Settings::default();
+            let router_config = build_router_config(&default_settings);
+            let settings: Arc<Mutex<Settings>> = Arc::new(Mutex::new(default_settings));
+            let model_router: Arc<RwLock<ModelRouter>> =
+                Arc::new(RwLock::new(ModelRouter::new(router_config)));
+
+            // Clones captured by the adapter callback.
+            let settings_for_cb = Arc::clone(&settings);
+            let router_for_cb = Arc::clone(&model_router);
+
             // ── IPC bridge ────────────────────────────────────────────────
             let (adapter, handle) = tauri_ipc_channel("user");
 
@@ -90,13 +103,89 @@ pub fn run() {
                 plures_lm,
             ));
 
-            // Spawn the adapter run-loop, routing all events through the agent.
+            // Spawn the adapter run-loop, routing all events through the agent
+            // and then through the model router for real LLM responses.
             tauri::async_runtime::spawn(async move {
-                info!("Tauri IPC adapter starting (cerebellum enabled)");
+                info!("Tauri IPC adapter starting (cerebellum + model router enabled)");
                 adapter
                     .run(move |event: Event| {
                         let agent = Arc::clone(&agent);
-                        Box::pin(async move { agent.handle_event(event).await })
+                        let router = Arc::clone(&router_for_cb);
+                        let settings = Arc::clone(&settings_for_cb);
+                        Box::pin(async move {
+                            // Extract message fields before consuming the event — avoids
+                            // cloning the entire Event payload.
+                            let msg_fields = if let Event::Message { ref id, ref content, .. } = event {
+                                Some((id.clone(), content.clone()))
+                            } else {
+                                None
+                            };
+
+                            // Let the agent run cerebellum preprocessing (autorecall,
+                            // routing, drop filtering) and capture the message in memory.
+                            let preprocessed = agent.handle_event(event).await;
+
+                            // If the cerebellum dropped the event, respect that.
+                            if preprocessed.is_none() {
+                                return None;
+                            }
+
+                            // For message events, replace the echo response with a real
+                            // model call via the ModelRouter.
+                            if let Some((id, content)) = msg_fields {
+                                // Prefer routing.interactive.model when configured
+                                // (set by the Settings routing tab); fall back to the
+                                // legacy settings.model field.
+                                let (model, system_prompt) = {
+                                    let s = settings.lock().await;
+                                    let model = s.routing.interactive
+                                        .as_ref()
+                                        .map(|r| r.model.clone())
+                                        .unwrap_or_else(|| s.model.clone());
+                                    (model, s.system_prompt.clone())
+                                };
+
+                                let messages = vec![
+                                    ChatMessage::text(Role::System, &system_prompt),
+                                    ChatMessage::text(Role::User, &content),
+                                ];
+                                let request = ChatCompletionRequest::new(&model, messages);
+
+                                let router_guard = router.read().await;
+                                match router_guard.chat(&request).await {
+                                    Ok(response) => {
+                                        let reply = response
+                                            .choices
+                                            .first()
+                                            .and_then(|c| c.message.content.as_ref())
+                                            .cloned()
+                                            .unwrap_or_default();
+                                        Some(Event::ModelResponse {
+                                            request_id: id,
+                                            model,
+                                            content: reply,
+                                        })
+                                    }
+                                    Err(e) => {
+                                        error!(error = %e, model = %model, "model router call failed");
+                                        Some(Event::Message {
+                                            id: format!("{id}-error"),
+                                            channel: "system".into(),
+                                            sender: "agent".into(),
+                                            content: format!(
+                                                "⚠️ Model request to `{model}` failed: {e}\n\n\
+                                                 This may be due to missing provider configuration, invalid \
+                                                 model ID, authentication issues, or network/connectivity \
+                                                 problems. Please review your provider settings for this \
+                                                 model and try again."
+                                            ),
+                                        })
+                                    }
+                                }
+                            } else {
+                                preprocessed
+                            }
+                        })
                     })
                     .await
                     .ok();
@@ -115,12 +204,23 @@ pub fn run() {
                 ipc_handle: handle,
                 memory_store,
                 secret_store,
-                settings: Mutex::new(Settings::default()),
+                settings,
+                model_router,
                 wizard_completed: Mutex::new(false),
                 procedures: Mutex::new(Vec::new()),
                 procedure_log: Mutex::new(Vec::new()),
                 guidance_service,
                 optimization_safety_gate,
+            });
+
+            // ── Initial router rebuild ─────────────────────────────────────
+            // The router was created from Settings::default() above.  Rebuild
+            // it now that AppState (including the vault-backed SecretStore) is
+            // managed so the initial router includes any persisted API keys.
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let state = app_handle.state::<AppState>();
+                rebuild_model_router(&state).await;
             });
 
             // ── System tray ───────────────────────────────────────────────

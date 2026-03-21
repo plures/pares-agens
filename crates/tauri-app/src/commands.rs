@@ -5,7 +5,7 @@ use pares_agens_core::memory::store::MemoryStore;
 use pares_agens_core::optimization::{EvidenceRequest, OptimizationSafety, OptimizationTelemetry};
 use pares_agens_core::praxis::{GuidanceCategory, GuidanceEntry, SourceSpan, AnalysisEvent};
 
-use crate::state::{AppState, Settings};
+use crate::state::{rebuild_model_router, AppState, Settings};
 
 /// Send a user message through the core agent runtime and return the response.
 ///
@@ -106,6 +106,12 @@ pub async fn set_settings(
     // Re-attach secrets the frontend never received so they are not cleared.
     merge_secrets(&current, &mut settings);
     *current = settings;
+    drop(current);
+
+    // Rebuild the model router so changed model / system prompt / providers
+    // take effect on the next message without a restart.
+    rebuild_model_router(&state).await;
+
     Ok(())
 }
 
