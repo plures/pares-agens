@@ -266,12 +266,40 @@ pub fn build_router_config(settings: &Settings) -> RouterConfig {
         );
     }
 
-    let default_provider = settings
+    // Backward-compatible fallback: if no explicit providers are configured
+    // but legacy endpoint/api_key fields are populated (e.g. from the
+    // first-run wizard), synthesize a single provider entry.
+    if providers.is_empty() && !settings.endpoint.is_empty() {
+        providers.insert(
+            "default".to_string(),
+            ProviderConfig::new(&settings.endpoint, settings.api_key.clone()),
+        );
+    }
+
+    // Prefer an explicitly configured routing provider when it exists and is
+    // present in the providers map; otherwise, if there is exactly one
+    // provider configured (including synthesized legacy fallback), use that.
+    let mut default_provider = settings
         .routing
         .interactive
         .as_ref()
-        .map(|r| r.provider.clone())
-        .or_else(|| settings.providers.first().map(|p| p.name.clone()))
+        .map(|r| r.provider.clone());
+
+    if let Some(ref name) = default_provider {
+        if !providers.contains_key(name) {
+            // Routing preference refers to a provider that doesn't exist.
+            default_provider = None;
+        }
+    }
+
+    let default_provider = default_provider
+        .or_else(|| {
+            if providers.len() == 1 {
+                providers.keys().next().cloned()
+            } else {
+                None
+            }
+        })
         .unwrap_or_else(|| "ollama".to_string());
 
     RouterConfig {
