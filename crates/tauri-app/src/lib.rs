@@ -19,7 +19,7 @@ use pares_agens_core::Event;
 use pares_models::types::{ChatCompletionRequest, ChatMessage, Role};
 use pares_models::ModelRouter;
 
-use crate::state::{build_router_config, AppState, Settings};
+use crate::state::{build_router_config, rebuild_model_router, AppState, Settings};
 
 mod commands;
 mod settings;
@@ -211,6 +211,16 @@ pub fn run() {
                 procedure_log: Mutex::new(Vec::new()),
                 guidance_service,
                 optimization_safety_gate,
+            });
+
+            // ── Initial router rebuild ─────────────────────────────────────
+            // The router was created from Settings::default() above.  Rebuild
+            // it now that AppState (including the vault-backed SecretStore) is
+            // managed so the initial router includes any persisted API keys.
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let state = app_handle.state::<AppState>();
+                rebuild_model_router(&state).await;
             });
 
             // ── System tray ───────────────────────────────────────────────
