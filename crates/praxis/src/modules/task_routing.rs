@@ -99,7 +99,7 @@ impl Rule for RequiredCapabilityDeclared {
     fn evaluate(&self, ctx: &RuleContext) -> RuleResult {
         match ctx.payload_array_len("required_capabilities") {
             None | Some(0) => RuleResult::Fail {
-                reason: "task must declare at least one required_capability".into(),
+                reason: "task must declare at least one required capability".into(),
             },
             _ => RuleResult::Pass,
         }
