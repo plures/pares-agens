@@ -161,7 +161,7 @@ impl Rule for PriorityInRange {
     fn evaluate(&self, ctx: &RuleContext) -> RuleResult {
         match ctx.payload_u64("priority") {
             None => RuleResult::Warning {
-                message: "priority not set; defaulting to 5 (medium)".into(),
+                message: "priority not set; caller should provide a value in [1, 10] (e.g., 5 = medium)".into(),
             },
             Some(p) if !(1..=10).contains(&p) => RuleResult::Fail {
                 reason: format!("priority {p} is out of range [1, 10]"),
