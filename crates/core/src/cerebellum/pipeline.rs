@@ -550,10 +550,11 @@ mod tests {
         PluresLm,
     };
     use crate::procedure::ProcedureRegistry;
+    use std::sync::Arc;
 
     fn test_memory() -> Arc<PluresLm> {
         Arc::new(PluresLm::new(
-            Box::new(InMemoryStore::new()),
+            Arc::new(InMemoryStore::new()),
             Box::new(MockEmbedder),
             128_000,
         ))
@@ -824,7 +825,7 @@ mod tests {
         store.insert(stale_entry).await.unwrap();
 
         let memory = Arc::new(PluresLm::new(
-            Box::new(store),
+            Arc::new(store),
             Box::new(MockEmbedder),
             128_000,
         ));
@@ -876,7 +877,7 @@ mod tests {
         store.insert(entry2).await.unwrap();
 
         let memory = Arc::new(PluresLm::new(
-            Box::new(store),
+            Arc::new(store),
             Box::new(MockEmbedder),
             128_000,
         ));

@@ -6,7 +6,12 @@ use tracing::info;
 
 use pares_agens_channels::adapter::ChannelAdapter;
 use pares_agens_channels::tauri_ipc::tauri_ipc_channel;
+use pares_agens_core::agent::{Agent, InMemory};
+use pares_agens_core::cerebellum::{Cerebellum, CerebellumConfig};
+use pares_agens_core::memory::embed::MockEmbedder;
+use pares_agens_core::memory::store::{InMemoryStore, MemoryStore};
 use pares_agens_core::memory::store::PluresDbStore;
+use pares_agens_core::memory::PluresLm;
 use pares_agens_core::optimization::OptimizationSafetyGate;
 use pares_agens_core::praxis::GuidanceService;
 use pares_agens_core::secrets::InMemorySecretStore;
@@ -39,56 +44,65 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
+            // ── Memory store ──────────────────────────────────────────────
+            // Open a persistent PluresDB-backed memory store under the app data
+            // directory.  Fall back to an ephemeral in-memory store if the data
+            // directory is unavailable (e.g. in sandboxed CI environments).
+            //
+            // The resulting `Arc<dyn MemoryStore>` is shared between `AppState`
+            // and the `PluresLm` inside the agent so that autorecall sees all
+            // captured memories.
+            let memory_store: Arc<dyn MemoryStore> = match app
+                .path()
+                .app_data_dir()
+                .ok()
+                .and_then(|dir| {
+                    PluresDbStore::open(&dir.join("memory.db"))
+                        .map_err(|e| {
+                            tracing::warn!(
+                                "PluresDbStore::open failed ({}), falling back to in-memory",
+                                e
+                            );
+                            e
+                        })
+                        .ok()
+                }) {
+                Some(store) => Arc::new(store),
+                None => Arc::new(InMemoryStore::new()),
+            };
+
             // ── IPC bridge ────────────────────────────────────────────────
             let (adapter, handle) = tauri_ipc_channel("user");
 
-            // Spawn the adapter run-loop.  In production this would be wired
-            // to the real OnMessage procedure via a ProcedureRegistry.  Here
-            // we use an echo handler so the scaffold is fully functional out
-            // of the box without requiring a running LLM endpoint.
+            // Build the PluresLm instance that shares the backing store with
+            // AppState so that autorecall sees all captured memories.
+            let plures_lm = Arc::new(PluresLm::new(
+                Arc::clone(&memory_store),
+                Box::new(MockEmbedder),
+                128_000,
+            ));
+
+            // Build the Agent with a Cerebellum wired in so every message
+            // flows through autorecall and routing before being handled.
+            let agent = Arc::new(Agent::with_cerebellum(
+                Arc::new(InMemory::new()),
+                Cerebellum::new(CerebellumConfig::default()),
+                plures_lm,
+            ));
+
+            // Spawn the adapter run-loop, routing all events through the agent.
             tauri::async_runtime::spawn(async move {
-                info!("Tauri IPC adapter starting");
+                info!("Tauri IPC adapter starting (cerebellum enabled)");
                 adapter
-                    .run(|event: Event| {
-                        Box::pin(async move {
-                            if let Event::Message { id, content, .. } = event {
-                                Some(Event::ModelResponse {
-                                    request_id: id,
-                                    model: "echo".into(),
-                                    // Real integration: call OnMessage procedure here.
-                                    content: format!("Echo: {content}"),
-                                })
-                            } else {
-                                None
-                            }
-                        })
+                    .run(move |event: Event| {
+                        let agent = Arc::clone(&agent);
+                        Box::pin(async move { agent.handle_event(event).await })
                     })
                     .await
                     .ok();
             });
 
             // ── AppState ──────────────────────────────────────────────────
-            // Open a persistent PluresDB-backed memory store under the app data
-            // directory.  Fall back to an ephemeral in-memory store if the data
-            // directory is unavailable (e.g. in sandboxed CI environments).
-            let memory_store = Arc::new(
-                app.path()
-                    .app_data_dir()
-                    .ok()
-                    .and_then(|dir| {
-                        let db_path = dir.join("memory.db");
-                        PluresDbStore::open(&db_path)
-                            .map_err(|e| {
-                                tracing::warn!(
-                                    "PluresDbStore::open failed ({}), falling back to in-memory",
-                                    e
-                                );
-                                e
-                            })
-                            .ok()
-                    })
-                    .unwrap_or_else(PluresDbStore::in_memory),
-            );
             let guidance_service = GuidanceService::new();
             let optimization_safety_gate = OptimizationSafetyGate::new();
             // Initialise the secret store.  In production (with the `vault`

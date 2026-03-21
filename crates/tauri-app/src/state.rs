@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use pares_agens_channels::tauri_ipc::TauriIpcHandle;
-use pares_agens_core::memory::store::PluresDbStore;
+use pares_agens_core::memory::store::MemoryStore;
 use pares_agens_core::optimization::OptimizationSafetyGate;
 use pares_agens_core::praxis::GuidanceService;
 use pares_agens_core::secrets::SecretStore;
@@ -208,7 +208,10 @@ pub struct AppState {
     /// Handle to send user messages to the agent's IPC adapter.
     pub ipc_handle: TauriIpcHandle,
     /// In-process memory store — populated by the agent run-loop procedures.
-    pub memory_store: Arc<PluresDbStore>,
+    ///
+    /// Shared with the [`pares_agens_core::memory::PluresLm`] instance inside
+    /// the agent so that autorecall sees all captured memories.
+    pub memory_store: Arc<dyn MemoryStore>,
     /// Encrypted secret store for provider API keys and other sensitive
     /// configuration.  Provider API keys are persisted **only** in this store
     /// and are never written to [`Settings`] when settings are saved.
