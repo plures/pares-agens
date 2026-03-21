@@ -399,9 +399,24 @@ mod tests {
     }
 
     #[test]
-    fn build_router_config_empty_providers_defaults_to_ollama() {
+    fn build_router_config_empty_providers_uses_legacy_endpoint_fallback() {
         let mut settings = Settings::default();
         settings.providers.clear();
+
+        let config = build_router_config(&settings);
+
+        // With no explicit providers, the legacy endpoint/api_key fields
+        // synthesize a single "default" provider.
+        assert_eq!(config.providers.len(), 1);
+        assert!(config.providers.contains_key("default"));
+        assert_eq!(config.default_provider, "default");
+    }
+
+    #[test]
+    fn build_router_config_empty_providers_and_endpoint_defaults_to_ollama() {
+        let mut settings = Settings::default();
+        settings.providers.clear();
+        settings.endpoint = String::new();
 
         let config = build_router_config(&settings);
 

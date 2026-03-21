@@ -133,9 +133,16 @@ pub fn run() {
                             // For message events, replace the echo response with a real
                             // model call via the ModelRouter.
                             if let Some((id, content)) = msg_fields {
+                                // Prefer routing.interactive.model when configured
+                                // (set by the Settings routing tab); fall back to the
+                                // legacy settings.model field.
                                 let (model, system_prompt) = {
                                     let s = settings.lock().await;
-                                    (s.model.clone(), s.system_prompt.clone())
+                                    let model = s.routing.interactive
+                                        .as_ref()
+                                        .map(|r| r.model.clone())
+                                        .unwrap_or_else(|| s.model.clone());
+                                    (model, s.system_prompt.clone())
                                 };
 
                                 let messages = vec![
@@ -144,11 +151,8 @@ pub fn run() {
                                 ];
                                 let request = ChatCompletionRequest::new(&model, messages);
 
-                                let router_handle = {
-                                    let router_guard = router.read().await;
-                                    router_guard.clone()
-                                };
-                                match router_handle.chat(&request).await {
+                                let router_guard = router.read().await;
+                                match router_guard.chat(&request).await {
                                     Ok(response) => {
                                         let reply = response
                                             .choices
@@ -163,15 +167,17 @@ pub fn run() {
                                         })
                                     }
                                     Err(e) => {
-                                        error!(error = %e, "model router call failed");
+                                        error!(error = %e, model = %model, "model router call failed");
                                         Some(Event::Message {
                                             id: format!("{id}-error"),
                                             channel: "system".into(),
                                             sender: "agent".into(),
                                             content: format!(
-                                                "⚠️ Could not reach the model provider: {e}\n\n\
-                                                 Please check your provider settings and ensure \
-                                                 the model endpoint is accessible."
+                                                "⚠️ Model request to `{model}` failed: {e}\n\n\
+                                                 This may be due to missing provider configuration, invalid \
+                                                 model ID, authentication issues, or network/connectivity \
+                                                 problems. Please review your provider settings for this \
+                                                 model and try again."
                                             ),
                                         })
                                     }
