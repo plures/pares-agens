@@ -24,9 +24,13 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use pares_agens_core::secrets::{provider_api_key, SecretStore};
+use pares_agens_core::secrets::provider_api_key;
 
-use crate::state::{AppState, ChannelAdapterConfig, ProviderEntry, RoutingPrefs, Settings};
+use crate::state::{rebuild_model_router, AppState, ChannelAdapterConfig, ProviderEntry, RoutingPrefs};
+
+// Re-export for test module (Settings is only used in tests but accessed via `super::*`).
+#[cfg(test)]
+use crate::state::Settings;
 
 /// Sentinel returned in place of a real API key.
 const MASKED_KEY: &str = "••••••••";
@@ -108,6 +112,11 @@ pub async fn add_provider(
         api_key: None,
         models: provider.models,
     });
+    drop(settings);
+
+    // Rebuild the model router so the new provider is available immediately.
+    rebuild_model_router(&state).await;
+
     Ok(())
 }
 
@@ -164,6 +173,11 @@ pub async fn update_provider(
         api_key: None, // never stored in the struct
         models: provider.models,
     };
+    drop(settings);
+
+    // Rebuild the model router so changed base_url / API key takes effect.
+    rebuild_model_router(&state).await;
+
     Ok(())
 }
 
@@ -191,6 +205,10 @@ pub async fn remove_provider(name: String, state: State<'_, AppState>) -> Result
 
     // Re-acquire and remove from the settings list.
     state.settings.lock().await.providers.retain(|p| p.name != name);
+
+    // Rebuild the model router so the removed provider is no longer routed to.
+    rebuild_model_router(&state).await;
+
     Ok(())
 }
 
@@ -228,6 +246,10 @@ pub async fn upsert_channel_adapter(
 #[tauri::command]
 pub async fn set_routing(routing: RoutingPrefs, state: State<'_, AppState>) -> Result<(), String> {
     state.settings.lock().await.routing = routing;
+
+    // Rebuild the model router so the new default provider takes effect.
+    rebuild_model_router(&state).await;
+
     Ok(())
 }
 

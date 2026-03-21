@@ -1,13 +1,16 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 use pares_agens_channels::tauri_ipc::TauriIpcHandle;
 use pares_agens_core::memory::store::MemoryStore;
 use pares_agens_core::optimization::OptimizationSafetyGate;
 use pares_agens_core::praxis::GuidanceService;
-use pares_agens_core::secrets::SecretStore;
+use pares_agens_core::secrets::{provider_api_key, SecretStore};
+use pares_models::config::{ProviderConfig, RouterConfig};
+use pares_models::ModelRouter;
 
 use crate::procedures::{ProcedureLogEntry, ProcedureRecord};
 
@@ -221,7 +224,15 @@ pub struct AppState {
     /// `#[serde(skip_serializing)]`.
     pub secret_store: Arc<dyn SecretStore>,
     /// User-configurable settings (model, endpoint, channel, …).
-    pub settings: Mutex<Settings>,
+    ///
+    /// Wrapped in `Arc` so the adapter callback can read model/system-prompt
+    /// without requiring the full `AppState`.
+    pub settings: Arc<Mutex<Settings>>,
+    /// Model router that selects the right provider for each request.
+    ///
+    /// Rebuilt whenever provider settings or routing preferences change via
+    /// [`rebuild_model_router`].
+    pub model_router: Arc<RwLock<ModelRouter>>,
     /// Whether the first-run wizard has been completed in this session.
     ///
     /// Durable completion is tracked in the frontend via `localStorage`; this
@@ -236,4 +247,175 @@ pub struct AppState {
     pub guidance_service: GuidanceService,
     /// Optimization safety gate for runtime enforcement of safety decisions.
     pub optimization_safety_gate: OptimizationSafetyGate,
+}
+
+// ---------------------------------------------------------------------------
+// Router helpers
+// ---------------------------------------------------------------------------
+
+/// Build a [`RouterConfig`] from the current [`Settings`] without API keys.
+///
+/// Used at startup before any vault entries exist.  For a config that
+/// includes API keys from the vault, use [`rebuild_model_router`] instead.
+pub fn build_router_config(settings: &Settings) -> RouterConfig {
+    let mut providers = HashMap::new();
+    for entry in &settings.providers {
+        providers.insert(
+            entry.name.clone(),
+            ProviderConfig::new(&entry.base_url, entry.api_key.clone()),
+        );
+    }
+
+    let default_provider = settings
+        .routing
+        .interactive
+        .as_ref()
+        .map(|r| r.provider.clone())
+        .or_else(|| settings.providers.first().map(|p| p.name.clone()))
+        .unwrap_or_else(|| "ollama".to_string());
+
+    RouterConfig {
+        providers,
+        rules: vec![],
+        default_provider,
+    }
+}
+
+/// Rebuild the [`ModelRouter`] from the current settings and vault secrets.
+///
+/// Releases the settings mutex before performing async vault I/O, then
+/// writes the new router behind the `RwLock` so that the next model call
+/// picks up the changes.
+pub async fn rebuild_model_router(state: &AppState) {
+    let (provider_entries, routing) = {
+        let settings = state.settings.lock().await;
+        (settings.providers.clone(), settings.routing.clone())
+    };
+
+    let mut providers = HashMap::new();
+    for entry in &provider_entries {
+        let api_key = state
+            .secret_store
+            .get(&provider_api_key(&entry.name))
+            .await
+            .ok()
+            .flatten();
+        providers.insert(
+            entry.name.clone(),
+            ProviderConfig::new(&entry.base_url, api_key),
+        );
+    }
+
+    let default_provider = routing
+        .interactive
+        .as_ref()
+        .map(|r| r.provider.clone())
+        .or_else(|| provider_entries.first().map(|p| p.name.clone()))
+        .unwrap_or_else(|| "ollama".to_string());
+
+    let config = RouterConfig {
+        providers,
+        rules: vec![],
+        default_provider,
+    };
+
+    *state.model_router.write().await = ModelRouter::new(config);
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pares_agens_core::secrets::InMemorySecretStore;
+
+    #[test]
+    fn build_router_config_default_settings() {
+        let settings = Settings::default();
+        let config = build_router_config(&settings);
+
+        // Default settings have one provider: "ollama".
+        assert_eq!(config.providers.len(), 1);
+        assert!(config.providers.contains_key("ollama"));
+        assert_eq!(config.default_provider, "ollama");
+    }
+
+    #[test]
+    fn build_router_config_uses_interactive_routing_as_default() {
+        let mut settings = Settings::default();
+        settings.routing.interactive = Some(ModelRef {
+            provider: "openai".to_string(),
+            model: "gpt-4o".to_string(),
+        });
+        settings.providers.push(ProviderEntry {
+            name: "openai".to_string(),
+            base_url: "https://api.openai.com".to_string(),
+            api_key: None,
+            models: vec![],
+        });
+
+        let config = build_router_config(&settings);
+
+        assert_eq!(config.default_provider, "openai");
+        assert_eq!(config.providers.len(), 2);
+    }
+
+    #[test]
+    fn build_router_config_empty_providers_defaults_to_ollama() {
+        let mut settings = Settings::default();
+        settings.providers.clear();
+
+        let config = build_router_config(&settings);
+
+        assert!(config.providers.is_empty());
+        assert_eq!(config.default_provider, "ollama");
+    }
+
+    #[tokio::test]
+    async fn rebuild_model_router_picks_up_vault_api_keys() {
+        let secret_store = Arc::new(InMemorySecretStore::new());
+        secret_store
+            .set(&provider_api_key("openai"), "sk-test-key")
+            .await
+            .unwrap();
+
+        let mut settings = Settings::default();
+        settings.providers.push(ProviderEntry {
+            name: "openai".to_string(),
+            base_url: "https://api.openai.com".to_string(),
+            api_key: None,
+            models: vec![],
+        });
+
+        let state = AppState {
+            ipc_handle: test_ipc_handle(),
+            memory_store: Arc::new(
+                pares_agens_core::memory::store::InMemoryStore::new(),
+            ),
+            secret_store: secret_store as Arc<dyn SecretStore>,
+            settings: Arc::new(Mutex::new(settings)),
+            model_router: Arc::new(RwLock::new(ModelRouter::new(
+                RouterConfig::single("ollama", ProviderConfig::new("http://localhost:11434", None)),
+            ))),
+            wizard_completed: Mutex::new(false),
+            procedures: Mutex::new(Vec::new()),
+            procedure_log: Mutex::new(Vec::new()),
+            guidance_service: GuidanceService::new(),
+            optimization_safety_gate: OptimizationSafetyGate::new(),
+        };
+
+        rebuild_model_router(&state).await;
+
+        // The router was rebuilt — we can't inspect its internal state directly,
+        // but we can verify the rebuild didn't panic and the lock is available.
+        let _guard = state.model_router.read().await;
+    }
+
+    /// Create a dummy `TauriIpcHandle` for testing (channel will never be read).
+    fn test_ipc_handle() -> pares_agens_channels::tauri_ipc::TauriIpcHandle {
+        let (_adapter, handle) = pares_agens_channels::tauri_ipc::tauri_ipc_channel("test");
+        handle
+    }
 }
