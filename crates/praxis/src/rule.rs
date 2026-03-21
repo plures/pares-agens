@@ -152,10 +152,12 @@ impl RuleContext {
         self.payload.get(key)?.as_str()
     }
 
-    /// Return the value at `key` in the payload if it is a non-empty array.
+    /// Return the length of the array at `key` in the payload, or `None` if
+    /// the key is absent, the value is not an array, or the array is empty.
     #[must_use]
     pub fn payload_array_len(&self, key: &str) -> Option<usize> {
-        Some(self.payload.get(key)?.as_array()?.len())
+        let len = self.payload.get(key)?.as_array()?.len();
+        if len == 0 { None } else { Some(len) }
     }
 }
 
@@ -229,6 +231,18 @@ mod tests {
         assert_eq!(ctx.payload_str("name"), Some("alpha"));
         assert_eq!(ctx.payload_array_len("caps"), Some(2));
         assert!(ctx.payload_u64("missing").is_none());
+    }
+
+    #[test]
+    fn payload_array_len_returns_none_for_empty_array() {
+        let ctx = RuleContext::new("test", json!({"items": []}));
+        assert!(ctx.payload_array_len("items").is_none());
+    }
+
+    #[test]
+    fn payload_array_len_returns_none_for_missing_key() {
+        let ctx = RuleContext::new("test", json!({}));
+        assert!(ctx.payload_array_len("items").is_none());
     }
 
     #[test]

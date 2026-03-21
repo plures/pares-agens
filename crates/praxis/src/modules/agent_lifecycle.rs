@@ -65,7 +65,7 @@ impl Rule for CapabilityListNonEmpty {
     fn category(&self) -> RuleCategory { RuleCategory::Input }
     fn evaluate(&self, ctx: &RuleContext) -> RuleResult {
         match ctx.payload_array_len("capabilities") {
-            None | Some(0) => RuleResult::Fail {
+            None => RuleResult::Fail {
                 reason: "agent must declare at least one capability".into(),
             },
             _ => RuleResult::Pass,
