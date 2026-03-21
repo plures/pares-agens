@@ -1,11 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Pares Agens",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "identifier": "com.plures.pares-agens",
   "build": {
     "frontendDist": "ui/dist",
-    "devUrl": "http://localhost:5173"
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "cd ui && npm ci && npm run build",
+    "beforeDevCommand": "cd ui && npm run dev"
   },
   "app": {
     "windows": [
@@ -32,6 +34,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": "v2Compatible"
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/plures/pares-agens/releases/latest/download/latest.json"
+      ],
+      "pubkey": ""
+    }
   }
 }

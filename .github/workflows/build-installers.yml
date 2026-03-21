@@ -56,6 +56,12 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
 
+      # ── Node.js for UI build ──────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       # ── Rust toolchain ─────────────────────────────────────────────────
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -130,7 +136,7 @@ jobs:
       # ── Build ──────────────────────────────────────────────────────────
       - name: Build and bundle (Windows)
         if: matrix.platform == 'windows-latest'
-        working-directory: crates/desktop
+        working-directory: crates/tauri-app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -155,7 +161,7 @@ jobs:
 
       - name: Build and bundle (macOS)
         if: matrix.platform == 'macos-latest'
-        working-directory: crates/desktop
+        working-directory: crates/tauri-app
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -167,7 +173,7 @@ jobs:
 
       - name: Build and bundle (Linux)
         if: matrix.platform == 'ubuntu-22.04'
-        working-directory: crates/desktop
+        working-directory: crates/tauri-app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
