@@ -11,6 +11,8 @@ pub mod entry;
 pub mod quality;
 pub mod store;
 
+use std::sync::Arc;
+
 use tracing::{debug, info};
 use uuid::Uuid;
 
@@ -37,16 +39,17 @@ pub enum Error {
 /// # Example
 ///
 /// ```rust,no_run
+/// # use std::sync::Arc;
 /// # use pares_agens_core::memory::{PluresLm, embed::MockEmbedder, entry::Exchange, store::InMemoryStore};
 /// # #[tokio::main] async fn main() {
-/// let lm = PluresLm::new(Box::new(InMemoryStore::new()), Box::new(MockEmbedder), 128_000);
+/// let lm = PluresLm::new(Arc::new(InMemoryStore::new()), Box::new(MockEmbedder), 128_000);
 /// let ids = lm.capture(&Exchange { user: "What is Rust?".into(), assistant: "A systems language.".into() }).await.unwrap();
 /// let mems = lm.recall("Rust language systems", 5, &[]).await.unwrap();
 /// let ctx  = lm.inject_context(&mems, None);
 /// # }
 /// ```
 pub struct PluresLm {
-    store: Box<dyn MemoryStore>,
+    store: Arc<dyn MemoryStore>,
     embedder: Box<dyn EmbeddingProvider>,
     /// Model context window in tokens (e.g. 128 000 for Qwen3-235B).
     context_window: usize,
@@ -57,8 +60,11 @@ impl PluresLm {
     ///
     /// `context_window` is the model's maximum context length in **tokens**.
     /// [`inject_context`][Self::inject_context] enforces a 25 % budget of this value.
+    ///
+    /// Accepts any [`Arc<dyn MemoryStore>`] so the same backing store can be
+    /// shared between the agent and the application state (e.g. `AppState`).
     pub fn new(
-        store: Box<dyn MemoryStore>,
+        store: Arc<dyn MemoryStore>,
         embedder: Box<dyn EmbeddingProvider>,
         context_window: usize,
     ) -> Self {
@@ -298,7 +304,7 @@ mod tests {
 
     fn lm() -> PluresLm {
         PluresLm::new(
-            Box::new(InMemoryStore::new()),
+            Arc::new(InMemoryStore::new()),
             Box::new(MockEmbedder),
             128_000,
         )

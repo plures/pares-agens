@@ -8,10 +8,11 @@ use pares_agens_core::memory::{
     store::InMemoryStore,
     PluresLm,
 };
+use std::sync::Arc;
 
 fn make_lm() -> PluresLm {
     PluresLm::new(
-        Box::new(InMemoryStore::new()),
+        Arc::new(InMemoryStore::new()),
         Box::new(MockEmbedder),
         128_000,
     )
