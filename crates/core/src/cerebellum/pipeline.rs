@@ -71,7 +71,7 @@ fn find_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
     }
 
     let needle_chars: Vec<char> = needle.chars().collect();
-    let needle_len = needle_chars.len();
+    let _needle_len = needle_chars.len();
 
     for (start, _) in haystack.char_indices() {
         let mut h_iter = haystack[start..].chars();
@@ -517,6 +517,7 @@ impl Procedure for CerebellumSweep {
 }
 
 /// Register all built-in cerebellum procedures into a registry.
+#[allow(dead_code)]
 pub(crate) fn register_builtins(
     registry: &mut crate::procedure::ProcedureRegistry,
     memory: Arc<PluresLm>,
