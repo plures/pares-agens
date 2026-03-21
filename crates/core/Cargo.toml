@@ -6,6 +6,15 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+## Enable the `VaultSecretStore` backed by plures-vault encrypted storage.
+##
+## When this feature is active, a `vault-core` dependency is pulled from the
+## plures-vault git repository.  The default build omits this dependency so
+## that `cargo check --workspace` succeeds without requiring the vault crate's
+## transitive dependency tree.
+vault = ["dep:vault-core"]
+
 [dependencies]
 tokio.workspace = true
 serde.workspace = true
@@ -18,6 +27,7 @@ thiserror.workspace = true
 subtle = "2"
 pluresdb = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3" }
 pluresdb-procedures = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3" }
+vault-core = { git = "https://github.com/plures/plures-vault", rev = "d4e4783ddd14f63af2699ea97f29ca5895ef6590", package = "vault-core", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

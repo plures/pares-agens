@@ -77,10 +77,12 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String
 /// When `settings.auto_start` changes this command also enables or disables
 /// the OS-level autostart entry via `tauri-plugin-autostart`.
 ///
-/// Secrets that are never serialised to the frontend (`api_key`,
-/// `bot_token`, `phone_number`) are re-merged from the current in-memory
-/// state so that calling this command from the UI cannot accidentally clear
-/// a stored credential.
+/// Secrets that are never serialised to the frontend (`bot_token`,
+/// `phone_number`) are re-merged from the current in-memory state so that
+/// calling this command from the UI cannot accidentally clear a stored
+/// credential.  API keys for model providers are stored in the vault (see
+/// [`crate::settings::add_provider`]) and are never part of the Settings
+/// struct.
 #[tauri::command]
 pub async fn set_settings(
     mut settings: Settings,
@@ -256,16 +258,12 @@ pub async fn execute_with_safety(
 /// Fields marked `#[serde(skip_serializing)]` are never sent to the
 /// frontend, so `set_settings` would otherwise clear them on every save.
 /// This helper copies:
-/// - `ProviderEntry.api_key`      — matched by provider name
 /// - `ChannelAdapterConfig.bot_token` / `phone_number` — matched by kind
+///
+/// Note: `ProviderEntry.api_key` is no longer merged here because API keys
+/// are stored exclusively in the [`crate::state::AppState::secret_store`]
+/// vault — they are never held in the in-memory `Settings` struct.
 fn merge_secrets(existing: &Settings, incoming: &mut Settings) {
-    for provider in &mut incoming.providers {
-        if provider.api_key.is_none() {
-            if let Some(ex) = existing.providers.iter().find(|p| p.name == provider.name) {
-                provider.api_key = ex.api_key.clone();
-            }
-        }
-    }
     for adapter in &mut incoming.channel_adapters {
         if let Some(ex) = existing
             .channel_adapters
