@@ -113,9 +113,17 @@ pub fn run() {
                         let router = Arc::clone(&router_for_cb);
                         let settings = Arc::clone(&settings_for_cb);
                         Box::pin(async move {
+                            // Extract message fields before consuming the event — avoids
+                            // cloning the entire Event payload.
+                            let msg_fields = if let Event::Message { ref id, ref content, .. } = event {
+                                Some((id.clone(), content.clone()))
+                            } else {
+                                None
+                            };
+
                             // Let the agent run cerebellum preprocessing (autorecall,
                             // routing, drop filtering) and capture the message in memory.
-                            let preprocessed = agent.handle_event(event.clone()).await;
+                            let preprocessed = agent.handle_event(event).await;
 
                             // If the cerebellum dropped the event, respect that.
                             if preprocessed.is_none() {
@@ -124,7 +132,7 @@ pub fn run() {
 
                             // For message events, replace the echo response with a real
                             // model call via the ModelRouter.
-                            if let Event::Message { ref id, ref content, .. } = event {
+                            if let Some((id, content)) = msg_fields {
                                 let (model, system_prompt) = {
                                     let s = settings.lock().await;
                                     (s.model.clone(), s.system_prompt.clone())
@@ -132,7 +140,7 @@ pub fn run() {
 
                                 let messages = vec![
                                     ChatMessage::text(Role::System, &system_prompt),
-                                    ChatMessage::text(Role::User, content),
+                                    ChatMessage::text(Role::User, &content),
                                 ];
                                 let request = ChatCompletionRequest::new(&model, messages);
 
@@ -146,7 +154,7 @@ pub fn run() {
                                             .cloned()
                                             .unwrap_or_default();
                                         Some(Event::ModelResponse {
-                                            request_id: id.clone(),
+                                            request_id: id,
                                             model,
                                             content: reply,
                                         })

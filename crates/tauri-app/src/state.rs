@@ -397,7 +397,10 @@ mod tests {
             secret_store: secret_store as Arc<dyn SecretStore>,
             settings: Arc::new(Mutex::new(settings)),
             model_router: Arc::new(RwLock::new(ModelRouter::new(
-                RouterConfig::single("ollama", ProviderConfig::new("http://localhost:11434", None)),
+                RouterConfig::single(
+                    "ollama",
+                    ProviderConfig::new("http://localhost:11434/v1", None),
+                ),
             ))),
             wizard_completed: Mutex::new(false),
             procedures: Mutex::new(Vec::new()),
