@@ -1,3 +1,7 @@
+## [0.4.1] — 2026-03-21
+
+- fix: revert MemorySidebar to local component — design-dojo has duplicate export bug (cfe7214)
+
 ## [0.4.0] — 2026-03-21
 
 - feat: desktop builds v0.3.0 — fix installer workflow + updater config (#163) (#170) (0227357)

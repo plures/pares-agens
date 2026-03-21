@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client", "crates/tauri-app", "crates/desktop", "crates/migrate", "crates/trainer", "crates/privacy", "crates/marketplace", "crates/arca", "crates/faber", "crates/agenda", "crates/optimizer"]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/plures/pares-agens"
