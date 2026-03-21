@@ -144,8 +144,11 @@ pub fn run() {
                                 ];
                                 let request = ChatCompletionRequest::new(&model, messages);
 
-                                let router_guard = router.read().await;
-                                match router_guard.chat(&request).await {
+                                let router_handle = {
+                                    let router_guard = router.read().await;
+                                    router_guard.clone()
+                                };
+                                match router_handle.chat(&request).await {
                                     Ok(response) => {
                                         let reply = response
                                             .choices
