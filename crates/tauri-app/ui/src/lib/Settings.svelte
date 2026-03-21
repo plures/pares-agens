@@ -7,12 +7,12 @@
   let dialog = $state(null);
 
   // ── Tab state ───────────────────────────────────────────────────────────
-  /** @type {'providers'|'routing'|'channels'|'preferences'} */
+  /** @type {'providers'|'routing'|'channels'|'preferences'|'mcp'} */
   let activeTab = $state('providers');
   /** @type {HTMLButtonElement[]} */
   let tabButtons = $state([]);
 
-  const TABS = /** @type {const} */ (['providers', 'routing', 'channels', 'preferences']);
+  const TABS = /** @type {const} */ (['providers', 'routing', 'channels', 'preferences', 'mcp']);
 
   // ── Provider state ───────────────────────────────────────────────────────
   /**
@@ -57,6 +57,24 @@
   let prefSystemPrompt = $state('');
 
   const ALL_CAPTURE_CATEGORIES = ['code-pattern', 'preference', 'decision', 'error'];
+
+  // ── MCP state ────────────────────────────────────────────────────────────
+  /**
+   * @typedef {{ name: string, command: string, args: string[], enabled: boolean }} McpServer
+   * @typedef {{ serverName: string, name: string, description: string|null, inputSchema: any }} DiscoveredTool
+   */
+  /** @type {McpServer[]} */
+  let mcpServers = $state([]);
+  /** @type {DiscoveredTool[]} */
+  let mcpTools = $state([]);
+  let showMcpForm = $state(false);
+  let mcpFormName = $state('');
+  let mcpFormCommand = $state('');
+  let mcpFormArgs = $state('');
+  let mcpFormEnabled = $state(true);
+  /** @type {string|null} */
+  let editMcpName = $state(null);
+  let mcpRestarting = $state(false);
 
   // ── Dialog lifecycle ─────────────────────────────────────────────────────
   $effect(() => {
@@ -105,6 +123,14 @@
     prefNotificationsEnabled   = p.notificationsEnabled  ?? true;
     prefAutoStart              = s.autoStart             ?? false;
     prefSystemPrompt           = s.systemPrompt          ?? '';
+
+    // MCP servers
+    mcpServers = (s.mcpServers ?? []).map(m => ({ ...m }));
+    try {
+      mcpTools = await invoke('list_mcp_tools');
+    } catch {
+      mcpTools = [];
+    }
   }
 
   // ── Tab keyboard navigation (roving tabindex) ───────────────────────────
@@ -235,6 +261,7 @@
           systemPrompt:    prefSystemPrompt,
           routing,
           channelAdapters: channelAdapters,
+          mcpServers:      mcpServers,
           preferences: {
             agentName:            prefAgentName,
             personalityNotes:     prefPersonalityNotes,
@@ -253,6 +280,63 @@
 
   function handleBackdropClick(e) {
     if (e.target === dialog) open = false;
+  }
+
+  // ── MCP server management ───────────────────────────────────────────────
+  function openMcpForm(/** @type {McpServer|null} */ server) {
+    if (server) {
+      editMcpName = server.name;
+      mcpFormName = server.name;
+      mcpFormCommand = server.command;
+      mcpFormArgs = server.args.join(' ');
+      mcpFormEnabled = server.enabled;
+    } else {
+      editMcpName = null;
+      mcpFormName = '';
+      mcpFormCommand = '';
+      mcpFormArgs = '';
+      mcpFormEnabled = true;
+    }
+    showMcpForm = true;
+  }
+
+  function saveMcpServer() {
+    const server = {
+      name: mcpFormName.trim(),
+      command: mcpFormCommand.trim(),
+      args: mcpFormArgs.trim() ? mcpFormArgs.trim().split(/\s+/) : [],
+      enabled: mcpFormEnabled,
+    };
+    if (!server.name || !server.command) return;
+
+    if (editMcpName) {
+      const idx = mcpServers.findIndex(s => s.name === editMcpName);
+      if (idx >= 0) mcpServers[idx] = server;
+    } else {
+      mcpServers.push(server);
+    }
+    showMcpForm = false;
+  }
+
+  function removeMcpServer(/** @type {string} */ name) {
+    mcpServers = mcpServers.filter(s => s.name !== name);
+  }
+
+  function toggleMcpServer(/** @type {string} */ name) {
+    const s = mcpServers.find(s => s.name === name);
+    if (s) s.enabled = !s.enabled;
+  }
+
+  async function restartMcp() {
+    mcpRestarting = true;
+    try {
+      await invoke('restart_mcp_servers');
+      mcpTools = await invoke('list_mcp_tools');
+    } catch (err) {
+      alert(`MCP restart failed: ${err}`);
+    } finally {
+      mcpRestarting = false;
+    }
   }
 </script>
 
@@ -534,6 +618,108 @@
           </label>
         </div>
       </div>
+    </div>
+
+    <!-- MCP panel -->
+    <div
+      role="tabpanel"
+      id="panel-mcp"
+      aria-labelledby="tab-mcp"
+      class="settings-panel"
+      hidden={activeTab !== 'mcp'}>
+
+      <div class="mcp-header">
+        <h3 class="panel-title">MCP Servers</h3>
+        <div class="mcp-header-actions">
+          <button type="button" class="btn-sm" onclick={() => openMcpForm(null)}>
+            + Add Server
+          </button>
+          <button type="button" class="btn-sm btn-secondary" onclick={restartMcp} disabled={mcpRestarting}>
+            {mcpRestarting ? '↻ Restarting…' : '↻ Restart All'}
+          </button>
+        </div>
+      </div>
+
+      {#if showMcpForm}
+        <div class="mcp-form">
+          <div class="form-row">
+            <label class="form-label">
+              Name
+              <input type="text" bind:value={mcpFormName} placeholder="e.g. filesystem" class="form-input" />
+            </label>
+          </div>
+          <div class="form-row">
+            <label class="form-label">
+              Command
+              <input type="text" bind:value={mcpFormCommand} placeholder="e.g. uvx, npx, node" class="form-input" />
+            </label>
+          </div>
+          <div class="form-row">
+            <label class="form-label">
+              Arguments
+              <input type="text" bind:value={mcpFormArgs} placeholder="e.g. mcp-server-filesystem /tmp" class="form-input" />
+            </label>
+          </div>
+          <div class="form-row">
+            <label class="checkbox-item">
+              <input type="checkbox" bind:checked={mcpFormEnabled} />
+              Enabled
+            </label>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn-sm" onclick={saveMcpServer}>
+              {editMcpName ? 'Update' : 'Add'}
+            </button>
+            <button type="button" class="btn-sm btn-secondary" onclick={() => { showMcpForm = false; }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      {/if}
+
+      {#if mcpServers.length === 0}
+        <p class="empty-state">No MCP servers configured. Add one to enable tool use.</p>
+      {:else}
+        <div class="mcp-server-list">
+          {#each mcpServers as server}
+            <div class="mcp-server-card" class:disabled={!server.enabled}>
+              <div class="mcp-server-info">
+                <span class="mcp-server-name">{server.name}</span>
+                <code class="mcp-server-cmd">{server.command} {server.args.join(' ')}</code>
+              </div>
+              <div class="mcp-server-actions">
+                <button type="button" class="btn-icon" onclick={() => toggleMcpServer(server.name)}
+                  title={server.enabled ? 'Disable' : 'Enable'}>
+                  {server.enabled ? '🟢' : '⚪'}
+                </button>
+                <button type="button" class="btn-icon" onclick={() => openMcpForm(server)} title="Edit">
+                  ✏️
+                </button>
+                <button type="button" class="btn-icon btn-danger" onclick={() => removeMcpServer(server.name)} title="Remove">
+                  🗑
+                </button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      {#if mcpTools.length > 0}
+        <div class="mcp-tools-section">
+          <h4 class="mcp-tools-title">Discovered Tools ({mcpTools.length})</h4>
+          <div class="mcp-tools-list">
+            {#each mcpTools as tool}
+              <div class="mcp-tool-item">
+                <span class="mcp-tool-name">{tool.name}</span>
+                <span class="mcp-tool-server">{tool.serverName}</span>
+                {#if tool.description}
+                  <span class="mcp-tool-desc">{tool.description}</span>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
     </div>
 
     <footer class="dialog-footer">
