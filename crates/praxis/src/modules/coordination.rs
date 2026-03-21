@@ -59,7 +59,7 @@ impl Rule for CollaborationRequestValid {
 
         if requester_missing || objective_missing || collaborators_empty {
             RuleResult::Fail {
-                reason: "collaboration request requires `requester_id`, `objective`, and at least one `collaborator`".into(),
+                reason: "collaboration request requires `requester_id`, `objective`, and at least one entry in `collaborators`".into(),
             }
         } else {
             RuleResult::Pass
