@@ -284,3 +284,42 @@ fn merge_secrets(existing: &Settings, incoming: &mut Settings) {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// MCP Tool Commands
+// ---------------------------------------------------------------------------
+
+/// List all discovered MCP tools across connected servers.
+#[tauri::command]
+pub async fn list_mcp_tools(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::mcp::DiscoveredTool>, String> {
+    Ok(crate::mcp::list_discovered_tools(&state).await)
+}
+
+/// Call an MCP tool by name with JSON arguments.
+#[tauri::command]
+pub async fn call_mcp_tool(
+    tool_name: String,
+    arguments: Option<serde_json::Value>,
+    state: State<'_, AppState>,
+) -> Result<crate::mcp::ToolCallResult, String> {
+    Ok(crate::mcp::call_tool(&state, &tool_name, arguments).await)
+}
+
+/// Restart all MCP servers (re-reads settings, respawns enabled servers).
+#[tauri::command]
+pub async fn restart_mcp_servers(
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    crate::mcp::restart_mcp_servers(&state).await;
+    Ok(())
+}
+
+/// Get MCP tools in OpenAI function-calling format.
+#[tauri::command]
+pub async fn get_mcp_openai_tools(
+    state: State<'_, AppState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    Ok(crate::mcp::openai_tools(&state).await)
+}
