@@ -322,12 +322,20 @@ pub async fn rebuild_model_router(state: &AppState) {
 
     let mut providers = HashMap::new();
     for entry in &provider_entries {
-        let api_key = state
+        let api_key = match state
             .secret_store
             .get(&provider_api_key(&entry.name))
             .await
-            .ok()
-            .flatten();
+        {
+            Ok(api_key) => api_key,
+            Err(err) => {
+                eprintln!(
+                    "Failed to fetch API key for provider '{}': {err:?}",
+                    entry.name
+                );
+                None
+            }
+        };
         providers.insert(
             entry.name.clone(),
             ProviderConfig::new(&entry.base_url, api_key),
