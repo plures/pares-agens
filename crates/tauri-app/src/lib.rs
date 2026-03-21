@@ -22,6 +22,7 @@ use pares_models::ModelRouter;
 use crate::state::{build_router_config, rebuild_model_router, AppState, Settings};
 
 mod commands;
+mod mcp;
 mod settings;
 mod migration;
 mod procedures;
@@ -59,7 +60,7 @@ pub fn run() {
                 .app_data_dir()
                 .ok()
                 .and_then(|dir| {
-                    PluresDbStore::open(&dir.join("memory.db"))
+                    PluresDbStore::open(dir.join("memory.db"))
                         .map_err(|e| {
                             tracing::warn!(
                                 "PluresDbStore::open failed ({}), falling back to in-memory",
@@ -83,6 +84,14 @@ pub fn run() {
             // Clones captured by the adapter callback.
             let settings_for_cb = Arc::clone(&settings);
             let router_for_cb = Arc::clone(&model_router);
+
+            // MCP state shared between AppState and the adapter callback.
+            let mcp_clients: Arc<Mutex<std::collections::HashMap<String, mcp_client::McpClient>>> =
+                Arc::new(Mutex::new(std::collections::HashMap::new()));
+            let mcp_tools: Arc<RwLock<Vec<(String, mcp_client::protocol::Tool)>>> =
+                Arc::new(RwLock::new(Vec::new()));
+            let mcp_tools_for_cb = Arc::clone(&mcp_tools);
+            let mcp_clients_for_cb = Arc::clone(&mcp_clients);
 
             // ── IPC bridge ────────────────────────────────────────────────
             let (adapter, handle) = tauri_ipc_channel("user");
@@ -112,6 +121,8 @@ pub fn run() {
                         let agent = Arc::clone(&agent);
                         let router = Arc::clone(&router_for_cb);
                         let settings = Arc::clone(&settings_for_cb);
+                        let mcp_tools = Arc::clone(&mcp_tools_for_cb);
+                        let mcp_clients = Arc::clone(&mcp_clients_for_cb);
                         Box::pin(async move {
                             // Extract message fields before consuming the event — avoids
                             // cloning the entire Event payload.
@@ -126,9 +137,7 @@ pub fn run() {
                             let preprocessed = agent.handle_event(event).await;
 
                             // If the cerebellum dropped the event, respect that.
-                            if preprocessed.is_none() {
-                                return None;
-                            }
+                            preprocessed.as_ref()?;
 
                             // For message events, replace the echo response with a real
                             // model call via the ModelRouter.
@@ -145,43 +154,162 @@ pub fn run() {
                                     (model, s.system_prompt.clone())
                                 };
 
-                                let messages = vec![
+                                let mut messages = vec![
                                     ChatMessage::text(Role::System, &system_prompt),
                                     ChatMessage::text(Role::User, &content),
                                 ];
-                                let request = ChatCompletionRequest::new(&model, messages);
 
-                                let router_guard = router.read().await;
-                                match router_guard.chat(&request).await {
-                                    Ok(response) => {
-                                        let reply = response
-                                            .choices
-                                            .first()
-                                            .and_then(|c| c.message.content.as_ref())
-                                            .cloned()
-                                            .unwrap_or_default();
-                                        Some(Event::ModelResponse {
-                                            request_id: id,
-                                            model,
-                                            content: reply,
-                                        })
+                                // Inject MCP tools into the request if any are available.
+                                let tools_json: Option<Vec<pares_models::types::Tool>> = {
+                                    let tool_list = mcp_tools.read().await;
+                                    if tool_list.is_empty() {
+                                        None
+                                    } else {
+                                        let converted: Vec<pares_models::types::Tool> = tool_list
+                                            .iter()
+                                            .map(|(_, t)| pares_models::types::Tool {
+                                                kind: "function".to_string(),
+                                                function: pares_models::types::FunctionDefinition {
+                                                    name: t.name.clone(),
+                                                    description: t.description.clone(),
+                                                    parameters: Some(serde_json::to_value(&t.input_schema)
+                                                        .unwrap_or_default()),
+                                                },
+                                            })
+                                            .collect();
+                                        Some(converted)
                                     }
-                                    Err(e) => {
-                                        error!(error = %e, model = %model, "model router call failed");
-                                        Some(Event::Message {
-                                            id: format!("{id}-error"),
-                                            channel: "system".into(),
-                                            sender: "agent".into(),
-                                            content: format!(
-                                                "⚠️ Model request to `{model}` failed: {e}\n\n\
-                                                 This may be due to missing provider configuration, invalid \
-                                                 model ID, authentication issues, or network/connectivity \
-                                                 problems. Please review your provider settings for this \
-                                                 model and try again."
-                                            ),
-                                        })
+                                };
+
+                                let mut request = ChatCompletionRequest::new(&model, messages.clone());
+                                request.tools = tools_json;
+
+                                // Tool call loop: model may return tool_calls instead of content.
+                                // Execute tools, feed results back, repeat until we get content.
+                                let max_tool_rounds = 5;
+                                let mut final_reply = String::new();
+
+                                for _round in 0..max_tool_rounds {
+                                    let router_guard = router.read().await;
+                                    match router_guard.chat(&request).await {
+                                        Ok(response) => {
+                                            drop(router_guard);
+                                            let choice = match response.choices.first() {
+                                                Some(c) => c,
+                                                None => break,
+                                            };
+
+                                            // Check for tool calls
+                                            if let Some(ref tool_calls) = choice.message.tool_calls {
+                                                if !tool_calls.is_empty() {
+                                                    // Add assistant message with tool calls to conversation
+                                                    messages.push(ChatMessage {
+                                                        role: Role::Assistant,
+                                                        content: choice.message.content.clone(),
+                                                        tool_calls: Some(tool_calls.clone()),
+                                                        tool_call_id: None,
+                                                        name: None,
+                                                    });
+
+                                                    // Execute each tool call
+                                                    for tc in tool_calls {
+                                                        let args: Option<serde_json::Value> =
+                                                            serde_json::from_str(&tc.function.arguments).ok();
+
+                                                        let result = {
+                                                            let mut clients = mcp_clients.lock().await;
+                                                            // Find which server owns this tool
+                                                            let server_name = {
+                                                                let tl = mcp_tools.read().await;
+                                                                tl.iter()
+                                                                    .find(|(_, t)| t.name == tc.function.name)
+                                                                    .map(|(n, _)| n.clone())
+                                                            };
+                                                            if let Some(ref sn) = server_name {
+                                                                if let Some(client) = clients.get_mut(sn) {
+                                                                    match client.call_tool(&tc.function.name, args).await {
+                                                                        Ok(r) => {
+                                                                            let text = r.content.iter().filter_map(|c| {
+                                                                                match c {
+                                                                                    mcp_client::protocol::ToolContent::Text { text } => Some(text.clone()),
+                                                                                    _ => None,
+                                                                                }
+                                                                            }).collect::<Vec<_>>().join("\n");
+                                                                            text
+                                                                        }
+                                                                        Err(e) => format!("Error: {e}"),
+                                                                    }
+                                                                } else {
+                                                                    format!("MCP server '{}' not connected", sn)
+                                                                }
+                                                            } else {
+                                                                format!("No MCP server provides tool '{}'", tc.function.name)
+                                                            }
+                                                        };
+
+                                                        // Add tool result to conversation
+                                                        messages.push(ChatMessage {
+                                                            role: Role::Tool,
+                                                            content: Some(result),
+                                                            tool_calls: None,
+                                                            tool_call_id: Some(tc.id.clone()),
+                                                            name: None,
+                                                        });
+                                                    }
+
+                                                    // Update request for next round
+                                                    request = ChatCompletionRequest::new(&model, messages.clone());
+                                                    request.tools = {
+                                                        let tl = mcp_tools.read().await;
+                                                        if tl.is_empty() {
+                                                            None
+                                                        } else {
+                                                            Some(tl.iter().map(|(_, t)| pares_models::types::Tool {
+                                                                kind: "function".to_string(),
+                                                                function: pares_models::types::FunctionDefinition {
+                                                                    name: t.name.clone(),
+                                                                    description: t.description.clone(),
+                                                                    parameters: Some(serde_json::to_value(&t.input_schema)
+                                                                        .unwrap_or_default()),
+                                                                },
+                                                            }).collect())
+                                                        }
+                                                    };
+                                                    continue; // Next round
+                                                }
+                                            }
+
+                                            // No tool calls — we have the final response
+                                            final_reply = choice.message.content
+                                                .as_ref()
+                                                .cloned()
+                                                .unwrap_or_default();
+                                            break;
+                                        }
+                                        Err(e) => {
+                                            drop(router_guard);
+                                            error!(error = %e, model = %model, "model router call failed");
+                                            return Some(Event::Message {
+                                                id: format!("{id}-error"),
+                                                channel: "system".into(),
+                                                sender: "agent".into(),
+                                                content: format!(
+                                                    "⚠️ Model request to `{model}` failed: {e}\n\n\
+                                                     This may be due to missing provider configuration, invalid \
+                                                     model ID, authentication issues, or network/connectivity \
+                                                     problems. Please review your provider settings for this \
+                                                     model and try again."
+                                                ),
+                                            });
+                                        }
                                     }
                                 }
+
+                                Some(Event::ModelResponse {
+                                    request_id: id,
+                                    model,
+                                    content: final_reply,
+                                })
                             } else {
                                 preprocessed
                             }
@@ -211,6 +339,8 @@ pub fn run() {
                 procedure_log: Mutex::new(Vec::new()),
                 guidance_service,
                 optimization_safety_gate,
+                mcp_clients: Arc::clone(&mcp_clients),
+                mcp_tools: Arc::clone(&mcp_tools),
             });
 
             // ── Initial router rebuild ─────────────────────────────────────
@@ -221,6 +351,7 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let state = app_handle.state::<AppState>();
                 rebuild_model_router(&state).await;
+                mcp::start_mcp_servers(&state).await;
             });
 
             // ── System tray ───────────────────────────────────────────────
@@ -262,6 +393,10 @@ pub fn run() {
             procedures::toggle_procedure,
             procedures::get_procedure_log,
             procedures::create_from_template,
+            commands::list_mcp_tools,
+            commands::call_mcp_tool,
+            commands::restart_mcp_servers,
+            commands::get_mcp_openai_tools,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Pares Agens");

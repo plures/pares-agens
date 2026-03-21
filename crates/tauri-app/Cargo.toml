@@ -22,3 +22,4 @@ pares-agens-core = { path = "../core" }
 pares-agens-channels = { path = "../channels" }
 pares-agens-migrate = { path = "../migrate", package = "pares-agens" }
 pares-models = { path = "../models" }
+mcp-client = { path = "../mcp-client" }

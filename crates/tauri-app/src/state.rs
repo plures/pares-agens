@@ -11,6 +11,8 @@ use pares_agens_core::praxis::GuidanceService;
 use pares_agens_core::secrets::{provider_api_key, SecretStore};
 use pares_models::config::{ProviderConfig, RouterConfig};
 use pares_models::ModelRouter;
+use mcp_client::McpClient;
+use mcp_client::protocol::Tool as McpTool;
 
 use crate::procedures::{ProcedureLogEntry, ProcedureRecord};
 
@@ -94,6 +96,34 @@ pub struct ChannelAdapterConfig {
 // Agent preferences
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// MCP Server
+// ---------------------------------------------------------------------------
+
+/// Configuration for a single MCP server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerConfig {
+    /// Display name for this server (e.g. "filesystem", "time").
+    pub name: String,
+    /// Command to run (e.g. "uvx", "npx", "node").
+    pub command: String,
+    /// Command arguments (e.g. ["mcp-server-filesystem", "/tmp"]).
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Whether this server should be auto-started on app launch.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+// ---------------------------------------------------------------------------
+// Agent preferences
+// ---------------------------------------------------------------------------
+
 /// General agent / UX preferences.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -166,6 +196,9 @@ pub struct Settings {
     /// General agent preferences.
     #[serde(default)]
     pub preferences: AgentPreferences,
+    /// MCP server configurations for tool orchestration.
+    #[serde(default)]
+    pub mcp_servers: Vec<McpServerConfig>,
 }
 
 impl Default for Settings {
@@ -200,6 +233,7 @@ impl Default for Settings {
                 },
             ],
             preferences: AgentPreferences::default(),
+            mcp_servers: Vec::new(),
         }
     }
 }
@@ -247,6 +281,10 @@ pub struct AppState {
     pub guidance_service: GuidanceService,
     /// Optimization safety gate for runtime enforcement of safety decisions.
     pub optimization_safety_gate: OptimizationSafetyGate,
+    /// Active MCP clients keyed by server name.
+    pub mcp_clients: Arc<Mutex<HashMap<String, McpClient>>>,
+    /// Cached tool list across all connected MCP servers.
+    pub mcp_tools: Arc<RwLock<Vec<(String, McpTool)>>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -473,6 +511,8 @@ mod tests {
             procedure_log: Mutex::new(Vec::new()),
             guidance_service: GuidanceService::new(),
             optimization_safety_gate: OptimizationSafetyGate::new(),
+            mcp_clients: Arc::new(Mutex::new(HashMap::new())),
+            mcp_tools: Arc::new(RwLock::new(Vec::new())),
         };
 
         rebuild_model_router(&state).await;
