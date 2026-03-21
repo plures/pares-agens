@@ -255,7 +255,7 @@ mod tests {
             _messages: &[ChatMessage],
             _tools: &[ToolDefinition],
         ) -> Result<ModelCompletion, String> {
-            sleep(self.delay.into()).await;
+            sleep(self.delay).await;
             Ok(ModelCompletion {
                 content: Some("late response".into()),
                 tool_calls: vec![],

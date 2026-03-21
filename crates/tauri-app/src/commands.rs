@@ -1,7 +1,6 @@
 use tauri::State;
 
 use pares_agens_channels::tauri_ipc::TauriIpcMessage;
-use pares_agens_core::memory::store::MemoryStore;
 use pares_agens_core::optimization::{EvidenceRequest, OptimizationSafety, OptimizationTelemetry};
 use pares_agens_core::praxis::{GuidanceCategory, GuidanceEntry, SourceSpan, AnalysisEvent};
 

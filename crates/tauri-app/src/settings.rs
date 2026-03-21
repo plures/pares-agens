@@ -20,7 +20,6 @@
 //! the vault entry is left untouched.  Only a non-empty, non-sentinel value
 //! triggers a vault write.
 
-use std::sync::Arc;
 
 use tauri::State;
 
@@ -294,9 +293,10 @@ mod tests {
     }
 
     fn make_settings_with(providers: Vec<ProviderEntry>) -> Mutex<Settings> {
-        let mut s = Settings::default();
-        s.providers = providers;
-        Mutex::new(s)
+        Mutex::new(Settings {
+            providers,
+            ..Settings::default()
+        })
     }
 
     fn provider(name: &str) -> ProviderEntry {
@@ -369,7 +369,7 @@ mod tests {
     // ── update_provider ───────────────────────────────────────────────────
 
     /// Helper that mirrors the production preserve/update filter.
-    fn resolve_key_update<'a>(incoming: Option<&'a str>) -> Option<&'a str> {
+    fn resolve_key_update(incoming: Option<&str>) -> Option<&str> {
         incoming.filter(|k| !k.is_empty() && *k != MASKED_KEY)
     }
 
