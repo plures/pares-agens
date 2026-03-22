@@ -34,15 +34,6 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "createUpdaterArtifacts": "v2Compatible"
-  },
-  "plugins": {
-    "updater": {
-      "endpoints": [
-        "https://github.com/plures/pares-agens/releases/latest/download/latest.json"
-      ],
-      "pubkey": ""
-    }
+    ]
   }
 }
