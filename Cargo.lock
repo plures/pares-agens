@@ -3242,6 +3242,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pares-agens-service"
+version = "0.5.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "pares-agens-sync"
 version = "0.5.0"
 dependencies = [
