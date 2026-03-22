@@ -15,8 +15,10 @@ use crate::SyncError;
 /// Trait for conflict resolution strategies.
 ///
 /// Implementors receive the `local` and `remote` JSON payloads and must
-/// return a single merged value.  Returning an `Err` causes the sync engine
-/// to skip the conflicting entry and emit a warning.
+/// return a single merged value.  Returning an `Err` signals that conflict
+/// resolution failed for this entry; the error is propagated to the caller
+/// of [`SyncEngine::apply_remote_change`](crate::engine::SyncEngine), which
+/// may choose to skip the entry and emit a warning.
 pub trait MergeStrategy: Send + Sync {
     /// Merge `local` and `remote` payloads into a single authoritative value.
     ///

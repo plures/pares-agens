@@ -4,12 +4,14 @@
 //!
 //! 1. Device A calls [`PairingSession::new`] to generate a [`SyncKey`] and
 //!    a short human-readable [`PairingCode`].
-//! 2. The user shares the [`PairingCode`] (e.g. via QR code or manual entry)
-//!    with Device B.
-//! 3. Device B calls [`PairingSession::from_code`] to reconstruct the session.
+//! 2. The user shares the **full [`SyncKey`]** with Device B out-of-band
+//!    (e.g. via QR code or encrypted clipboard).  The [`PairingCode`] is a
+//!    display-only label derived from the key; it cannot reconstruct the key.
+//! 3. Device B calls [`PairingSession::from_key`] with the received hex key
+//!    to construct its view of the session.
 //! 4. Device A calls [`PairingSession::approve`] to confirm the pairing.
-//! 5. Both devices derive a shared topic key from the [`SyncKey`] and begin
-//!    announcing on the Hyperswarm DHT.
+//! 5. Both devices use the [`SyncKey`] as the Hyperswarm DHT topic seed and
+//!    begin announcing on the network.
 
 use std::fmt;
 
@@ -41,17 +43,25 @@ impl SyncKey {
 
     /// Parse a [`SyncKey`] from a 64-character hex string.
     ///
+    /// The input may use uppercase or lowercase hex digits; it is normalised
+    /// to lowercase internally.
+    ///
     /// # Errors
     ///
     /// Returns [`SyncError::InvalidPairingMaterial`] when the string is not
-    /// exactly 64 lowercase hex characters.
+    /// exactly 64 characters, or when it contains non-hex characters.
     pub fn from_hex(hex: impl Into<String>) -> Result<Self, SyncError> {
         let hex = hex.into();
-        if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        if hex.len() != 64 {
             return Err(SyncError::InvalidPairingMaterial(format!(
-                "sync key must be 64 hex characters, got {} chars",
+                "sync key must be exactly 64 hex characters, got {} chars",
                 hex.len()
             )));
+        }
+        if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(SyncError::InvalidPairingMaterial(
+                "sync key must contain only hexadecimal characters [0-9a-fA-F]".to_string(),
+            ));
         }
         Ok(Self(hex.to_lowercase()))
     }
@@ -83,7 +93,10 @@ impl fmt::Debug for SyncKey {
 
 impl fmt::Display for SyncKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", &self.0)
+        // Use the same redacted representation as Debug to avoid accidentally
+        // leaking the full key into logs or telemetry via `format!("{key}")`.
+        // Use `SyncKey::as_hex()` to explicitly retrieve the raw value.
+        write!(f, "{self:?}")
     }
 }
 
@@ -293,6 +306,37 @@ mod tests {
             SyncKey::from_hex(bad),
             Err(SyncError::InvalidPairingMaterial(_))
         ));
+    }
+
+    #[test]
+    fn sync_key_from_hex_error_message_distinguishes_length_vs_non_hex() {
+        // Wrong length → mentions "got N chars"
+        let err = SyncKey::from_hex("abc").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("got 3 chars"), "unexpected message: {msg}");
+
+        // Right length but non-hex → mentions "hexadecimal"
+        let err = SyncKey::from_hex("z".repeat(64)).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("hexadecimal"), "unexpected message: {msg}");
+    }
+
+    #[test]
+    fn sync_key_from_hex_accepts_uppercase_input() {
+        let key = SyncKey::generate();
+        let upper = key.as_hex().to_uppercase();
+        let parsed = SyncKey::from_hex(upper).unwrap();
+        // Normalised to lowercase.
+        assert_eq!(parsed.as_hex(), key.as_hex());
+    }
+
+    #[test]
+    fn sync_key_display_is_redacted() {
+        let key = SyncKey::generate();
+        let display = format!("{key}");
+        // Must not contain the full key value.
+        assert!(!display.contains(key.as_hex()), "Display leaked the full key");
+        assert!(display.starts_with("SyncKey("));
     }
 
     #[test]

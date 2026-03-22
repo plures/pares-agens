@@ -68,14 +68,29 @@ impl TopicManager {
         Self::default()
     }
 
-    /// Subscribe to `topic`.  Returns a reference to the new subscription.
+    /// Subscribe to `topic`.  Returns a reference to the (new or reactivated)
+    /// subscription.
     ///
-    /// If a subscription already exists and is active, this is a no-op and
-    /// the existing subscription is returned.
+    /// If an active subscription already exists this is a no-op and the
+    /// existing subscription is returned.  If an inactive subscription exists
+    /// (i.e. the topic was previously left) it is reactivated: `active` is
+    /// reset to `true`, `peer_count` is cleared, and `joined_at` is refreshed.
     pub fn subscribe(&mut self, topic: SyncTopic) -> &TopicSubscription {
-        self.subscriptions
-            .entry(topic)
-            .or_insert_with(|| TopicSubscription::new(topic))
+        match self.subscriptions.entry(topic) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let sub = entry.get_mut();
+                if !sub.active {
+                    sub.active = true;
+                    sub.peer_count = 0;
+                    sub.joined_at = Utc::now();
+                }
+                entry.into_mut()
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let topic_key = *entry.key();
+                entry.insert(TopicSubscription::new(topic_key))
+            }
+        }
     }
 
     /// Unsubscribe from `topic`.
@@ -91,16 +106,17 @@ impl TopicManager {
         }
     }
 
-    /// Return a reference to the subscription for `topic`.
+    /// Return a reference to the active subscription for `topic`.
     ///
     /// # Errors
     ///
     /// Returns [`SyncError::TopicNotSubscribed`] when the topic has not been
-    /// subscribed.
+    /// subscribed or when the subscription is inactive.
     pub fn get(&self, topic: SyncTopic) -> Result<&TopicSubscription, SyncError> {
-        self.subscriptions.get(&topic).ok_or_else(|| {
-            SyncError::TopicNotSubscribed(topic.as_key().to_string())
-        })
+        match self.subscriptions.get(&topic) {
+            Some(sub) if sub.active => Ok(sub),
+            _ => Err(SyncError::TopicNotSubscribed(topic.as_key().to_string())),
+        }
     }
 
     /// Return `true` when `topic` is currently subscribed (and active).
@@ -127,13 +143,15 @@ impl TopicManager {
     /// # Errors
     ///
     /// Returns [`SyncError::TopicNotSubscribed`] when the topic is not
-    /// subscribed.
+    /// subscribed or when the subscription is inactive.
     pub fn set_peer_count(&mut self, topic: SyncTopic, count: usize) -> Result<(), SyncError> {
-        let sub = self.subscriptions.get_mut(&topic).ok_or_else(|| {
-            SyncError::TopicNotSubscribed(topic.as_key().to_string())
-        })?;
-        sub.set_peer_count(count);
-        Ok(())
+        match self.subscriptions.get_mut(&topic) {
+            Some(sub) if sub.active => {
+                sub.set_peer_count(count);
+                Ok(())
+            }
+            _ => Err(SyncError::TopicNotSubscribed(topic.as_key().to_string())),
+        }
     }
 }
 
@@ -149,6 +167,18 @@ mod tests {
         let sub = mgr.subscribe(SyncTopic::MemoryEntries);
         assert!(sub.active);
         assert_eq!(sub.topic, SyncTopic::MemoryEntries);
+    }
+
+    #[test]
+    fn subscribe_reactivates_inactive_subscription() {
+        let mut mgr = TopicManager::new();
+        mgr.subscribe(SyncTopic::Procedures);
+        mgr.unsubscribe(SyncTopic::Procedures);
+        assert!(!mgr.is_subscribed(SyncTopic::Procedures));
+        // Re-subscribe should reactivate.
+        let sub = mgr.subscribe(SyncTopic::Procedures);
+        assert!(sub.active);
+        assert_eq!(mgr.active_count(), 1);
     }
 
     #[test]
@@ -179,6 +209,17 @@ mod tests {
     }
 
     #[test]
+    fn get_returns_error_for_inactive_subscription() {
+        let mut mgr = TopicManager::new();
+        mgr.subscribe(SyncTopic::MemoryEntries);
+        mgr.unsubscribe(SyncTopic::MemoryEntries);
+        assert!(matches!(
+            mgr.get(SyncTopic::MemoryEntries),
+            Err(SyncError::TopicNotSubscribed(_))
+        ));
+    }
+
+    #[test]
     fn get_returns_error_for_unsubscribed_topic() {
         let mgr = TopicManager::new();
         assert!(matches!(
@@ -193,6 +234,17 @@ mod tests {
         mgr.subscribe(SyncTopic::Procedures);
         mgr.set_peer_count(SyncTopic::Procedures, 3).unwrap();
         assert_eq!(mgr.get(SyncTopic::Procedures).unwrap().peer_count, 3);
+    }
+
+    #[test]
+    fn set_peer_count_errors_on_inactive_subscription() {
+        let mut mgr = TopicManager::new();
+        mgr.subscribe(SyncTopic::AgentConfig);
+        mgr.unsubscribe(SyncTopic::AgentConfig);
+        assert!(matches!(
+            mgr.set_peer_count(SyncTopic::AgentConfig, 3),
+            Err(SyncError::TopicNotSubscribed(_))
+        ));
     }
 
     #[test]

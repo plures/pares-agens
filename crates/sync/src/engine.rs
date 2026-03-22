@@ -180,10 +180,10 @@ impl SyncEngine {
         self.devices.remove(device_id)
     }
 
-    /// Return a list of all paired devices (snapshot).
+    /// Return a snapshot of all paired devices as owned values.
     #[must_use]
-    pub fn list_devices(&self) -> Vec<&PairedDevice> {
-        self.devices.list().collect()
+    pub fn list_devices(&self) -> Vec<PairedDevice> {
+        self.devices.list().cloned().collect()
     }
 
     /// Return the number of paired devices.
