@@ -48,10 +48,18 @@ impl Rule for ActionNamePresent {
     fn evaluate(&self, ctx: &RuleContext) -> RuleResult {
         // The `action` field is available on the context itself, but rules
         // should also support payloads that carry `action` explicitly.
-        if ctx.action.is_empty() {
-            RuleResult::Fail { reason: "action name must not be empty".into() }
+        let has_action = if !ctx.action.is_empty() {
+            true
         } else {
+            match ctx.payload_str("action") {
+                Some(value) if !value.trim().is_empty() => true,
+                _ => false,
+            }
+        };
+        if has_action {
             RuleResult::Pass
+        } else {
+            RuleResult::Fail { reason: "action name must not be empty".into() }
         }
     }
 }
