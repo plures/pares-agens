@@ -1,0 +1,72 @@
+name: Auto-Rebase Bot PRs
+
+# Triggers when main advances — rebases any open Copilot PRs that
+# fall behind. If rebase fails (conflicts), closes and refiles.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: auto-rebase-bot-prs
+  cancel-in-progress: true
+
+jobs:
+  rebase:
+    name: Rebase Copilot PRs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PLURES_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Rebase open Copilot PRs
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PLURES_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const COPILOT_AUTHORS = new Set([
+              'copilot-swe-agent[bot]',
+              'app/copilot-swe-agent',
+              'copilot-swe-agent',
+              'Copilot',
+            ]);
+
+            const { data: prs } = await github.rest.pulls.list({
+              owner, repo, state: 'open', per_page: 50,
+            });
+
+            const copilotPRs = prs.filter(pr => COPILOT_AUTHORS.has(pr.user?.login));
+            core.info(`Found ${copilotPRs.length} open Copilot PR(s).`);
+
+            for (const pr of copilotPRs) {
+              core.info(`Checking PR #${pr.number}: ${pr.title}`);
+
+              // Use the update branch API to rebase
+              try {
+                await github.rest.pulls.updateBranch({
+                  owner, repo,
+                  pull_number: pr.number,
+                  expected_head_sha: pr.head.sha,
+                });
+                core.info(`PR #${pr.number}: branch updated (rebased onto main).`);
+              } catch (e) {
+                if (e.status === 422 || e.message?.includes('merge conflict')) {
+                  core.warning(`PR #${pr.number}: conflicts detected. Will be handled by lifecycle workflow.`);
+                } else if (e.status === 422 && e.message?.includes('already up to date')) {
+                  core.info(`PR #${pr.number}: already up to date.`);
+                } else {
+                  core.warning(`PR #${pr.number}: rebase failed: ${e.message}`);
+                }
+              }
+            }
