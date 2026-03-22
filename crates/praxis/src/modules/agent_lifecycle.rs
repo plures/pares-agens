@@ -180,8 +180,8 @@ impl Default for AgentLifecycleModule {
 impl PraxisModule for AgentLifecycleModule {
     fn name(&self) -> &str { "agent-lifecycle" }
 
-    fn rules(&self) -> Vec<&dyn Rule> {
-        self.rules.iter().map(|r| r.as_ref()).collect()
+    fn rules(&self) -> &[Box<dyn Rule>] {
+        &self.rules
     }
 
     fn expectations(&self) -> Vec<String> {

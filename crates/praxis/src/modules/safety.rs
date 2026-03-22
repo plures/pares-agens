@@ -46,16 +46,10 @@ impl Rule for ActionNamePresent {
     fn name(&self) -> &str { "action_name_present" }
     fn category(&self) -> RuleCategory { RuleCategory::Input }
     fn evaluate(&self, ctx: &RuleContext) -> RuleResult {
-        // The `action` field is available on the context itself, but rules
-        // should also support payloads that carry `action` explicitly.
-        let has_action = if !ctx.action.is_empty() {
-            true
-        } else {
-            match ctx.payload_str("action") {
-                Some(value) if !value.trim().is_empty() => true,
-                _ => false,
-            }
-        };
+        // Primary source: ctx.action; fallback to a payload "action" field so
+        // callers that embed action in the payload are also supported.
+        let has_action = !ctx.action.is_empty()
+            || ctx.payload_str("action").is_some_and(|v| !v.trim().is_empty());
         if has_action {
             RuleResult::Pass
         } else {
@@ -204,8 +198,8 @@ impl Default for SafetyModule {
 impl PraxisModule for SafetyModule {
     fn name(&self) -> &str { "safety" }
 
-    fn rules(&self) -> Vec<&dyn Rule> {
-        self.rules.iter().map(|r| r.as_ref()).collect()
+    fn rules(&self) -> &[Box<dyn Rule>] {
+        &self.rules
     }
 
     fn expectations(&self) -> Vec<String> {

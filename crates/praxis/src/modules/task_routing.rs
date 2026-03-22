@@ -226,8 +226,8 @@ impl Default for TaskRoutingModule {
 impl PraxisModule for TaskRoutingModule {
     fn name(&self) -> &str { "task-routing" }
 
-    fn rules(&self) -> Vec<&dyn Rule> {
-        self.rules.iter().map(|r| r.as_ref()).collect()
+    fn rules(&self) -> &[Box<dyn Rule>] {
+        &self.rules
     }
 
     fn expectations(&self) -> Vec<String> {

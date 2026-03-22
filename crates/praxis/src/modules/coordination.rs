@@ -219,8 +219,8 @@ impl Default for CoordinationModule {
 impl PraxisModule for CoordinationModule {
     fn name(&self) -> &str { "coordination" }
 
-    fn rules(&self) -> Vec<&dyn Rule> {
-        self.rules.iter().map(|r| r.as_ref()).collect()
+    fn rules(&self) -> &[Box<dyn Rule>] {
+        &self.rules
     }
 
     fn expectations(&self) -> Vec<String> {

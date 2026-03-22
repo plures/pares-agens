@@ -56,8 +56,12 @@ pub trait PraxisModule: Send + Sync {
     /// Short, stable name for this module (e.g. `"safety"`).
     fn name(&self) -> &str;
 
-    /// Returns all rules registered in this module, borrowed for evaluation.
-    fn rules(&self) -> Vec<&dyn Rule>;
+    /// Returns all rules registered in this module as a borrowed slice.
+    ///
+    /// Returning `&[Box<dyn Rule>]` avoids a per-call allocation; the default
+    /// helper methods (`evaluate_all`, `evaluate_category`, `audit`) iterate
+    /// over this slice directly.
+    fn rules(&self) -> &[Box<dyn Rule>];
 
     /// Human-readable preconditions ("expectations") the module assumes hold
     /// before any rule is evaluated.
@@ -144,8 +148,8 @@ mod tests {
     }
     impl PraxisModule for MinimalModule {
         fn name(&self) -> &str { "minimal" }
-        fn rules(&self) -> Vec<&dyn Rule> {
-            self.rules.iter().map(|r| r.as_ref()).collect()
+        fn rules(&self) -> &[Box<dyn Rule>] {
+            &self.rules
         }
         fn expectations(&self) -> Vec<String> { vec![] }
     }

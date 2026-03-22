@@ -97,7 +97,7 @@ mod tests {
     struct FullModule { rules: Vec<Box<dyn Rule>> }
     impl PraxisModule for FullModule {
         fn name(&self) -> &str { "full" }
-        fn rules(&self) -> Vec<&dyn Rule> { self.rules.iter().map(|r| r.as_ref()).collect() }
+        fn rules(&self) -> &[Box<dyn Rule>] { &self.rules }
         fn expectations(&self) -> Vec<String> { vec![] }
     }
 
@@ -114,7 +114,7 @@ mod tests {
     struct PartialModule;
     impl PraxisModule for PartialModule {
         fn name(&self) -> &str { "partial" }
-        fn rules(&self) -> Vec<&dyn Rule> { vec![] }
+        fn rules(&self) -> &[Box<dyn Rule>] { &[] }
         fn expectations(&self) -> Vec<String> { vec![] }
     }
 
