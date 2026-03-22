@@ -1,3 +1,8 @@
+## [0.5.0] — 2026-03-22
+
+- feat(praxis): adopt @plures/praxis for declarative logic management (#165) (ea405ba)
+- test: add QA test suite — 17/17 pass (100%) (ed642bf)
+
 ## [0.4.1] — 2026-03-21
 
 - fix: revert MemorySidebar to local component — design-dojo has duplicate export bug (cfe7214)
