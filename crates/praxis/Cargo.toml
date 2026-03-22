@@ -1,0 +1,11 @@
+[package]
+name = "pares-agens-praxis"
+description = "Declarative logic management for Pares Agens — rules factory, typed RuleResult, PraxisModules, and completeness audits"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

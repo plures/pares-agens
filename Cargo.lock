@@ -3223,6 +3223,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pares-agens-praxis"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "pares-agens-privacy"
 version = "0.2.0"
 dependencies = [
