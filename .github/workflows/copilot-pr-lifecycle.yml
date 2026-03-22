@@ -35,7 +35,8 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'check_suite' ||
-      (github.event.pull_request.user.login == 'copilot-swe-agent[bot]' ||
+      github.event_name == 'pull_request_review' ||
+      (github.event.pull_request.user.login == 'Copilot' ||
        github.event.pull_request.user.login == 'app/copilot-swe-agent')
 
     steps:
