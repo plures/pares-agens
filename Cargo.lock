@@ -3151,6 +3151,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pares-agens-autoresearch"
+version = "0.5.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "pares-agens-channels"
 version = "0.5.0"
 dependencies = [
