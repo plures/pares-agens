@@ -33,12 +33,26 @@ jobs:
 
       - name: Install Tauri system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev
+          # Retry apt-get update up to 3 times to handle transient mirror issues
+          for i in 1 2 3; do
+            sudo apt-get update && break
+            echo "apt-get update attempt $i failed, retrying in 10s..."
+            sleep 10
+          done || { echo "apt-get update failed after 3 attempts"; exit 1; }
+          # Explicitly list all packages required by Tauri v2 on Ubuntu
+          # (libsoup-3.0-dev and libjavascriptcoregtk-4.1-dev are transitive
+          # deps of libwebkit2gtk-4.1-dev but listed explicitly for reliability)
+          for i in 1 2 3; do
+            sudo apt-get install -y \
+              libwebkit2gtk-4.1-dev \
+              libgtk-3-dev \
+              libayatana-appindicator3-dev \
+              librsvg2-dev \
+              libsoup-3.0-dev \
+              libjavascriptcoregtk-4.1-dev && break
+            echo "apt-get install attempt $i failed, retrying in 15s..."
+            sleep 15
+          done || { echo "apt-get install failed after 3 attempts"; exit 1; }
 
       - name: cargo check
         run: cargo check --workspace
