@@ -1,0 +1,134 @@
+name: Copilot Issue Queue Manager
+# Systemic fix: Copilot SWE has 1-PR-per-repo limit.
+# This workflow ensures feature issues get processed sequentially:
+# 1. When a PR merges, find next unworked feature issue and assign Copilot
+# 2. CI feedback issues never get Copilot — they're for humans or separate automation
+# 3. Priority: milestone issues first, by issue number (oldest first)
+
+on:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      force_next:
+        description: "Force assign next issue even if PR exists"
+        type: boolean
+        default: false
+  schedule:
+    - cron: '*/30 * * * *'  # Safety net: check every 30 min
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  queue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: 3158960
+          private-key: ${{ secrets.PRAXIS_BOT_PRIVATE_KEY }}
+      - uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const forceNext = context.payload.inputs?.force_next === 'true';
+
+            // Step 1: Check if Copilot has an open PR already
+            if (!forceNext) {
+              const prs = await github.rest.pulls.list({ owner, repo, state: 'open', per_page: 100 });
+              const copilotPR = prs.data.find(pr =>
+                pr.user.login === 'Copilot' ||
+                pr.user.login === 'app/copilot-swe-agent' ||
+                pr.user.login === 'copilot-swe-agent[bot]'
+              );
+              if (copilotPR) {
+                core.info(`Copilot has open PR #${copilotPR.number} — waiting for it to close`);
+                return;
+              }
+            }
+
+            // Step 2: Find next unworked feature issue
+            // Priority: has milestone > no milestone, then by issue number (oldest first)
+            // Exclude: ci-feedback, expectation-violation labels
+            const issues = await github.rest.issues.listForRepo({
+              owner, repo, state: 'open', per_page: 100,
+              sort: 'created', direction: 'asc',
+            });
+
+            const SKIP_LABELS = new Set(['ci-feedback', 'expectation-violation', 'wontfix', 'duplicate']);
+            const COPILOT_FAILURE = /unable to start working|temporarily unavailable|encountered an error/i;
+
+            const candidates = issues.data.filter(issue => {
+              if (issue.pull_request) return false; // skip PRs
+              const labels = issue.labels.map(l => l.name);
+              if (labels.some(l => SKIP_LABELS.has(l))) return false;
+
+              // Check if Copilot already failed on this AND there's a recent successful comment
+              // (to avoid infinite retry loops)
+              return true;
+            });
+
+            // Sort: milestone issues first, then by number
+            candidates.sort((a, b) => {
+              const aHasMilestone = a.milestone ? 0 : 1;
+              const bHasMilestone = b.milestone ? 0 : 1;
+              if (aHasMilestone !== bHasMilestone) return aHasMilestone - bHasMilestone;
+              return a.number - b.number;
+            });
+
+            if (candidates.length === 0) {
+              core.info('No candidate issues found');
+              return;
+            }
+
+            // Step 3: Check each candidate — skip if Copilot recently failed (< 1 hour ago)
+            // and has no new assignment event since
+            for (const issue of candidates) {
+              const comments = await github.rest.issues.listComments({
+                owner, repo, issue_number: issue.number,
+                per_page: 5, direction: 'desc',
+              });
+
+              const lastCopilotComment = comments.data.find(c =>
+                c.user.login === 'Copilot' || c.user.login === 'copilot-swe-agent[bot]'
+              );
+
+              // If Copilot's last comment was a failure less than 60 min ago, skip
+              if (lastCopilotComment && COPILOT_FAILURE.test(lastCopilotComment.body)) {
+                const failedAt = new Date(lastCopilotComment.created_at);
+                const minutesAgo = (Date.now() - failedAt.getTime()) / 60000;
+                if (minutesAgo < 60) {
+                  core.info(`#${issue.number}: Copilot failed ${Math.round(minutesAgo)}m ago, skipping for now`);
+                  continue;
+                }
+              }
+
+              // Step 4: Unassign Copilot (to create fresh event), then reassign
+              try {
+                await github.rest.issues.removeAssignees({
+                  owner, repo, issue_number: issue.number,
+                  assignees: ['Copilot'],
+                });
+              } catch (e) { /* may not be assigned */ }
+
+              // Brief pause to ensure the unassign event registers
+              await new Promise(r => setTimeout(r, 3000));
+
+              await github.rest.issues.addAssignees({
+                owner, repo, issue_number: issue.number,
+                assignees: ['Copilot'],
+              });
+
+              core.info(`✅ Assigned Copilot to #${issue.number}: ${issue.title}`);
+
+              // Only assign ONE issue — Copilot has 1-PR limit
+              return;
+            }
+
+            core.info('All candidates recently failed or skipped');
