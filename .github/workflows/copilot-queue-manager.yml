@@ -1,24 +1,14 @@
 name: Copilot Issue Queue Manager
-# Copilot SWE agent only triggers on FRESH issue creation with assignment.
-# API-based reassignment doesn't trigger it.
-# 
-# This workflow:
-# 1. Watches for Copilot PR merge/close events
-# 2. Finds next priority feature issue
-# 3. Creates a NEW implementation issue referencing the parent
-# 4. The new issue triggers Copilot via creation-time assignment
+# Assigns Copilot to ONE issue at a time from the backlog.
+# When a Copilot PR merges/closes, assigns the next priority issue.
 
 on:
   pull_request:
     types: [closed]
   workflow_dispatch:
     inputs:
-      issue_number:
-        description: "Specific issue number to queue for Copilot"
-        type: number
-        required: false
       force:
-        description: "Force even if Copilot has open PR"
+        description: "Force assign even if Copilot has open PR"
         type: boolean
         default: false
   schedule:
@@ -45,13 +35,13 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const force = context.payload.inputs?.force === 'true';
-            const specificIssue = context.payload.inputs?.issue_number;
+            const COPILOT_BOT_ID = 'BOT_kgDOC9w8XQ';
 
-            // Step 1: Check for open Copilot PR
+            // Step 1: Check if Copilot already has an open PR
             if (!force) {
               const prs = await github.rest.pulls.list({ owner, repo, state: 'open', per_page: 100 });
               const copilotPR = prs.data.find(pr =>
-                ['Copilot', 'app/copilot-swe-agent', 'copilot-swe-agent[bot]'].includes(pr.user.login)
+                ['Copilot', 'copilot-swe-agent[bot]', 'app/copilot-swe-agent'].includes(pr.user.login)
               );
               if (copilotPR) {
                 core.info(`Copilot has open PR #${copilotPR.number} — waiting`);
@@ -59,78 +49,56 @@ jobs:
               }
             }
 
-            // Step 2: Find target issue
-            let targetIssue;
-            if (specificIssue) {
-              const { data } = await github.rest.issues.get({ owner, repo, issue_number: parseInt(specificIssue) });
-              targetIssue = data;
-            } else {
-              const issues = await github.rest.issues.listForRepo({
-                owner, repo, state: 'open', per_page: 100,
-                sort: 'created', direction: 'asc',
-              });
-
-              const SKIP_LABELS = new Set(['ci-feedback', 'expectation-violation', 'wontfix', 'duplicate', 'copilot-queued']);
-              const candidates = issues.data.filter(issue => {
-                if (issue.pull_request) return false;
-                if (issue.labels.some(l => SKIP_LABELS.has(l))) return false;
-                return true;
-              });
-
-              candidates.sort((a, b) => {
-                const aMs = a.milestone ? 0 : 1;
-                const bMs = b.milestone ? 0 : 1;
-                if (aMs !== bMs) return aMs - bMs;
-                // Within milestone, sort by milestone number then issue number
-                if (a.milestone && b.milestone && a.milestone.number !== b.milestone.number)
-                  return a.milestone.number - b.milestone.number;
-                return a.number - b.number;
-              });
-
-              // Skip issues that already have a "copilot-queued" child
-              for (const candidate of candidates) {
-                // Check if we already created a child issue for this
-                const search = await github.rest.search.issuesAndPullRequests({
-                  q: `repo:${owner}/${repo} is:issue "Parent: #${candidate.number}" label:copilot-queued state:open`,
-                });
-                if (search.data.total_count === 0) {
-                  targetIssue = candidate;
-                  break;
-                } else {
-                  core.info(`#${candidate.number}: already has queued child, skipping`);
-                }
-              }
-            }
-
-            if (!targetIssue) {
-              core.info('No eligible issues found');
+            // Step 2: Check if Copilot is already assigned to any open issue
+            const allIssues = await github.rest.issues.listForRepo({
+              owner, repo, state: 'open', per_page: 100, sort: 'created', direction: 'asc',
+            });
+            const copilotAssigned = allIssues.data.filter(i =>
+              !i.pull_request && i.assignees.some(a => a.login === 'Copilot')
+            );
+            if (copilotAssigned.length > 0 && !force) {
+              core.info(`Copilot already assigned to #${copilotAssigned[0].number} — waiting`);
               return;
             }
 
-            // Step 3: Create fresh implementation issue
-            // This is what triggers Copilot — new issue creation with assignment
-            const parentBody = targetIssue.body || 'See parent issue for details.';
-            const newIssue = await github.rest.issues.create({
-              owner, repo,
-              title: targetIssue.title,
-              body: `Parent: #${targetIssue.number}\n\n---\n\n${parentBody}`,
-              labels: [...targetIssue.labels.map(l => l.name).filter(l => l !== 'copilot-queued'), 'copilot-queued'],
-              milestone: targetIssue.milestone?.number || null,
-              assignees: ['kayodebristol'],
+            // Step 3: Find next unassigned milestone issue
+            const SKIP_LABELS = new Set(['ci-feedback', 'expectation-violation', 'wontfix', 'duplicate', 'copilot-queued']);
+            const candidates = allIssues.data.filter(i => {
+              if (i.pull_request) return false;
+              if (i.labels.some(l => SKIP_LABELS.has(l.name))) return false;
+              if (i.assignees.some(a => a.login === 'Copilot')) return false;
+              if (!i.milestone) return false; // Only milestone issues
+              return true;
             });
 
-            // Assign Copilot via GraphQL (the creation-time assignment IS the trigger)
+            // Sort: lowest milestone number first, then issue number
+            candidates.sort((a, b) => {
+              if (a.milestone.number !== b.milestone.number)
+                return a.milestone.number - b.milestone.number;
+              return a.number - b.number;
+            });
+
+            if (candidates.length === 0) {
+              core.info('No eligible issues — all done or all assigned');
+              return;
+            }
+
+            const target = candidates[0];
+            core.info(`Next issue: #${target.number} "${target.title}" (${target.milestone.title})`);
+
+            // Step 4: Assign Copilot via GraphQL
             try {
-              const nodeId = newIssue.data.node_id;
-              await github.graphql(`mutation($id:ID!){addAssigneesToAssignable(input:{assignableId:$id,assigneeIds:["BOT_kgDOC9w8XQ"]}){clientMutationId}}`, { id: nodeId });
+              await github.graphql(`mutation($id:ID!){
+                addAssigneesToAssignable(input:{assignableId:$id,assigneeIds:["${COPILOT_BOT_ID}"]}){clientMutationId}
+              }`, { id: target.node_id });
+              core.info(`✅ Assigned Copilot to #${target.number}`);
             } catch (e) {
               core.warning(`GraphQL assign failed: ${e.message}`);
             }
 
-            // Add comment on parent linking to child
+            // Step 5: Nudge with @mention
             await github.rest.issues.createComment({
-              owner, repo, issue_number: targetIssue.number,
-              body: `🤖 Queued for Copilot implementation → #${newIssue.data.number}`,
+              owner, repo, issue_number: target.number,
+              body: `@copilot Please implement this issue now. Build against current main branch.`,
             });
-
-            core.info(`✅ Created #${newIssue.data.number} for Copilot (parent: #${targetIssue.number})`);
+            core.info(`✅ Nudged Copilot on #${target.number}`);
