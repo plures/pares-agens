@@ -1,7 +1,4 @@
 name: Copilot Issue Queue Manager
-# Assigns Copilot to ONE issue at a time from the backlog.
-# When a Copilot PR merges/closes, assigns the next priority issue.
-
 on:
   pull_request:
     types: [closed]
@@ -36,42 +33,76 @@ jobs:
             const repo = context.repo.repo;
             const force = context.payload.inputs?.force === 'true';
             const COPILOT_BOT_ID = 'BOT_kgDOC9w8XQ';
+            const SKIP_LABELS = new Set(['ci-feedback', 'expectation-violation', 'wontfix', 'duplicate', 'copilot-queued']);
 
-            // Step 1: Check if Copilot already has an open PR
-            if (!force) {
-              const prs = await github.rest.pulls.list({ owner, repo, state: 'open', per_page: 100 });
-              const copilotPR = prs.data.find(pr =>
-                ['Copilot', 'copilot-swe-agent[bot]', 'app/copilot-swe-agent'].includes(pr.user.login)
-              );
-              if (copilotPR) {
-                core.info(`Copilot has open PR #${copilotPR.number} — waiting`);
-                return;
-              }
-            }
-
-            // Step 2: Check if Copilot is already assigned to any open issue
-            const allIssues = await github.rest.issues.listForRepo({
-              owner, repo, state: 'open', per_page: 100, sort: 'created', direction: 'asc',
-            });
-            const copilotAssigned = allIssues.data.filter(i =>
-              !i.pull_request && i.assignees.some(a => a.login === 'Copilot')
+            // Check for open Copilot PR
+            const prs = await github.rest.pulls.list({ owner, repo, state: 'open', per_page: 100 });
+            const copilotPR = prs.data.find(pr =>
+              ['Copilot', 'copilot-swe-agent[bot]', 'app/copilot-swe-agent'].includes(pr.user.login)
             );
-            if (copilotAssigned.length > 0 && !force) {
-              core.info(`Copilot already assigned to #${copilotAssigned[0].number} — waiting`);
+            if (copilotPR && !force) {
+              core.info(`Copilot has open PR #${copilotPR.number} — waiting`);
               return;
             }
 
-            // Step 3: Find next unassigned milestone issue
-            const SKIP_LABELS = new Set(['ci-feedback', 'expectation-violation', 'wontfix', 'duplicate', 'copilot-queued']);
-            const candidates = allIssues.data.filter(i => {
-              if (i.pull_request) return false;
+            // Find all open issues
+            const allIssues = await github.rest.issues.listForRepo({
+              owner, repo, state: 'open', per_page: 100, sort: 'created', direction: 'asc',
+            });
+            const issues = allIssues.data.filter(i => !i.pull_request);
+
+            // Check if Copilot is already assigned to something
+            const copilotIssue = issues.find(i => i.assignees.some(a => a.login === 'Copilot'));
+
+            if (copilotIssue) {
+              // Already assigned — check if it failed and needs a nudge
+              const comments = await github.rest.issues.listComments({
+                owner, repo, issue_number: copilotIssue.number,
+                per_page: 5, direction: 'desc',
+              });
+
+              const lastComment = comments.data[0];
+              if (!lastComment) return;
+
+              const isCopilotFailure = lastComment.user.login === 'Copilot' &&
+                lastComment.body.includes('temporarily unavailable');
+              const isOurNudge = lastComment.body.includes('@copilot') &&
+                lastComment.user.login !== 'Copilot';
+
+              // If last comment is a failure, nudge
+              // If last comment is already our nudge, check age — re-nudge after 30 min
+              if (isCopilotFailure) {
+                core.info(`Copilot failed on #${copilotIssue.number} — nudging`);
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: copilotIssue.number,
+                  body: '@copilot Please retry this issue.',
+                });
+                return;
+              }
+
+              if (isOurNudge) {
+                const nudgeAge = Date.now() - new Date(lastComment.created_at).getTime();
+                if (nudgeAge > 30 * 60 * 1000) {
+                  core.info(`Last nudge was ${Math.round(nudgeAge/60000)}min ago — re-nudging #${copilotIssue.number}`);
+                  await github.rest.issues.createComment({
+                    owner, repo, issue_number: copilotIssue.number,
+                    body: '@copilot Please retry this issue.',
+                  });
+                }
+                return;
+              }
+
+              core.info(`Copilot assigned to #${copilotIssue.number} — no action needed`);
+              return;
+            }
+
+            // No Copilot assignment — find next issue
+            const candidates = issues.filter(i => {
               if (i.labels.some(l => SKIP_LABELS.has(l.name))) return false;
-              if (i.assignees.some(a => a.login === 'Copilot')) return false;
-              if (!i.milestone) return false; // Only milestone issues
+              if (!i.milestone) return false;
               return true;
             });
 
-            // Sort: lowest milestone number first, then issue number
             candidates.sort((a, b) => {
               if (a.milestone.number !== b.milestone.number)
                 return a.milestone.number - b.milestone.number;
@@ -79,26 +110,23 @@ jobs:
             });
 
             if (candidates.length === 0) {
-              core.info('No eligible issues — all done or all assigned');
+              core.info('No eligible issues');
               return;
             }
 
             const target = candidates[0];
-            core.info(`Next issue: #${target.number} "${target.title}" (${target.milestone.title})`);
+            core.info(`Assigning Copilot to #${target.number}: ${target.title}`);
 
-            // Step 4: Assign Copilot via GraphQL
             try {
               await github.graphql(`mutation($id:ID!){
                 addAssigneesToAssignable(input:{assignableId:$id,assigneeIds:["${COPILOT_BOT_ID}"]}){clientMutationId}
               }`, { id: target.node_id });
-              core.info(`✅ Assigned Copilot to #${target.number}`);
             } catch (e) {
               core.warning(`GraphQL assign failed: ${e.message}`);
             }
 
-            // Step 5: Nudge with @mention
             await github.rest.issues.createComment({
               owner, repo, issue_number: target.number,
-              body: `@copilot Please implement this issue now. Build against current main branch.`,
+              body: '@copilot Please implement this issue now. Build against current main branch.',
             });
-            core.info(`✅ Nudged Copilot on #${target.number}`);
+            core.info(`✅ Assigned and nudged #${target.number}`);
