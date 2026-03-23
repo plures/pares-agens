@@ -58,10 +58,10 @@ jobs:
             const issue = await github.rest.issues.create({
               owner, repo,
               title: `[ci-feedback] Post-merge failure: ${failures.join(', ')}`,
-              body: `## Post-Merge CI Failure\n\n| Field | Value |\n|---|---|\n| **Source** | ${prRef} |\n| **Commit** | \`${sha}\` |\n| **Failed** | ${failures.join(', ')} |\n\nAuto-assigned to Copilot for fix.`,
+              body: `## Post-Merge CI Failure\n\n| Field | Value |\n|---|---|\n| **Source** | ${prRef} |\n| **Commit** | \`${sha}\` |\n| **Failed** | ${failures.join(', ')} |\n\nCI feedback — tracked for resolution. Not auto-assigned to Copilot (use queue manager).`,
               labels: ['ci-feedback', 'expectation-violation'],
             });
             try {
               const node = await github.graphql(`query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){id}}}`, {o:owner,r:repo,n:issue.data.number});
-              await github.graphql(`mutation($id:ID!){addAssigneesToAssignable(input:{assignableId:$id,assigneeIds:["BOT_kgDOC9w8XQ"]}){clientMutationId}}`, {id:node.repository.issue.id});
+              // Copilot assignment removed — queue manager handles prioritization
             } catch(e) { core.info(`Could not assign: ${e.message}`); }
