@@ -1,305 +1,104 @@
 name: Copilot PR Lifecycle
 
-# Event-driven: responds to PR state changes, not polling.
-# Copilot SWE agent emits pull_request.opened when done.
-# The 30-min delay is a safety net if the PR is still draft.
-
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+    types: [opened, synchronize, ready_for_review]
   pull_request_review:
     types: [submitted]
-  check_suite:
-    types: [completed]
-  workflow_dispatch:
-    inputs:
-      pr_number:
-        description: "PR number to process (leave empty for all bot PRs)"
-        required: false
-        type: string
 
 permissions:
   contents: write
   pull-requests: write
   issues: write
 
-concurrency:
-  group: copilot-pr-lifecycle-${{ github.event.pull_request.number || github.event.inputs.pr_number || 'dispatch' }}
-  cancel-in-progress: true
-
 jobs:
   lifecycle:
-    name: PR Lifecycle
     runs-on: ubuntu-latest
-    # Only run for Copilot-authored PRs (or manual dispatch)
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'check_suite' ||
-      github.event_name == 'pull_request_review' ||
-      (github.event.pull_request.user.login == 'Copilot' ||
-       github.event.pull_request.user.login == 'app/copilot-swe-agent')
-
+      github.event.pull_request.user.login == 'Copilot' ||
+      github.event.pull_request.user.login == 'copilot-swe-agent[bot]'
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Copilot PR Lifecycle Engine
-        uses: actions/github-script@v7
+      - name: Mark ready for review
+        if: github.event.action == 'opened' && github.event.pull_request.draft == true
+        run: gh pr ready ${{ github.event.pull_request.number }} -R ${{ github.repository }}
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_ACTION: ${{ github.event.action }}
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number || '' }}
-          REVIEW_STATE: ${{ github.event.review.state || '' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Request review
+        if: github.event.action == 'opened' || github.event.action == 'ready_for_review'
+        run: |
+          gh pr edit ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
+            --add-reviewer kayodebristol || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Auto-merge on approval
+        if: >-
+          github.event_name == 'pull_request_review' &&
+          github.event.review.state == 'approved'
+        run: |
+          gh pr merge ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
+            --squash --auto --delete-branch || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  queue-advance:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+    steps:
+      - name: Assign next issue to Copilot
+        uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.PLURES_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const eventName = process.env.EVENT_NAME;
-            const eventAction = process.env.EVENT_ACTION;
-            const reviewState = process.env.REVIEW_STATE;
 
-            // ─── Helpers ─────────────────────────────────────────────
-            const COPILOT_AUTHORS = new Set([
-              'copilot-swe-agent[bot]',
-              'app/copilot-swe-agent',
-              'copilot-swe-agent',
-              'Copilot',
-            ]);
-
-            function isCopilotPR(pr) {
-              return COPILOT_AUTHORS.has(pr.user?.login) || COPILOT_AUTHORS.has(pr.author?.login);
-            }
-
-            async function ledgerEntry(kind, prNumber, summary, details) {
-              const body = [
-                `### Ledger: ${kind}`,
-                `**PR:** #${prNumber}`,
-                `**Time:** ${new Date().toISOString()}`,
-                `**Summary:** ${summary}`,
-                details ? `**Details:** ${JSON.stringify(details)}` : '',
-              ].filter(Boolean).join('\n');
-              core.info(`[LEDGER] ${kind} PR#${prNumber}: ${summary}`);
-              // Could write to ops/ledger/ via commit — for now, structured log
-              return body;
-            }
-
-            // ─── Collect target PRs ──────────────────────────────────
-            let targetPRs = [];
-
-            if (process.env.PR_NUMBER) {
-              const { data: pr } = await github.rest.pulls.get({
-                owner, repo,
-                pull_number: parseInt(process.env.PR_NUMBER),
-              });
-              if (isCopilotPR(pr)) targetPRs.push(pr);
-            } else if (eventName === 'check_suite') {
-              // check_suite doesn't have a PR number directly — find PRs on the branch
-              const headBranch = context.payload?.check_suite?.head_branch;
-              if (headBranch) {
-                const { data: prs } = await github.rest.pulls.list({
-                  owner, repo, state: 'open', head: `${owner}:${headBranch}`,
-                });
-                targetPRs = prs.filter(isCopilotPR);
-              }
-            } else if (eventName === 'workflow_dispatch' && !process.env.PR_NUMBER) {
-              const { data: prs } = await github.rest.pulls.list({
-                owner, repo, state: 'open', per_page: 50,
-              });
-              targetPRs = prs.filter(isCopilotPR);
-            } else if (context.payload?.pull_request) {
-              targetPRs = [context.payload.pull_request];
-            }
-
-            if (targetPRs.length === 0) {
-              core.info('No Copilot PRs to process.');
+            // Check if Copilot already has an open issue
+            const issues = await github.rest.issues.listForRepo({
+              owner, repo, state: 'open', per_page: 100
+            });
+            const copilotIssues = issues.data.filter(i =>
+              !i.pull_request &&
+              i.assignees.some(a => a.login === 'Copilot')
+            );
+            if (copilotIssues.length > 0) {
+              console.log(`Copilot already assigned to #${copilotIssues[0].number}, skipping`);
               return;
             }
 
-            // ─── Process each PR ─────────────────────────────────────
-            for (const pr of targetPRs) {
-              const prNum = pr.number;
-              const prTitle = pr.title;
-              core.info(`\n${'='.repeat(60)}\nProcessing PR #${prNum}: ${prTitle}\n${'='.repeat(60)}`);
+            // Find milestones sorted by title
+            const milestones = await github.rest.issues.listMilestones({
+              owner, repo, state: 'open', sort: 'title', direction: 'asc'
+            });
 
-              // Phase 1: Draft → Ready
-              if (pr.draft) {
-                core.info(`PR #${prNum} is draft. Marking ready for review...`);
-                try {
-                  await github.graphql(`
-                    mutation($id: ID!) {
-                      markPullRequestReadyForReview(input: { pullRequestId: $id }) {
-                        pullRequest { number }
-                      }
-                    }
-                  `, { id: pr.node_id });
-                  core.info(`PR #${prNum} marked ready.`);
-                  await ledgerEntry('draft-to-ready', prNum, 'Auto-marked draft PR as ready for review');
-                } catch (e) {
-                  core.warning(`Could not mark PR #${prNum} ready: ${e.message}`);
-                }
-                // After marking ready, GitHub will fire ready_for_review event
-                // which re-triggers this workflow. Don't proceed further this run.
-                continue;
-              }
-
-              // Phase 2: Request Copilot review (if not already reviewed)
-              const { data: reviews } = await github.rest.pulls.listReviews({
-                owner, repo, pull_number: prNum,
+            // Find first unassigned issue in earliest milestone
+            for (const ms of milestones.data) {
+              const msIssues = await github.rest.issues.listForRepo({
+                owner, repo, state: 'open', milestone: ms.number,
+                sort: 'created', direction: 'asc', per_page: 20
               });
-              const copilotReviewed = reviews.some(
-                r => r.user?.login === 'copilot-pull-request-reviewer' ||
-                     r.user?.login === 'github-actions[bot]'
+              const next = msIssues.data.find(i =>
+                !i.pull_request &&
+                !i.assignees.some(a => a.login === 'Copilot')
               );
+              if (next) {
+                // Assign via GraphQL (triggers Copilot)
+                const botId = 'BOT_kgDOC9w8XQ';
+                await github.graphql(`
+                  mutation($id: ID!, $assignees: [ID!]!) {
+                    addAssigneesToAssignable(input: { assignableId: $id, assigneeIds: $assignees }) {
+                      clientMutationId
+                    }
+                  }
+                `, { id: next.node_id, assignees: [botId] });
 
-              if (!copilotReviewed && eventAction !== 'submitted') {
-                core.info(`PR #${prNum}: Requesting Copilot review...`);
-                try {
-                  // Request review from Copilot
-                  await github.rest.pulls.requestReviewers({
-                    owner, repo, pull_number: prNum,
-                    reviewers: ['copilot-pull-request-reviewer'],
-                  });
-                  core.info(`Copilot review requested on PR #${prNum}.`);
-                } catch (e) {
-                  // Copilot reviewer may not be available — that's OK, proceed
-                  core.info(`Could not request Copilot review: ${e.message}. Proceeding.`);
-                }
-              }
-
-              // Phase 3: Handle review feedback
-              if (eventName === 'pull_request_review' && reviewState === 'changes_requested') {
-                const latestReview = reviews[reviews.length - 1];
-                if (latestReview) {
-                  core.info(`PR #${prNum}: Changes requested. Asking Copilot to implement...`);
-                  // Check for code suggestions
-                  const { data: reviewComments } = await github.rest.pulls.listReviewComments({
-                    owner, repo, pull_number: prNum,
-                  });
-                  const hasSuggestions = reviewComments.some(c => c.body?.includes('```suggestion'));
-
-                  const commentBody = hasSuggestions
-                    ? '@copilot Please implement all review suggestions and push the changes.'
-                    : '@copilot Changes were requested in the review. Please address the feedback and push fixes.';
-
-                  await github.rest.issues.createComment({
-                    owner, repo, issue_number: prNum,
-                    body: commentBody,
-                  });
-                  await ledgerEntry('changes-requested', prNum, 'Review feedback forwarded to Copilot');
-                }
-                continue;
-              }
-
-              // Phase 4: Check for merge conflicts
-              // Refetch to get current mergeable status
-              const { data: freshPR } = await github.rest.pulls.get({
-                owner, repo, pull_number: prNum,
-              });
-
-              if (freshPR.mergeable === false || freshPR.merge_state_status === 'DIRTY') {
-                core.info(`PR #${prNum} has merge conflicts.`);
-                // Close and refile — Copilot can't rebase, fresh implementation is cleaner
-                const linkedIssue = (freshPR.body || '').match(/(?:closes|fixes|resolves)\s*#(\d+)/i);
-                const issueRef = linkedIssue ? linkedIssue[1] : null;
-
+                // Nudge
                 await github.rest.issues.createComment({
-                  owner, repo, issue_number: prNum,
-                  body: `Closing due to merge conflicts with main. Will refile for fresh implementation.`,
+                  owner, repo, issue_number: next.number,
+                  body: '@copilot Please implement this issue.'
                 });
-                await github.rest.pulls.update({
-                  owner, repo, pull_number: prNum, state: 'closed',
-                });
-                // Delete the branch
-                try {
-                  await github.rest.git.deleteRef({
-                    owner, repo, ref: `heads/${freshPR.head.ref}`,
-                  });
-                } catch (_e) { /* branch may already be gone */ }
-
-                // Create new issue for fresh implementation
-                const newIssue = await github.rest.issues.create({
-                  owner, repo,
-                  title: prTitle,
-                  body: [
-                    `Re-implementation of closed PR #${prNum} which had merge conflicts.`,
-                    issueRef ? `**Original issue:** #${issueRef}` : '',
-                    '',
-                    'Please implement this fresh against current `main`. Do not rebase the old branch.',
-                    '',
-                    'Review the current codebase state before starting.',
-                  ].filter(Boolean).join('\n'),
-                  assignees: [],
-                });
-
-                // Assign to Copilot
-                try {
-                  const issueNode = await github.graphql(`
-                    query($owner: String!, $repo: String!, $num: Int!) {
-                      repository(owner: $owner, name: $repo) {
-                        issue(number: $num) { id }
-                      }
-                    }
-                  `, { owner, repo, num: newIssue.data.number });
-                  await github.graphql(`
-                    mutation($id: ID!) {
-                      addAssigneesToAssignable(input: {
-                        assignableId: $id,
-                        assigneeIds: ["BOT_kgDOC9w8XQ"]
-                      }) { clientMutationId }
-                    }
-                  `, { id: issueNode.repository.issue.id });
-                } catch (e) {
-                  core.info(`Could not assign Copilot: ${e.message}`);
-                }
-
-                await ledgerEntry('conflict-refile', prNum,
-                  `Closed conflicting PR, refiled as #${newIssue.data.number}`);
-                continue;
-              }
-
-              // Phase 5: Merge
-              // CI is NOT a merge gate. Merge as soon as PR is ready and non-conflicting.
-              // CI failures are tracked separately via the ci-feedback workflow.
-              core.info(`PR #${prNum}: Attempting squash merge (CI is not a gate)...`);
-
-              try {
-                await github.rest.pulls.merge({
-                  owner, repo, pull_number: prNum,
-                  merge_method: 'squash',
-                });
-                core.info(`✅ PR #${prNum} merged!`);
-
-                // Delete branch
-                try {
-                  await github.rest.git.deleteRef({
-                    owner, repo, ref: `heads/${freshPR.head.ref}`,
-                  });
-                } catch (_e) { /* already deleted */ }
-
-                await ledgerEntry('merge', prNum, `Squash merged: ${prTitle}`, {
-                  sourceBranch: freshPR.head.ref,
-                  targetBranch: freshPR.base.ref,
-                });
-              } catch (e) {
-                // Merge may fail due to branch protection — try enabling auto-merge
-                core.warning(`Direct merge failed: ${e.message}. Enabling auto-merge...`);
-                try {
-                  await github.graphql(`
-                    mutation($prId: ID!) {
-                      enablePullRequestAutoMerge(input: {
-                        pullRequestId: $prId,
-                        mergeMethod: SQUASH
-                      }) { clientMutationId }
-                    }
-                  `, { prId: freshPR.node_id });
-                  core.info(`Auto-merge enabled for PR #${prNum}.`);
-                  await ledgerEntry('auto-merge-enabled', prNum, 'Direct merge blocked by branch protection; auto-merge enabled');
-                } catch (e2) {
-                  core.warning(`Auto-merge also failed: ${e2.message}. PR needs manual merge or protection policy change.`);
-                  await ledgerEntry('merge-blocked', prNum,
-                    `Cannot merge: ${e.message}. Auto-merge also failed: ${e2.message}`);
-                }
+                console.log(`Assigned Copilot to #${next.number}: ${next.title}`);
+                return;
               }
             }
-
-            core.info('\nLifecycle run complete.');
+            console.log('No unassigned milestone issues found');
