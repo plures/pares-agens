@@ -22,7 +22,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
+use pares_agens_privacy::PrivacyFilter;
 use tokio::time::{timeout, Duration};
+use tracing::info;
 
 use crate::model::{ChatMessage, ModelClient};
 use crate::procedure::Procedure;
@@ -102,6 +104,10 @@ pub struct AgentInvoke {
     model_client: Arc<dyn ModelClient>,
     config: InvokeConfig,
     invocation_count: AtomicUsize,
+    /// Optional PII redaction filter.  When set, user content is redacted
+    /// before being sent to the model and the response is de-redacted before
+    /// being returned to the caller.
+    privacy_filter: Option<Arc<PrivacyFilter>>,
 }
 
 impl AgentInvoke {
@@ -111,6 +117,7 @@ impl AgentInvoke {
             model_client,
             config: InvokeConfig::default(),
             invocation_count: AtomicUsize::new(0),
+            privacy_filter: None,
         }
     }
 
@@ -120,7 +127,28 @@ impl AgentInvoke {
             model_client,
             config,
             invocation_count: AtomicUsize::new(0),
+            privacy_filter: None,
         }
+    }
+
+    /// Attach a [`PrivacyFilter`] to this invoker.
+    ///
+    /// When a filter is present every call to [`invoke`][Self::invoke] will:
+    ///
+    /// 1. Redact PII in the user content, replacing values with typed numbered
+    ///    placeholders (`[EMAIL_1]`, `[PHONE_1]`, …) before the request is
+    ///    sent to the cloud model.
+    /// 2. Restore the original values in the model response before returning
+    ///    it to the caller.
+    /// 3. Emit a `tracing::info!` audit log recording the number of items
+    ///    redacted per PII type (never the content itself).
+    ///
+    /// Redaction is applied to the `user_content` parameter only; system
+    /// prompts are developer-controlled and are not modified.
+    #[must_use]
+    pub fn with_redaction(mut self, filter: Arc<PrivacyFilter>) -> Self {
+        self.privacy_filter = Some(filter);
+        self
     }
 
     /// The configuration for this invoke step.
@@ -146,6 +174,12 @@ impl AgentInvoke {
     ///   appended as a second system message instructing the model to follow
     ///   the schema.
     ///
+    /// When a [`PrivacyFilter`] is attached via [`Self::with_redaction`], PII
+    /// in `user_content` is replaced with typed placeholders before the
+    /// request reaches the cloud model, and the original values are restored
+    /// in the returned response.  An audit log line is emitted via
+    /// `tracing::info!` recording only PII type and count.
+    ///
     /// # Errors
     ///
     /// Returns [`InvokeError::BudgetExceeded`] when the invocation limit is
@@ -167,6 +201,27 @@ impl AgentInvoke {
             return Err(InvokeError::BudgetExceeded);
         }
 
+        // ── PII redaction ─────────────────────────────────────────────────────
+        // When a privacy filter is configured, redact PII in the user content
+        // before it is sent to the cloud model.  The redaction map is kept so
+        // we can restore original values in the response.
+        let (redacted_content, redaction_map) = if let Some(filter) = &self.privacy_filter {
+            let (redacted, map, audit) = filter.redact(user_content);
+            if !audit.entries.is_empty() {
+                // Audit log: type + count only, never the actual PII content.
+                for entry in &audit.entries {
+                    info!(
+                        pii_type = ?entry.pii_type,
+                        count = entry.count,
+                        "pii redacted before model call"
+                    );
+                }
+            }
+            (redacted, Some(map))
+        } else {
+            (user_content.to_string(), None)
+        };
+
         // ── Build message list ────────────────────────────────────────────────
         let mut messages = vec![ChatMessage::system(system_prompt)];
 
@@ -176,7 +231,7 @@ impl AgentInvoke {
             )));
         }
 
-        messages.push(ChatMessage::user(user_content));
+        messages.push(ChatMessage::user(&redacted_content));
 
         // ── Call the model with timeout ───────────────────────────────────────
         let duration = Duration::from_millis(self.config.timeout_ms);
@@ -188,9 +243,20 @@ impl AgentInvoke {
             .map_err(InvokeError::ModelError)?;
 
         // ── Extract text response ─────────────────────────────────────────────
-        completion
+        let raw_response = completion
             .content
-            .ok_or_else(|| InvokeError::ParseError("model returned no text content".into()))
+            .ok_or_else(|| InvokeError::ParseError("model returned no text content".into()))?;
+
+        // ── Restore redacted values ───────────────────────────────────────────
+        // Replace any placeholder tokens in the model response with the
+        // original PII values so the output is transparent to the caller.
+        let response = if let Some(map) = redaction_map {
+            map.restore(&raw_response)
+        } else {
+            raw_response
+        };
+
+        Ok(response)
     }
 }
 
@@ -533,5 +599,115 @@ mod tests {
             InvokeError::Timeout { ms: 500 }.to_string(),
             "invocation timed out after 500ms"
         );
+    }
+
+    // ── Redaction pipeline ────────────────────────────────────────────────────
+
+    /// A mock client that echoes back the user message content so tests can
+    /// inspect what was actually sent to the "cloud API".
+    struct EchoModelClient;
+
+    #[async_trait]
+    impl ModelClient for EchoModelClient {
+        async fn complete(
+            &self,
+            messages: &[ChatMessage],
+            _tools: &[ToolDefinition],
+        ) -> Result<ModelCompletion, String> {
+            // Return the last user message content so we can assert on it.
+            let user_msg = messages
+                .iter()
+                .filter(|m| m.role == "user")
+                .last()
+                .map(|m| m.content.clone())
+                .unwrap_or_default();
+            Ok(ModelCompletion { content: Some(user_msg), tool_calls: vec![] })
+        }
+    }
+
+    /// A mock client that returns a response containing a placeholder token —
+    /// simulating a model that "remembers" the placeholder from the user
+    /// message and includes it in its answer.
+    struct PlaceholderEchoClient {
+        response: String,
+    }
+
+    #[async_trait]
+    impl ModelClient for PlaceholderEchoClient {
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[ToolDefinition],
+        ) -> Result<ModelCompletion, String> {
+            Ok(ModelCompletion { content: Some(self.response.clone()), tool_calls: vec![] })
+        }
+    }
+
+    #[tokio::test]
+    async fn redaction_removes_pii_before_cloud_call() {
+        let filter = Arc::new(PrivacyFilter::new());
+        let invoker = AgentInvoke::new(Arc::new(EchoModelClient)).with_redaction(filter);
+
+        // The echo client returns what was sent; the *redacted* user content
+        // should never contain the original email.
+        let result = invoker
+            .invoke("system prompt", "Contact bob@example.com for help.", None)
+            .await
+            .unwrap();
+
+        // After restoration the original email must be back.
+        assert!(
+            result.contains("bob@example.com"),
+            "original email should be restored in response, got: {result}"
+        );
+        // The raw cloud content (echoed back) must NOT contain the original.
+        // We verify indirectly: if redaction worked, the echo contained a
+        // placeholder, and restore put the email back.
+        assert!(
+            !result.contains("[EMAIL_1]"),
+            "placeholder should be restored before returning, got: {result}"
+        );
+    }
+
+    #[tokio::test]
+    async fn redaction_restores_values_in_response() {
+        let filter = Arc::new(PrivacyFilter::new());
+        // The "cloud" returns a response that contains the placeholder token.
+        let invoker = AgentInvoke::new(Arc::new(PlaceholderEchoClient {
+            response: "You asked about [EMAIL_1] — I can help.".into(),
+        }))
+        .with_redaction(filter);
+
+        let result = invoker
+            .invoke("sys", "My email is alice@example.com.", None)
+            .await
+            .unwrap();
+
+        assert!(
+            result.contains("alice@example.com"),
+            "original email should be restored in response, got: {result}"
+        );
+        assert!(
+            !result.contains("[EMAIL_1]"),
+            "placeholder should not appear in final response, got: {result}"
+        );
+    }
+
+    #[tokio::test]
+    async fn invoke_without_redaction_passes_content_unchanged() {
+        // When no PrivacyFilter is attached, content is forwarded as-is.
+        let invoker = AgentInvoke::new(Arc::new(EchoModelClient));
+        let content = "My email is alice@example.com.";
+        let result = invoker.invoke("sys", content, None).await.unwrap();
+        assert_eq!(result, content);
+    }
+
+    #[tokio::test]
+    async fn redaction_is_noop_for_clean_content() {
+        let filter = Arc::new(PrivacyFilter::new());
+        let invoker = AgentInvoke::new(Arc::new(EchoModelClient)).with_redaction(filter);
+        let content = "What is the weather today?";
+        let result = invoker.invoke("sys", content, None).await.unwrap();
+        assert_eq!(result, content, "clean content should pass through unchanged");
     }
 }

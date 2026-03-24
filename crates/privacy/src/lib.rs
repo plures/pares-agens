@@ -32,6 +32,7 @@
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use thiserror::Error;
 
 // ── Error type ───────────────────────────────────────────────────────────────
@@ -141,6 +142,22 @@ pub enum PIIType {
     Name,
     /// Street address (heuristic: digit(s) followed by street-like words).
     Address,
+}
+
+impl PIIType {
+    /// Parse a `PIIType` from its uppercase tag string (as produced by
+    /// [`pii_type_tag`]).  Returns `None` for unrecognised tags.
+    fn from_tag(tag: &str) -> Option<Self> {
+        match tag {
+            "EMAIL" => Some(Self::Email),
+            "PHONE" => Some(Self::Phone),
+            "SSN" => Some(Self::SSN),
+            "CREDIT_CARD" => Some(Self::CreditCard),
+            "NAME" => Some(Self::Name),
+            "ADDRESS" => Some(Self::Address),
+            _ => None,
+        }
+    }
 }
 
 /// A single PII span detected in a piece of text.
@@ -802,6 +819,210 @@ fn unix_timestamp_now() -> String {
     format!("{secs}")
 }
 
+// ── Redaction pipeline ───────────────────────────────────────────────────────
+
+/// Return a short, uppercase tag for the given [`PIIType`] used in
+/// placeholder tokens such as `[EMAIL_1]`.
+fn pii_type_tag(pii_type: PIIType) -> &'static str {
+    match pii_type {
+        PIIType::Email => "EMAIL",
+        PIIType::Phone => "PHONE",
+        PIIType::SSN => "SSN",
+        PIIType::CreditCard => "CREDIT_CARD",
+        PIIType::Name => "NAME",
+        PIIType::Address => "ADDRESS",
+    }
+}
+
+/// Extract the PII-type tag from a placeholder token like `[EMAIL_1]`.
+///
+/// The format is `[TAG_N]` where `TAG` may itself contain underscores
+/// (e.g. `CREDIT_CARD`), so we split on the *last* underscore to separate
+/// the tag from the sequential number.
+///
+/// Returns `None` when the input does not match the expected format.
+fn tag_from_placeholder(placeholder: &str) -> Option<&str> {
+    let inner = placeholder.strip_prefix('[')?.strip_suffix(']')?;
+    let last_underscore = inner.rfind('_')?;
+    Some(&inner[..last_underscore])
+}
+
+/// A mapping from placeholder token (e.g. `[EMAIL_1]`) to the original PII
+/// value it replaced.
+///
+/// Produced by [`PrivacyFilter::redact`] and consumed by
+/// [`RedactionMap::restore`].
+#[derive(Debug, Default, Clone)]
+pub struct RedactionMap {
+    /// Ordered list of `(placeholder, original)` pairs.
+    ///
+    /// Stored in the order they were first encountered so that identical
+    /// originals always map to the same placeholder.
+    entries: Vec<(String, String)>,
+}
+
+impl RedactionMap {
+    /// Replace every placeholder token in `text` with its original value.
+    ///
+    /// To avoid partial-match issues (e.g. `[EMAIL_1]` being replaced inside
+    /// `[EMAIL_10]`), replacements are applied longest-placeholder-first.
+    #[must_use]
+    pub fn restore(&self, text: &str) -> String {
+        if self.entries.is_empty() {
+            return text.to_string();
+        }
+
+        // Sort by placeholder length descending to avoid partial replacements.
+        let mut sorted: Vec<&(String, String)> = self.entries.iter().collect();
+        sorted.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+
+        let mut result = text.to_string();
+        for (placeholder, original) in &sorted {
+            result = result.replace(placeholder.as_str(), original.as_str());
+        }
+        result
+    }
+
+    /// Whether any redactions are recorded in this map.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Number of unique PII values that were redacted.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+/// Per-category count of redacted values for the audit log.
+///
+/// Contains only the *type* and *count*; the actual PII content is never
+/// stored here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedactionAuditEntry {
+    /// Category of PII that was redacted.
+    pub pii_type: PIIType,
+    /// Number of distinct values of this type that were redacted.
+    pub count: usize,
+}
+
+/// Summary of all PII redacted in a single [`PrivacyFilter::redact`] call.
+///
+/// Intended for audit logging — records *what* was found (by type and count)
+/// but never the actual PII content.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedactionAudit {
+    /// Per-type breakdown of redacted items.
+    pub entries: Vec<RedactionAuditEntry>,
+    /// Total number of unique PII values that were redacted.
+    pub total_redacted: usize,
+}
+
+impl PrivacyFilter {
+    /// Redact PII in `text`, replacing each distinct value with a typed,
+    /// numbered placeholder token (`[EMAIL_1]`, `[PHONE_1]`, etc.).
+    ///
+    /// Identical PII values are always replaced with the same placeholder so
+    /// the round-trip through [`RedactionMap::restore`] is lossless:
+    ///
+    /// ```rust
+    /// use pares_agens_privacy::PrivacyFilter;
+    ///
+    /// let filter = PrivacyFilter::new();
+    /// let (redacted, map, audit) =
+    ///     filter.redact("Call 800-555-1234 or email bob@example.com");
+    ///
+    /// assert!(!redacted.contains("800-555-1234"));
+    /// assert!(!redacted.contains("bob@example.com"));
+    ///
+    /// let restored = map.restore(&redacted);
+    /// assert!(restored.contains("800-555-1234"));
+    /// assert!(restored.contains("bob@example.com"));
+    ///
+    /// assert!(audit.total_redacted >= 2);
+    /// ```
+    #[must_use]
+    pub fn redact(&self, text: &str) -> (String, RedactionMap, RedactionAudit) {
+        let matches = self.detect_pii(text);
+        if matches.is_empty() {
+            return (
+                text.to_string(),
+                RedactionMap::default(),
+                RedactionAudit { entries: vec![], total_redacted: 0 },
+            );
+        }
+
+        // Per-type counters (used to number new placeholders).
+        let mut type_counters: HashMap<&str, usize> = HashMap::new();
+        // De-duplicate: original value → placeholder already assigned.
+        let mut value_to_placeholder: HashMap<String, String> = HashMap::new();
+
+        let mut map = RedactionMap::default();
+        let mut result = String::with_capacity(text.len());
+        let mut cursor = 0usize;
+
+        for m in &matches {
+            // Skip spans that overlap with an already-emitted replacement.
+            if m.start < cursor {
+                continue;
+            }
+            // Emit any non-PII text before this span.
+            if m.start > cursor {
+                result.push_str(&text[cursor..m.start]);
+            }
+
+            let original = text[m.start..m.end].to_string();
+
+            // Reuse the same placeholder when the identical value appears again.
+            let placeholder = if let Some(existing) = value_to_placeholder.get(&original) {
+                existing.clone()
+            } else {
+                let tag = pii_type_tag(m.pii_type);
+                let counter = type_counters.entry(tag).or_insert(0);
+                *counter += 1;
+                let p = format!("[{tag}_{counter}]");
+                value_to_placeholder.insert(original.clone(), p.clone());
+                map.entries.push((p.clone(), original));
+                p
+            };
+
+            result.push_str(&placeholder);
+            cursor = m.end;
+        }
+
+        // Emit any trailing non-PII text.
+        if cursor < text.len() {
+            result.push_str(&text[cursor..]);
+        }
+
+        // Build the per-type audit counts from the redaction map entries.
+        let mut type_counts: HashMap<String, usize> = HashMap::new();
+        for (placeholder, _) in &map.entries {
+            // Placeholder format: `[TAG_N]` — extract the TAG portion before
+            // the final underscore+number.
+            if let Some(tag) = tag_from_placeholder(placeholder) {
+                *type_counts.entry(tag.to_string()).or_insert(0) += 1;
+            }
+        }
+
+        // Map tag strings back to PIIType for the audit entries.
+        let entries: Vec<RedactionAuditEntry> = type_counts
+            .into_iter()
+            .filter_map(|(tag, count)| {
+                let pii_type = PIIType::from_tag(&tag)?;
+                Some(RedactionAuditEntry { pii_type, count })
+            })
+            .collect();
+
+        let total_redacted = map.len();
+        let audit = RedactionAudit { entries, total_redacted };
+
+        (result, map, audit)
+    }
+}
+
 // ── Top-level convenience API ─────────────────────────────────────────────────
 
 /// Detect PII spans in `text` using the default configuration (all categories
@@ -1368,5 +1589,118 @@ mod tests {
             "address recall {:.0}% is below the 95% target",
             recall * 100.0
         );
+    }
+
+    // ── redact / restore round-trip ──────────────────────────────────────────
+
+    #[test]
+    fn redact_email_produces_placeholder() {
+        let filter = PrivacyFilter::new();
+        let (redacted, map, audit) = filter.redact("Contact bob@example.com for details.");
+        assert!(!redacted.contains("bob@example.com"), "email should be redacted");
+        assert!(redacted.contains("[EMAIL_1]"), "expected [EMAIL_1] placeholder, got: {redacted}");
+        let restored = map.restore(&redacted);
+        assert!(restored.contains("bob@example.com"), "email should be restored");
+        assert!(audit.total_redacted >= 1);
+        assert!(audit.entries.iter().any(|e| e.pii_type == PIIType::Email));
+    }
+
+    #[test]
+    fn redact_phone_produces_placeholder() {
+        let filter = PrivacyFilter::new();
+        let (redacted, map, audit) = filter.redact("Call 800-555-1234 now.");
+        assert!(!redacted.contains("800-555-1234"), "phone should be redacted");
+        assert!(redacted.contains("[PHONE_1]"), "expected [PHONE_1] placeholder, got: {redacted}");
+        let restored = map.restore(&redacted);
+        assert!(restored.contains("800-555-1234"), "phone should be restored");
+        assert!(audit.entries.iter().any(|e| e.pii_type == PIIType::Phone));
+    }
+
+    #[test]
+    fn redact_multiple_types_round_trips() {
+        let filter = PrivacyFilter::new();
+        let text = "Call me at 800-555-1234 or email bob@example.com";
+        let (redacted, map, audit) = filter.redact(text);
+        assert!(!redacted.contains("800-555-1234"));
+        assert!(!redacted.contains("bob@example.com"));
+        let restored = map.restore(&redacted);
+        assert!(restored.contains("800-555-1234"));
+        assert!(restored.contains("bob@example.com"));
+        assert!(audit.total_redacted >= 2);
+    }
+
+    #[test]
+    fn redact_identical_values_get_same_placeholder() {
+        let filter = PrivacyFilter::new();
+        let text = "Email bob@example.com or bob@example.com again";
+        let (redacted, map, _audit) = filter.redact(text);
+        // Both occurrences should use [EMAIL_1], not [EMAIL_1] and [EMAIL_2].
+        assert_eq!(redacted.matches("[EMAIL_1]").count(), 2, "same email should reuse placeholder");
+        assert!(!redacted.contains("[EMAIL_2]"), "no second placeholder expected");
+        // Restore must recover both.
+        let restored = map.restore(&redacted);
+        assert_eq!(restored.matches("bob@example.com").count(), 2);
+    }
+
+    #[test]
+    fn redact_distinct_emails_get_different_placeholders() {
+        let filter = PrivacyFilter::new();
+        let text = "alice@example.com and bob@example.com";
+        let (redacted, map, audit) = filter.redact(text);
+        assert!(redacted.contains("[EMAIL_1]"), "first email placeholder missing");
+        assert!(redacted.contains("[EMAIL_2]"), "second email placeholder missing");
+        let restored = map.restore(&redacted);
+        assert!(restored.contains("alice@example.com"));
+        assert!(restored.contains("bob@example.com"));
+        assert_eq!(audit.total_redacted, 2);
+    }
+
+    #[test]
+    fn redact_clean_text_returns_original() {
+        let filter = PrivacyFilter::new();
+        let text = "The quick brown fox jumps over the lazy dog.";
+        let (redacted, map, audit) = filter.redact(text);
+        // No high-confidence PII types should be detected in this clean sentence.
+        let no_sensitive_pii = !redacted.contains("[EMAIL")
+            && !redacted.contains("[PHONE")
+            && !redacted.contains("[SSN")
+            && !redacted.contains("[CREDIT_CARD");
+        assert!(no_sensitive_pii, "clean text should not be redacted: {redacted}");
+        assert!(map.is_empty() || audit.total_redacted == 0 || {
+            // Any matches must be Name/Address (heuristic), not high-confidence types.
+            audit.entries.iter().all(|e| {
+                matches!(e.pii_type, PIIType::Name | PIIType::Address)
+            })
+        });
+    }
+
+    #[test]
+    fn redact_ssn_round_trips() {
+        let filter = PrivacyFilter::new();
+        let (redacted, map, audit) = filter.redact("SSN: 123-45-6789");
+        assert!(!redacted.contains("123-45-6789"));
+        assert!(redacted.contains("[SSN_1]"), "expected [SSN_1], got: {redacted}");
+        let restored = map.restore(&redacted);
+        assert!(restored.contains("123-45-6789"));
+        assert!(audit.entries.iter().any(|e| e.pii_type == PIIType::SSN));
+    }
+
+    #[test]
+    fn redaction_map_restore_is_noop_on_clean_response() {
+        let filter = PrivacyFilter::new();
+        let (_redacted, map, _audit) = filter.redact("hello world");
+        // Even if map is empty, restore should be a no-op.
+        let response = "The answer is 42.";
+        assert_eq!(map.restore(response), response);
+    }
+
+    #[test]
+    fn redaction_audit_entry_counts_per_type() {
+        let filter = PrivacyFilter::new();
+        let text = "alice@example.com and bob@example.com and call 800-555-1234";
+        let (_redacted, _map, audit) = filter.redact(text);
+        let email_entry = audit.entries.iter().find(|e| e.pii_type == PIIType::Email);
+        assert!(email_entry.is_some(), "expected Email entry in audit");
+        assert_eq!(email_entry.unwrap().count, 2, "should have 2 unique emails");
     }
 }
