@@ -26,21 +26,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Request Copilot review
+      - name: Request Copilot code review
         if: github.event.action == 'opened' || github.event.action == 'ready_for_review'
         run: |
-          # Request Copilot as reviewer (the PR reviewer bot, not the SWE agent)
+          # Request Copilot as PR reviewer (the code review bot)
           gh pr edit ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
-            --add-reviewer kayodebristol || true
+            --add-reviewer copilot || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Merge on approval
+      - name: Auto-merge when approved
         if: >-
           github.event_name == 'pull_request_review' &&
           github.event.review.state == 'approved'
         run: |
-          # Verify no unresolved conversations before merging
           REVIEW_DECISION=$(gh pr view ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
             --json reviewDecision --jq '.reviewDecision')
           if [ "$REVIEW_DECISION" != "APPROVED" ]; then
@@ -103,13 +102,11 @@ jobs:
               const next = msIssues.data.find(i => {
                 if (i.pull_request) return false;
                 if (i.assignees.some(a => a.login === 'Copilot')) return false;
-                // CONSTRAINT: no-assign-alert-issues
                 if (alertPrefixes.some(p => i.title.includes(p))) return false;
                 return true;
               });
 
               if (next) {
-                // ADR-0004: ensure label + type
                 if (next.labels.length === 0) {
                   await github.rest.issues.addLabels({
                     owner, repo, issue_number: next.number,
@@ -125,7 +122,6 @@ jobs:
                   console.log(`Could not set type: ${e.message}`);
                 }
 
-                // Assign via GraphQL
                 await github.graphql(`
                   mutation($id: ID!, $assignees: [ID!]!) {
                     addAssigneesToAssignable(input: { assignableId: $id, assigneeIds: $assignees }) {
