@@ -1,8 +1,6 @@
 name: Auto-Approve Copilot Runs
 
 on:
-  schedule:
-    - cron: "*/15 * * * *"
   workflow_run:
     workflows:
       - "Copilot PR Lifecycle"
