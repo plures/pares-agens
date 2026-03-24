@@ -3,7 +3,34 @@
 //! Provides PII detection and scrubbing for training data, differential
 //! privacy noise injection for adapter weights, red-team testing, and
 //! user consent flow management.
+//!
+//! # Quick start
+//!
+//! ```rust
+//! use pares_agens_privacy::detect;
+//!
+//! let spans = detect("Call me at 800-555-1234 or email bob@example.com");
+//! assert!(!spans.is_empty());
+//! ```
+//!
+//! # Configuration
+//!
+//! Use [`PrivacyConfig`] / [`PrivacyFilter::with_config`] to toggle categories
+//! or inject extra patterns:
+//!
+//! ```rust
+//! use pares_agens_privacy::{PrivacyConfig, CategoryConfig, PrivacyFilter, PIIType};
+//!
+//! let mut cfg = PrivacyConfig::default();
+//! cfg.name.enabled = false;           // skip name detection
+//! cfg.email.extra_patterns.push(r"[A-Za-z0-9._%+-]+@corp\.example\.com".to_string());
+//!
+//! let filter = PrivacyFilter::with_config(cfg);
+//! let spans = filter.detect_pii("Contact alice@corp.example.com");
+//! assert!(spans.iter().any(|m| m.pii_type == PIIType::Email));
+//! ```
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -25,10 +52,82 @@ pub enum PrivacyError {
     InvalidConfig(String),
 }
 
+// ── Configuration ─────────────────────────────────────────────────────────────
+
+fn default_true() -> bool {
+    true
+}
+
+/// Per-category configuration for the PII detector.
+///
+/// Each [`PIIType`] has its own `CategoryConfig` inside [`PrivacyConfig`].
+/// All categories are enabled by default; set `enabled = false` to skip a
+/// category entirely.  Extra regex patterns added to `extra_patterns` are run
+/// in addition to the built-in heuristic matcher.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CategoryConfig {
+    /// Whether detection is active for this PII category.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Additional regular-expression patterns to detect for this category.
+    ///
+    /// Each string must be a valid [`regex`] pattern.  Invalid patterns are
+    /// silently skipped at detection time.
+    #[serde(default)]
+    pub extra_patterns: Vec<String>,
+}
+
+impl Default for CategoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            extra_patterns: Vec::new(),
+        }
+    }
+}
+
+/// Top-level configuration for the PII detection engine.
+///
+/// Deserialised from the `[privacy]` section of a TOML config file:
+///
+/// ```toml
+/// [privacy]
+/// [privacy.email]
+/// enabled = true
+/// extra_patterns = ["[Uu]ser\\d+@internal\\.corp"]
+///
+/// [privacy.name]
+/// enabled = false
+/// ```
+///
+/// All categories default to **enabled** with no extra patterns.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PrivacyConfig {
+    /// Email-address detection.
+    #[serde(default)]
+    pub email: CategoryConfig,
+    /// Phone-number detection.
+    #[serde(default)]
+    pub phone: CategoryConfig,
+    /// US Social Security Number detection.
+    #[serde(default)]
+    pub ssn: CategoryConfig,
+    /// Payment-card number detection.
+    #[serde(default)]
+    pub credit_card: CategoryConfig,
+    /// Person-name detection.
+    #[serde(default)]
+    pub name: CategoryConfig,
+    /// Street-address detection.
+    #[serde(default)]
+    pub address: CategoryConfig,
+}
+
 // ── PII types ────────────────────────────────────────────────────────────────
 
 /// Category of personally-identifiable information (PII).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum PIIType {
     /// Electronic mail address (e.g. `user@example.com`).
     Email,
@@ -36,7 +135,7 @@ pub enum PIIType {
     Phone,
     /// US Social Security Number (e.g. `123-45-6789`).
     SSN,
-    /// Payment card number (e.g. 16-digit Visa / Mastercard).
+    /// Payment card number (13–16 digits; covers Visa, Mastercard, AmEx, Discover).
     CreditCard,
     /// Person's name (heuristic: two or more capitalised words).
     Name,
@@ -125,13 +224,27 @@ const REDACTED: &str = "[REDACTED]";
 /// Privacy filter providing PII detection, data scrubbing, differential
 /// privacy, red-team testing, and consent management.
 #[derive(Debug, Default)]
-pub struct PrivacyFilter;
+pub struct PrivacyFilter {
+    config: PrivacyConfig,
+}
 
 impl PrivacyFilter {
-    /// Create a new `PrivacyFilter`.
+    /// Create a new `PrivacyFilter` with default configuration (all categories
+    /// enabled, no extra patterns).
     #[must_use]
     pub fn new() -> Self {
-        Self
+        Self {
+            config: PrivacyConfig::default(),
+        }
+    }
+
+    /// Create a `PrivacyFilter` driven by the supplied [`PrivacyConfig`].
+    ///
+    /// Use this when you need to toggle categories or inject additional regex
+    /// patterns (e.g. from a `[privacy]` TOML section).
+    #[must_use]
+    pub fn with_config(config: PrivacyConfig) -> Self {
+        Self { config }
     }
 
     // ── PII detection ────────────────────────────────────────────────────────
@@ -141,16 +254,38 @@ impl PrivacyFilter {
     /// Returns a (possibly empty) list of [`PIIMatch`] values, one per
     /// detected PII span.  Spans are non-overlapping and ordered by start
     /// position.
+    ///
+    /// Only categories whose [`CategoryConfig::enabled`] flag is `true` are
+    /// scanned.  Any [`CategoryConfig::extra_patterns`] are applied after the
+    /// built-in heuristic matcher.
     #[must_use]
     pub fn detect_pii(&self, text: &str) -> Vec<PIIMatch> {
         let mut matches: Vec<PIIMatch> = Vec::new();
 
-        detect_emails(text, &mut matches);
-        detect_phones(text, &mut matches);
-        detect_ssns(text, &mut matches);
-        detect_credit_cards(text, &mut matches);
-        detect_names(text, &mut matches);
-        detect_addresses(text, &mut matches);
+        if self.config.email.enabled {
+            detect_emails(text, &mut matches);
+            detect_extra_patterns(text, &self.config.email.extra_patterns, PIIType::Email, &mut matches);
+        }
+        if self.config.phone.enabled {
+            detect_phones(text, &mut matches);
+            detect_extra_patterns(text, &self.config.phone.extra_patterns, PIIType::Phone, &mut matches);
+        }
+        if self.config.ssn.enabled {
+            detect_ssns(text, &mut matches);
+            detect_extra_patterns(text, &self.config.ssn.extra_patterns, PIIType::SSN, &mut matches);
+        }
+        if self.config.credit_card.enabled {
+            detect_credit_cards(text, &mut matches);
+            detect_extra_patterns(text, &self.config.credit_card.extra_patterns, PIIType::CreditCard, &mut matches);
+        }
+        if self.config.name.enabled {
+            detect_names(text, &mut matches);
+            detect_extra_patterns(text, &self.config.name.extra_patterns, PIIType::Name, &mut matches);
+        }
+        if self.config.address.enabled {
+            detect_addresses(text, &mut matches);
+            detect_extra_patterns(text, &self.config.address.extra_patterns, PIIType::Address, &mut matches);
+        }
 
         // Sort by start position so callers can iterate in document order.
         matches.sort_by_key(|m| m.start);
@@ -401,7 +536,10 @@ fn detect_ssns(text: &str, out: &mut Vec<PIIMatch>) {
     }
 }
 
-/// Detect 16-digit credit card numbers (with optional spaces / dashes).
+/// Detect common payment card numbers (13–16 digits, with optional spaces / dashes).
+///
+/// Covers Visa (13 or 16 digits), Mastercard (16), American Express (15),
+/// Discover (16), and Diners Club (14).
 fn detect_credit_cards(text: &str, out: &mut Vec<PIIMatch>) {
     let indexed: Vec<(char, usize)> = text.char_indices().map(|(b, c)| (c, b)).collect();
     let n = indexed.len();
@@ -430,7 +568,7 @@ fn detect_credit_cards(text: &str, out: &mut Vec<PIIMatch>) {
             }
         }
 
-        if digits == 16 {
+        if (13..=16).contains(&digits) {
             let end_byte = if j < n { indexed[j].1 } else { text.len() };
             out.push(PIIMatch {
                 pii_type: PIIType::CreditCard,
@@ -510,6 +648,8 @@ fn detect_addresses(text: &str, out: &mut Vec<PIIMatch>) {
     const STREET_SUFFIXES: &[&str] = &[
         "Street", "St", "Avenue", "Ave", "Boulevard", "Blvd", "Road", "Rd",
         "Lane", "Ln", "Drive", "Dr", "Court", "Ct", "Place", "Pl", "Way",
+        "Loop", "Terrace", "Ter", "Circle", "Cir", "Highway", "Hwy",
+        "Parkway", "Pkwy", "Trail", "Trl", "Square", "Sq",
     ];
 
     let words: Vec<&str> = text.split_whitespace().collect();
@@ -590,6 +730,34 @@ fn scrub_text(text: &str, filter: &PrivacyFilter) -> String {
     result
 }
 
+// ── Custom-pattern helper ─────────────────────────────────────────────────────
+
+/// Run each pattern in `patterns` against `text` and push any matches into
+/// `out` with the given `pii_type` and a confidence of `0.75`.
+///
+/// Invalid patterns are silently ignored.
+fn detect_extra_patterns(
+    text: &str,
+    patterns: &[String],
+    pii_type: PIIType,
+    out: &mut Vec<PIIMatch>,
+) {
+    for pattern in patterns {
+        let re = match Regex::new(pattern) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        for m in re.find_iter(text) {
+            out.push(PIIMatch {
+                pii_type,
+                start: m.start(),
+                end: m.end(),
+                confidence: 0.75,
+            });
+        }
+    }
+}
+
 // ── Differential privacy helpers ─────────────────────────────────────────────
 
 /// Generate a deterministic pseudo-random value in `(-1.0, 1.0)` using a
@@ -632,6 +800,21 @@ fn unix_timestamp_now() -> String {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     format!("{secs}")
+}
+
+// ── Top-level convenience API ─────────────────────────────────────────────────
+
+/// Detect PII spans in `text` using the default configuration (all categories
+/// enabled, no extra patterns).
+///
+/// This is a convenience wrapper around [`PrivacyFilter::detect_pii`]; use
+/// [`PrivacyFilter::with_config`] when you need per-category control or
+/// custom patterns.
+///
+/// Returns a list of [`PIIMatch`] values ordered by start position.
+#[must_use]
+pub fn detect(text: &str) -> Vec<PIIMatch> {
+    PrivacyFilter::new().detect_pii(text)
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -879,5 +1062,311 @@ mod tests {
         let filter = PrivacyFilter::new();
         let record = filter.record_consent("user-99", false);
         assert!(!record.consented);
+    }
+
+    // ── detect (free function) ───────────────────────────────────────────────
+
+    #[test]
+    fn detect_free_fn_finds_email() {
+        let spans = detect("Reach out at hello@example.org anytime.");
+        assert!(
+            spans.iter().any(|m| m.pii_type == PIIType::Email),
+            "detect() should find Email, got {spans:?}"
+        );
+    }
+
+    #[test]
+    fn detect_free_fn_returns_ordered_spans() {
+        let spans = detect("Email user@example.com and call 800-555-1234.");
+        let starts: Vec<usize> = spans.iter().map(|m| m.start).collect();
+        let mut sorted = starts.clone();
+        sorted.sort_unstable();
+        assert_eq!(starts, sorted, "spans must be ordered by start position");
+    }
+
+    // ── PrivacyConfig: disable category ─────────────────────────────────────
+
+    #[test]
+    fn disabled_email_category_skips_detection() {
+        let mut cfg = PrivacyConfig::default();
+        cfg.email.enabled = false;
+        let filter = PrivacyFilter::with_config(cfg);
+        let spans = filter.detect_pii("Contact user@example.com for details.");
+        assert!(
+            spans.iter().all(|m| m.pii_type != PIIType::Email),
+            "email detection should be disabled, got {spans:?}"
+        );
+    }
+
+    #[test]
+    fn disabled_phone_category_skips_detection() {
+        let mut cfg = PrivacyConfig::default();
+        cfg.phone.enabled = false;
+        let filter = PrivacyFilter::with_config(cfg);
+        let spans = filter.detect_pii("Call 800-555-1234 now.");
+        assert!(
+            spans.iter().all(|m| m.pii_type != PIIType::Phone),
+            "phone detection should be disabled, got {spans:?}"
+        );
+    }
+
+    #[test]
+    fn disabled_ssn_category_skips_detection() {
+        let mut cfg = PrivacyConfig::default();
+        cfg.ssn.enabled = false;
+        let filter = PrivacyFilter::with_config(cfg);
+        let spans = filter.detect_pii("SSN: 123-45-6789");
+        assert!(
+            spans.iter().all(|m| m.pii_type != PIIType::SSN),
+            "SSN detection should be disabled, got {spans:?}"
+        );
+    }
+
+    #[test]
+    fn disabled_credit_card_category_skips_detection() {
+        let mut cfg = PrivacyConfig::default();
+        cfg.credit_card.enabled = false;
+        let filter = PrivacyFilter::with_config(cfg);
+        let spans = filter.detect_pii("Card: 4111111111111111");
+        assert!(
+            spans.iter().all(|m| m.pii_type != PIIType::CreditCard),
+            "credit card detection should be disabled, got {spans:?}"
+        );
+    }
+
+    #[test]
+    fn disabled_name_category_skips_detection() {
+        let mut cfg = PrivacyConfig::default();
+        cfg.name.enabled = false;
+        let filter = PrivacyFilter::with_config(cfg);
+        let spans = filter.detect_pii("Written by John Smith today.");
+        assert!(
+            spans.iter().all(|m| m.pii_type != PIIType::Name),
+            "name detection should be disabled, got {spans:?}"
+        );
+    }
+
+    #[test]
+    fn disabled_address_category_skips_detection() {
+        let mut cfg = PrivacyConfig::default();
+        cfg.address.enabled = false;
+        let filter = PrivacyFilter::with_config(cfg);
+        let spans = filter.detect_pii("She lives at 123 Main Street.");
+        assert!(
+            spans.iter().all(|m| m.pii_type != PIIType::Address),
+            "address detection should be disabled, got {spans:?}"
+        );
+    }
+
+    // ── PrivacyConfig: extra_patterns ────────────────────────────────────────
+
+    #[test]
+    fn extra_pattern_detects_custom_email_domain() {
+        let mut cfg = PrivacyConfig::default();
+        cfg.email
+            .extra_patterns
+            .push(r"[A-Za-z0-9._%+-]+@internal\.corp".to_string());
+        let filter = PrivacyFilter::with_config(cfg);
+        let spans = filter.detect_pii("Contact alice@internal.corp for access.");
+        assert!(
+            spans.iter().any(|m| m.pii_type == PIIType::Email),
+            "extra email pattern should match, got {spans:?}"
+        );
+    }
+
+    #[test]
+    fn extra_pattern_detects_custom_ssn_format() {
+        let mut cfg = PrivacyConfig::default();
+        // Alternative SSN format without dashes (9 consecutive digits).
+        cfg.ssn
+            .extra_patterns
+            .push(r"\b\d{9}\b".to_string());
+        let filter = PrivacyFilter::with_config(cfg);
+        let spans = filter.detect_pii("ID number: 123456789");
+        assert!(
+            spans.iter().any(|m| m.pii_type == PIIType::SSN),
+            "extra SSN pattern should match 9-digit number, got {spans:?}"
+        );
+    }
+
+    #[test]
+    fn invalid_extra_pattern_is_silently_ignored() {
+        let mut cfg = PrivacyConfig::default();
+        cfg.email.extra_patterns.push(r"[invalid(regex".to_string());
+        let filter = PrivacyFilter::with_config(cfg);
+        // Should not panic; invalid pattern is skipped.
+        let spans = filter.detect_pii("user@example.com");
+        assert!(spans.iter().any(|m| m.pii_type == PIIType::Email));
+    }
+
+    // ── PrivacyConfig: default serialisation ────────────────────────────────
+
+    #[test]
+    fn default_config_all_categories_enabled() {
+        let cfg = PrivacyConfig::default();
+        assert!(cfg.email.enabled);
+        assert!(cfg.phone.enabled);
+        assert!(cfg.ssn.enabled);
+        assert!(cfg.credit_card.enabled);
+        assert!(cfg.name.enabled);
+        assert!(cfg.address.enabled);
+    }
+
+    #[test]
+    fn config_roundtrips_via_json() {
+        let mut cfg = PrivacyConfig::default();
+        cfg.ssn.enabled = false;
+        cfg.email
+            .extra_patterns
+            .push(r"\w+@example\.com".to_string());
+        let json = serde_json::to_string(&cfg).unwrap();
+        let restored: PrivacyConfig = serde_json::from_str(&json).unwrap();
+        assert!(!restored.ssn.enabled);
+        assert_eq!(restored.email.extra_patterns.len(), 1);
+    }
+
+    // ── Recall regression: standard PII samples ──────────────────────────────
+    //
+    // The following tests use a realistic set of labelled samples to verify
+    // that the built-in detectors meet the >95% recall target mandated by the
+    // issue acceptance criteria.
+
+    struct LabelledSample {
+        text: &'static str,
+        expected_type: PIIType,
+    }
+
+    fn email_samples() -> Vec<LabelledSample> {
+        vec![
+            LabelledSample { text: "user@example.com", expected_type: PIIType::Email },
+            LabelledSample { text: "first.last+tag@sub.domain.org", expected_type: PIIType::Email },
+            LabelledSample { text: "ADMIN@COMPANY.CO.UK", expected_type: PIIType::Email },
+            LabelledSample { text: "john_doe-123@mail.example.io", expected_type: PIIType::Email },
+            LabelledSample { text: "reach me at support@helpdesk.example.com today", expected_type: PIIType::Email },
+            LabelledSample { text: "my address is me@place.net", expected_type: PIIType::Email },
+            LabelledSample { text: "no-reply@notifications.service.io", expected_type: PIIType::Email },
+            LabelledSample { text: "info@start-up.co", expected_type: PIIType::Email },
+            LabelledSample { text: "x@y.z", expected_type: PIIType::Email },
+            LabelledSample { text: "alice.bob.carol@deep.subdomain.example.com", expected_type: PIIType::Email },
+        ]
+    }
+
+    fn phone_samples() -> Vec<LabelledSample> {
+        vec![
+            LabelledSample { text: "800-555-1234", expected_type: PIIType::Phone },
+            LabelledSample { text: "+1-800-555-0100", expected_type: PIIType::Phone },
+            LabelledSample { text: "(800) 555-1234", expected_type: PIIType::Phone },
+            LabelledSample { text: "800.555.1234", expected_type: PIIType::Phone },
+            LabelledSample { text: "+447911123456", expected_type: PIIType::Phone },
+            LabelledSample { text: "call 8005551234 now", expected_type: PIIType::Phone },
+            LabelledSample { text: "+1 (555) 867-5309", expected_type: PIIType::Phone },
+            LabelledSample { text: "tel: 0044 20 7946 0958", expected_type: PIIType::Phone },
+            LabelledSample { text: "555-867-5309", expected_type: PIIType::Phone },
+            LabelledSample { text: "+49 30 12345678", expected_type: PIIType::Phone },
+        ]
+    }
+
+    fn ssn_samples() -> Vec<LabelledSample> {
+        vec![
+            LabelledSample { text: "123-45-6789", expected_type: PIIType::SSN },
+            LabelledSample { text: "SSN: 987-65-4321", expected_type: PIIType::SSN },
+            LabelledSample { text: "social security 001-01-0001", expected_type: PIIType::SSN },
+            LabelledSample { text: "number is 555-55-5555", expected_type: PIIType::SSN },
+            LabelledSample { text: "my ssn: 000-00-0000 end", expected_type: PIIType::SSN },
+            LabelledSample { text: "taxpayer id 111-22-3333.", expected_type: PIIType::SSN },
+        ]
+    }
+
+    fn credit_card_samples() -> Vec<LabelledSample> {
+        vec![
+            LabelledSample { text: "4111111111111111", expected_type: PIIType::CreditCard },
+            LabelledSample { text: "4111 1111 1111 1111", expected_type: PIIType::CreditCard },
+            LabelledSample { text: "4111-1111-1111-1111", expected_type: PIIType::CreditCard },
+            LabelledSample { text: "card: 5500005555555559", expected_type: PIIType::CreditCard },
+            LabelledSample { text: "charge to 3714 496353 98431", expected_type: PIIType::CreditCard },
+            LabelledSample { text: "visa 4012888888881881", expected_type: PIIType::CreditCard },
+        ]
+    }
+
+    fn address_samples() -> Vec<LabelledSample> {
+        vec![
+            LabelledSample { text: "123 Main Street", expected_type: PIIType::Address },
+            LabelledSample { text: "456 Oak Avenue", expected_type: PIIType::Address },
+            LabelledSample { text: "789 Pine Boulevard", expected_type: PIIType::Address },
+            LabelledSample { text: "10 Downing Street", expected_type: PIIType::Address },
+            LabelledSample { text: "1 Infinite Loop", expected_type: PIIType::Address },
+            LabelledSample { text: "she lives at 42 Elm Drive", expected_type: PIIType::Address },
+            LabelledSample { text: "office at 100 Park Place", expected_type: PIIType::Address },
+            LabelledSample { text: "deliver to 300 Industrial Road", expected_type: PIIType::Address },
+        ]
+    }
+
+    fn recall_for(samples: &[LabelledSample]) -> f64 {
+        let filter = PrivacyFilter::new();
+        let hits = samples
+            .iter()
+            .filter(|s| {
+                filter
+                    .detect_pii(s.text)
+                    .iter()
+                    .any(|m| m.pii_type == s.expected_type)
+            })
+            .count();
+        hits as f64 / samples.len() as f64
+    }
+
+    #[test]
+    fn email_recall_above_95_percent() {
+        let samples = email_samples();
+        let recall = recall_for(&samples);
+        assert!(
+            recall >= 0.95,
+            "email recall {:.0}% is below the 95% target",
+            recall * 100.0
+        );
+    }
+
+    #[test]
+    fn phone_recall_above_95_percent() {
+        let samples = phone_samples();
+        let recall = recall_for(&samples);
+        assert!(
+            recall >= 0.95,
+            "phone recall {:.0}% is below the 95% target",
+            recall * 100.0
+        );
+    }
+
+    #[test]
+    fn ssn_recall_above_95_percent() {
+        let samples = ssn_samples();
+        let recall = recall_for(&samples);
+        assert!(
+            recall >= 0.95,
+            "SSN recall {:.0}% is below the 95% target",
+            recall * 100.0
+        );
+    }
+
+    #[test]
+    fn credit_card_recall_above_95_percent() {
+        let samples = credit_card_samples();
+        let recall = recall_for(&samples);
+        assert!(
+            recall >= 0.95,
+            "credit card recall {:.0}% is below the 95% target",
+            recall * 100.0
+        );
+    }
+
+    #[test]
+    fn address_recall_above_95_percent() {
+        let samples = address_samples();
+        let recall = recall_for(&samples);
+        assert!(
+            recall >= 0.95,
+            "address recall {:.0}% is below the 95% target",
+            recall * 100.0
+        );
     }
 }

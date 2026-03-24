@@ -3251,6 +3251,7 @@ name = "pares-agens-privacy"
 version = "0.5.0"
 dependencies = [
  "pares-trainer",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",
