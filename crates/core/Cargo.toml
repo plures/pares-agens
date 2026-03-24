@@ -24,6 +24,7 @@ uuid.workspace = true
 tracing.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
+reqwest.workspace = true
 subtle = "2"
 pluresdb = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3" }
 pluresdb-procedures = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3" }

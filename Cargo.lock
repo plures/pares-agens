@@ -3187,6 +3187,7 @@ dependencies = [
  "chrono",
  "pluresdb 2.9.10",
  "pluresdb-procedures",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "subtle",

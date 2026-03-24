@@ -341,6 +341,7 @@ pub fn run() {
                 optimization_safety_gate,
                 mcp_clients: Arc::clone(&mcp_clients),
                 mcp_tools: Arc::clone(&mcp_tools),
+                license: Mutex::new(pares_agens_core::license::License::free()),
             });
 
             // ── Initial router rebuild ─────────────────────────────────────
@@ -397,6 +398,8 @@ pub fn run() {
             commands::call_mcp_tool,
             commands::restart_mcp_servers,
             commands::get_mcp_openai_tools,
+            commands::get_license_status,
+            commands::activate_license,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Pares Agens");

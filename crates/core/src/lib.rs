@@ -33,6 +33,7 @@ pub mod agent;
 pub mod cerebellum;
 pub mod event;
 pub mod executor;
+pub mod features;
 pub mod handlers;
 pub mod license;
 pub mod memory;
