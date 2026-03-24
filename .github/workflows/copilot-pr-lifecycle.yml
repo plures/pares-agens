@@ -26,19 +26,27 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Request review
+      - name: Request Copilot review
         if: github.event.action == 'opened' || github.event.action == 'ready_for_review'
         run: |
+          # Request Copilot as reviewer (the PR reviewer bot, not the SWE agent)
           gh pr edit ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
             --add-reviewer kayodebristol || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Auto-merge on approval
+      - name: Merge on approval
         if: >-
           github.event_name == 'pull_request_review' &&
           github.event.review.state == 'approved'
         run: |
+          # Verify no unresolved conversations before merging
+          REVIEW_DECISION=$(gh pr view ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
+            --json reviewDecision --jq '.reviewDecision')
+          if [ "$REVIEW_DECISION" != "APPROVED" ]; then
+            echo "❌ Review decision is '$REVIEW_DECISION', not APPROVED — skipping merge"
+            exit 0
+          fi
           gh pr merge ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
             --squash --auto --delete-branch || true
         env:
@@ -56,6 +64,17 @@ jobs:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
+            const botId = 'BOT_kgDOC9w8XQ';
+            const alertPrefixes = ['[cross-repo]', '[ci-feedback]', '[praxis-health]'];
+
+            // CONSTRAINT: one-pr-per-repo — check for open PRs first
+            const openPRs = await github.rest.pulls.list({
+              owner, repo, state: 'open', per_page: 5
+            });
+            if (openPRs.data.length > 0) {
+              console.log(`⏸️ ${openPRs.data.length} open PR(s) — waiting for them to merge first`);
+              return;
+            }
 
             // Check if Copilot already has an open issue assigned
             const issues = await github.rest.issues.listForRepo({
@@ -70,31 +89,33 @@ jobs:
               return;
             }
 
-            // Find milestones sorted by title (earliest first)
+            // CONSTRAINT: copilot-issues-must-have-milestone — only walk milestoned issues
             const milestones = await github.rest.issues.listMilestones({
               owner, repo, state: 'open', sort: 'title', direction: 'asc'
             });
-
-            const botId = 'BOT_kgDOC9w8XQ';
 
             for (const ms of milestones.data) {
               const msIssues = await github.rest.issues.listForRepo({
                 owner, repo, state: 'open', milestone: ms.number,
                 sort: 'created', direction: 'asc', per_page: 20
               });
-              const next = msIssues.data.find(i =>
-                !i.pull_request &&
-                !i.assignees.some(a => a.login === 'Copilot')
-              );
+
+              const next = msIssues.data.find(i => {
+                if (i.pull_request) return false;
+                if (i.assignees.some(a => a.login === 'Copilot')) return false;
+                // CONSTRAINT: no-assign-alert-issues
+                if (alertPrefixes.some(p => i.title.includes(p))) return false;
+                return true;
+              });
+
               if (next) {
-                // Ensure label + type exist (ADR-0004)
+                // ADR-0004: ensure label + type
                 if (next.labels.length === 0) {
                   await github.rest.issues.addLabels({
                     owner, repo, issue_number: next.number,
                     labels: ['enhancement']
                   });
                 }
-                // Set type via REST
                 try {
                   await github.request('PATCH /repos/{owner}/{repo}/issues/{issue_number}', {
                     owner, repo, issue_number: next.number,
@@ -104,7 +125,7 @@ jobs:
                   console.log(`Could not set type: ${e.message}`);
                 }
 
-                // Assign Copilot via GraphQL
+                // Assign via GraphQL
                 await github.graphql(`
                   mutation($id: ID!, $assignees: [ID!]!) {
                     addAssigneesToAssignable(input: { assignableId: $id, assigneeIds: $assignees }) {
@@ -113,46 +134,14 @@ jobs:
                   }
                 `, { id: next.node_id, assignees: [botId] });
 
-                // Nudge
                 await github.rest.issues.createComment({
                   owner, repo, issue_number: next.number,
                   body: '@copilot Please implement this issue.'
                 });
-                console.log(`✅ Assigned Copilot to #${next.number}: ${next.title}`);
+
+                console.log(`✅ Assigned Copilot to #${next.number}: ${next.title} (milestone: ${ms.title})`);
                 return;
               }
             }
 
-            // No milestone issues — try any open issue without Copilot
-            const anyIssue = issues.data.find(i =>
-              !i.pull_request &&
-              !i.assignees.some(a => a.login === 'Copilot')
-            );
-            if (anyIssue) {
-              if (anyIssue.labels.length === 0) {
-                await github.rest.issues.addLabels({
-                  owner, repo, issue_number: anyIssue.number,
-                  labels: ['enhancement']
-                });
-              }
-              try {
-                await github.request('PATCH /repos/{owner}/{repo}/issues/{issue_number}', {
-                  owner, repo, issue_number: anyIssue.number,
-                  type: 'Feature'
-                });
-              } catch (e) {}
-              await github.graphql(`
-                mutation($id: ID!, $assignees: [ID!]!) {
-                  addAssigneesToAssignable(input: { assignableId: $id, assigneeIds: $assignees }) {
-                    clientMutationId
-                  }
-                }
-              `, { id: anyIssue.node_id, assignees: [botId] });
-              await github.rest.issues.createComment({
-                owner, repo, issue_number: anyIssue.number,
-                body: '@copilot Please implement this issue.'
-              });
-              console.log(`✅ Assigned Copilot to #${anyIssue.number}: ${anyIssue.title}`);
-            } else {
-              console.log('🎉 No more open issues — milestone complete!');
-            }
+            console.log('🎉 No eligible milestoned issues remaining');
