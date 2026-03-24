@@ -1,0 +1,68 @@
+//! # pares-agens-inference
+//!
+//! Streaming local inference and [`ModelClient`] trait for Pares Agens.
+//!
+//! This crate wraps [`pares_agens_bitnet`] and exposes:
+//!
+//! | Type | Description |
+//! |------|-------------|
+//! | [`ModelClient`] | Async trait for streaming token generation (local **and** remote). |
+//! | [`BitNetLocalRunner`] | CPU BitNet implementation of [`ModelClient`]. |
+//! | [`GenParams`] | Sampling hyper-parameters including stop sequences. |
+//! | [`InferenceConfig`] | Configuration for the inference engine. |
+//! | [`ModelRegistry`] | Registry of locally available models. |
+//! | [`ModelDownloader`] | Manages model file caching on disk. |
+//! | [`InferenceError`] | Unified error type for all inference failures. |
+//!
+//! # Feature flags
+//!
+//! | Feature  | Description |
+//! |----------|-------------|
+//! | `native` | Enable native bitnet.cpp FFI linkage (requires the `third_party/bitnet` submodule and CMake ≥ 3.21). |
+//!
+//! Without the `native` feature all public entry-points that require a live
+//! model return [`InferenceError::NativeUnavailable`].  This lets CI run
+//! `cargo check` and `cargo test` without the native toolchain.
+//!
+//! # Quick start (with `native` feature)
+//!
+//! ```rust,no_run
+//! use pares_agens_inference::{BitNetLocalRunner, GenParams, ModelClient};
+//! use std::path::Path;
+//!
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), pares_agens_inference::InferenceError> {
+//! // Load the model (returns NativeUnavailable without `native` feature).
+//! let runner = BitNetLocalRunner::load(Path::new("model.bin"), "bitnet-b1.58-3b")?;
+//!
+//! // Build generation params with a stop sequence.
+//! let params = GenParams {
+//!     max_tokens: 128,
+//!     stop_sequences: vec!["</s>".to_string()],
+//!     ..GenParams::default()
+//! };
+//!
+//! // Stream tokens — each `piece` is a decoded text fragment.
+//! let mut rx = runner.stream("Hello, BitNet!", params).await?;
+//! while let Some(piece) = rx.recv().await {
+//!     print!("{}", piece?);
+//! }
+//! # Ok(())
+//! # }
+//! ```
+
+pub mod client;
+pub mod config;
+pub mod downloader;
+pub mod error;
+pub mod params;
+pub mod registry;
+pub mod runner;
+
+pub use client::{ModelClient, TokenReceiver, TokenSender};
+pub use config::InferenceConfig;
+pub use downloader::ModelDownloader;
+pub use error::InferenceError;
+pub use params::GenParams;
+pub use registry::{ModelEntry, ModelRegistry};
+pub use runner::BitNetLocalRunner;

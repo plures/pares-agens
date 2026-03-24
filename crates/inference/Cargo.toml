@@ -1,0 +1,23 @@
+[package]
+name = "pares-agens-inference"
+description = "Streaming local inference and ModelClient trait for Pares Agens"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+# Enable native bitnet.cpp FFI linkage.  Requires the third_party/bitnet
+# submodule and CMake ≥ 3.21 to be present.  Without this feature every
+# generate call returns InferenceError::NativeUnavailable.
+native = ["pares-agens-bitnet/inference"]
+
+[dependencies]
+pares-agens-bitnet = { path = "../bitnet" }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
