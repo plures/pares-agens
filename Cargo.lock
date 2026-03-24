@@ -3167,6 +3167,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pares-agens-bitnet"
+version = "0.5.0"
+dependencies = [
+ "pares-agens-bitnet-sys",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "pares-agens-bitnet-sys"
+version = "0.5.0"
+
+[[package]]
 name = "pares-agens-channels"
 version = "0.5.0"
 dependencies = [
