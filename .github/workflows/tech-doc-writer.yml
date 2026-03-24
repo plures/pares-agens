@@ -20,105 +20,98 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
-          fetch-depth: 0
+          fetch-depth: 2
 
-      - name: Gather PR context
+      - name: Gather diff context
         id: context
         run: |
-          echo "pr_title=${{ github.event.pull_request.title }}" >> "$GITHUB_OUTPUT"
-          echo "pr_number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
-          echo "pr_body<<PREOF" >> "$GITHUB_OUTPUT"
-          echo "${{ github.event.pull_request.body }}" >> "$GITHUB_OUTPUT"
-          echo "PREOF" >> "$GITHUB_OUTPUT"
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_NUM="${{ github.event.pull_request.number }}"
 
-          # Get changed files
-          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
-          echo "changed_files<<CFEOF" >> "$GITHUB_OUTPUT"
-          echo "$CHANGED" >> "$GITHUB_OUTPUT"
-          echo "CFEOF" >> "$GITHUB_OUTPUT"
-
-          # Detect if this is a feature, fix, or other
-          TITLE="${{ github.event.pull_request.title }}"
-          if [[ "$TITLE" == feat* ]]; then
-            echo "change_type=feature" >> "$GITHUB_OUTPUT"
-          elif [[ "$TITLE" == fix* ]]; then
-            echo "change_type=fix" >> "$GITHUB_OUTPUT"
-          else
-            echo "change_type=other" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Check if docs need updating
-        id: check
-        run: |
-          CHANGED="${{ steps.context.outputs.changed_files }}"
-          # Skip if only docs/workflows/config changed
+          # Get actual code diff (excluding docs/config)
+          DIFF=$(git diff HEAD~1 HEAD -- ':(exclude)*.md' ':(exclude)*.yml' ':(exclude)*.json' ':(exclude).github/' ':(exclude)docs/' | head -500)
+          CHANGED=$(git diff --name-only HEAD~1 HEAD)
           SRC_CHANGES=$(echo "$CHANGED" | grep -vE '^\.(github|gitignore)|^(README|CHANGELOG|docs/|\.)|\.md$|\.yml$|\.json$' | head -1)
+
           if [ -z "$SRC_CHANGES" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "No source code changes — skipping doc update"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "Source changes detected — will create doc update issue"
+            echo "No source code changes — skipping"
+            exit 0
           fi
 
-      - name: Create doc update issue for Copilot
-        if: steps.check.outputs.skip != 'true'
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "pr_title=$PR_TITLE" >> "$GITHUB_OUTPUT"
+          echo "pr_num=$PR_NUM" >> "$GITHUB_OUTPUT"
+
+          # Write diff to file for multiline output
+          echo "$CHANGED" > /tmp/changed_files.txt
+          echo "$DIFF" > /tmp/code_diff.txt
+
+      - name: Create doc update issue
+        if: steps.context.outputs.skip != 'true'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.COPILOT_PAT }}
           script: |
+            const fs = require('fs');
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const botId = 'BOT_kgDOC9w8XQ';
+            const prNum = ${{ github.event.pull_request.number }};
             const prTitle = `${{ steps.context.outputs.pr_title }}`;
-            const prNum = ${{ steps.context.outputs.pr_number }};
-            const changeType = `${{ steps.context.outputs.change_type }}`;
-            const changedFiles = `${{ steps.context.outputs.changed_files }}`;
 
-            // Check for existing open doc issue to avoid duplicates
+            const changedFiles = fs.readFileSync('/tmp/changed_files.txt', 'utf8').trim();
+            const codeDiff = fs.readFileSync('/tmp/code_diff.txt', 'utf8').trim();
+
+            // Dedup check
             const existing = await github.rest.issues.listForRepo({
-              owner, repo, state: 'open', labels: 'documentation',
-              per_page: 10
+              owner, repo, state: 'open', labels: 'documentation', per_page: 20
             });
-            if (existing.data.some(i => i.title.includes(`[docs] PR #${prNum}`))) {
-              console.log('Doc issue already exists for this PR');
+            if (existing.data.some(i => i.title.includes(`PR #${prNum}`))) {
+              console.log('Doc issue already exists');
               return;
             }
 
-            // Don't create doc issues if there's already an open Copilot PR
-            const openPRs = await github.rest.pulls.list({
-              owner, repo, state: 'open', per_page: 5
-            });
-            const copilotPRs = openPRs.data.filter(p => p.user.login === 'Copilot');
-            if (copilotPRs.length > 0) {
-              console.log(`⏸️ Copilot already has PR #${copilotPRs[0].number} open — queuing doc update`);
-              // Still create the issue but don't assign Copilot yet
-              const issue = await github.rest.issues.create({
-                owner, repo,
-                title: `[docs] Update documentation for PR #${prNum}: ${prTitle}`,
-                body: `## Documentation Update Needed\n\nPR #${prNum} (\`${prTitle}\`) merged ${changeType} changes.\n\n### Changed Files\n\`\`\`\n${changedFiles}\n\`\`\`\n\n### Tasks\n- [ ] Update README.md if public API changed\n- [ ] Update or create relevant docs/ files\n- [ ] Update CHANGELOG.md with entry for this change\n- [ ] Ensure code examples in docs match current API\n\n---\n_Auto-generated by Tech Doc Writer_`,
-                labels: ['documentation']
-              });
-              console.log(`📝 Created doc issue #${issue.data.number} (queued, Copilot busy)`);
-              return;
-            }
+            const body = `## Documentation Update Required
 
-            // Create and assign to Copilot
+            PR #${prNum} (\`${prTitle}\`) merged code changes that may affect documentation.
+
+            > ⚠️ **Do NOT assume existing docs are correct.** Verify all doc claims against the actual source code. Use \`git diff HEAD~1 HEAD\` as your source of truth.
+
+            ### Changed Files
+            \`\`\`
+            ${changedFiles}
+            \`\`\`
+
+            ### Code Diff (truncated)
+            \`\`\`diff
+            ${codeDiff.substring(0, 3000)}
+            \`\`\`
+
+            ### Tasks
+            - [ ] Review the diff above and identify what changed in public API, behavior, or configuration
+            - [ ] Update README.md if public API or usage changed
+            - [ ] Update or create relevant docs/ files
+            - [ ] Update CHANGELOG.md with entry
+            - [ ] Verify all code examples in docs compile/run against current source
+
+            ---
+            _Auto-generated by Tech Doc Writer (ADR-0005)_`.replace(/^            /gm, '');
+
             const issue = await github.rest.issues.create({
               owner, repo,
               title: `[docs] Update documentation for PR #${prNum}: ${prTitle}`,
-              body: `## Documentation Update Needed\n\nPR #${prNum} (\`${prTitle}\`) merged ${changeType} changes.\n\n### Changed Files\n\`\`\`\n${changedFiles}\n\`\`\`\n\n### Tasks\n- [ ] Update README.md if public API changed\n- [ ] Update or create relevant docs/ files\n- [ ] Update CHANGELOG.md with entry for this change\n- [ ] Ensure code examples in docs match current API\n\n---\n_Auto-generated by Tech Doc Writer_`,
+              body,
               labels: ['documentation']
             });
 
-            // Set type
             try {
               await github.request('PATCH /repos/{owner}/{repo}/issues/{issue_number}', {
                 owner, repo, issue_number: issue.data.number, type: 'Task'
               });
-            } catch (e) { console.log(`Type set failed: ${e.message}`); }
+            } catch (e) { console.log(`Type: ${e.message}`); }
 
-            // Assign Copilot
+            // Assign Copilot immediately — doc debt blocks feature queue (ADR-0005)
             await github.graphql(`
               mutation($id: ID!, $assignees: [ID!]!) {
                 addAssigneesToAssignable(input: { assignableId: $id, assigneeIds: $assignees }) {
@@ -129,7 +122,7 @@ jobs:
 
             await github.rest.issues.createComment({
               owner, repo, issue_number: issue.data.number,
-              body: '@copilot Please update the documentation based on the changes in PR #' + prNum + '. Focus on README, API docs, and CHANGELOG.'
+              body: '@copilot Update the documentation based on the code diff in this issue. Do NOT trust existing docs — verify against actual source code.'
             });
 
-            console.log(`📝 Created and assigned doc issue #${issue.data.number}`);
+            console.log(`📝 Created doc issue #${issue.data.number} (priority: blocks feature queue)`);
