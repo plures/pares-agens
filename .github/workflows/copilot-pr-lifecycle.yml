@@ -16,9 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       github.event.pull_request.merged != true &&
-      (github.event.pull_request.user.login == 'Copilot' ||
-       github.event.pull_request.user.login == 'copilot-swe-agent[bot]' ||
-       github.event.pull_request.user.login == 'app/copilot-swe-agent')
+      github.event.pull_request.user.login == 'Copilot'
     steps:
       - name: Mark ready for review
         if: github.event.action == 'opened' && github.event.pull_request.draft == true
@@ -40,26 +38,28 @@ jobs:
           github.event.review.user.login == 'copilot-pull-request-reviewer[bot]'
         run: |
           echo "Copilot code review completed (state: ${{ github.event.review.state }})"
-          
-          # Check all CI checks are passing (ignore this workflow and copilot review)
-          CHECKS=$(gh pr checks ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
-            --json name,state,conclusion 2>/dev/null || echo "[]")
-          
-          FAILING=$(echo "$CHECKS" | jq -r '.[] | select(.name != "lifecycle" and .name != "queue-advance" and .name != "Copilot code review" and .conclusion == "FAILURE") | .name')
-          
+
+          # Wait briefly for CI to settle
+          sleep 10
+
+          # Check CI status via API (gh pr checks doesn't support --json in this version)
+          CHECKS=$(gh api repos/${{ github.repository }}/commits/${{ github.event.pull_request.head.sha }}/check-runs \
+            --jq '.check_runs[] | select(.name != "lifecycle" and .name != "queue-advance" and .name != "Copilot code review") | "\(.name):\(.conclusion)"')
+
+          FAILING=$(echo "$CHECKS" | grep -v ":success" | grep -v ":skipped" | grep -v ":null" | grep -v "^$" || true)
+
           if [ -n "$FAILING" ]; then
-            echo "❌ CI checks failing, not approving:"
+            echo "❌ CI checks not passing:"
             echo "$FAILING"
-            
-            # Comment on PR so Copilot SWE agent can see the failures
             gh pr comment ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
-              --body "@copilot CI checks are failing: $FAILING — please fix these issues." || true
+              --body "@copilot CI checks are failing. Please fix these issues:
+          $(echo "$FAILING" | sed 's/^/- /')" || true
             exit 0
           fi
-          
+
           echo "✅ All CI checks passing — auto-approving"
           gh pr review ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
-            --approve --body "Auto-approved: Copilot code review completed and all CI checks pass."
+            --approve -b "Auto-approved: Copilot code review completed and all CI checks pass."
         env:
           GH_TOKEN: ${{ secrets.COPILOT_PAT }}
 
@@ -69,9 +69,11 @@ jobs:
           github.event.review.state == 'approved'
         run: |
           gh pr merge ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
+            --squash --delete-branch || \
+          gh pr merge ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
             --squash --auto --delete-branch || true
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.COPILOT_PAT }}
 
   queue-advance:
     runs-on: ubuntu-latest
@@ -89,7 +91,7 @@ jobs:
             const botId = 'BOT_kgDOC9w8XQ';
             const alertPrefixes = ['[cross-repo]', '[ci-feedback]', '[praxis-health]'];
 
-            // CONSTRAINT: one-pr-per-repo — check for open PRs first
+            // ADR-0004: one-pr-per-repo constraint
             const openPRs = await github.rest.pulls.list({
               owner, repo, state: 'open', per_page: 5
             });
@@ -111,7 +113,7 @@ jobs:
               return;
             }
 
-            // CONSTRAINT: copilot-issues-must-have-milestone — only walk milestoned issues
+            // ADR-0004: copilot-issues-must-have-milestone
             const milestones = await github.rest.issues.listMilestones({
               owner, repo, state: 'open', sort: 'title', direction: 'asc'
             });
@@ -130,13 +132,27 @@ jobs:
               });
 
               if (next) {
+                // ADR-0004: label + type required or Copilot silently cancels
                 if (next.labels.length === 0) {
                   await github.rest.issues.addLabels({
                     owner, repo, issue_number: next.number,
                     labels: ['enhancement']
                   });
+                  console.log(`  Added 'enhancement' label to #${next.number}`);
                 }
 
+                // Set issue type to Feature (ADR-0004 constraint)
+                try {
+                  await github.request('PATCH /repos/{owner}/{repo}/issues/{issue_number}', {
+                    owner, repo, issue_number: next.number,
+                    type: 'Feature'
+                  });
+                  console.log(`  Set type=Feature on #${next.number}`);
+                } catch (e) {
+                  console.log(`  Could not set type (non-fatal): ${e.message}`);
+                }
+
+                // Assign Copilot via GraphQL
                 await github.graphql(`
                   mutation($id: ID!, $assignees: [ID!]!) {
                     addAssigneesToAssignable(input: { assignableId: $id, assigneeIds: $assignees }) {
