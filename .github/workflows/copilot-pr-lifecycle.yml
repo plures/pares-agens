@@ -80,6 +80,26 @@ jobs:
               );
               const hasApproval = reviews.data.some(r => r.state === 'APPROVED');
 
+              if (allGreen && !copilotReview) {
+                // CI green but no review yet — request Copilot code review
+                const reviewers = await github.rest.pulls.listRequestedReviewers({
+                  owner, repo, pull_number: pr.number
+                });
+                const alreadyRequested = reviewers.data.users.some(u =>
+                  u.login === 'copilot-pull-request-reviewer[bot]' || u.login === 'Copilot'
+                );
+                if (!alreadyRequested) {
+                  await github.rest.pulls.requestReviewers({
+                    owner, repo, pull_number: pr.number,
+                    reviewers: ['copilot-pull-request-reviewer[bot]']
+                  });
+                  console.log(`🔍 CI green, requested Copilot review on PR #${pr.number}`);
+                } else {
+                  console.log(`⏳ CI green, review already requested on PR #${pr.number}`);
+                }
+                return;
+              }
+
               if (allGreen && copilotReview && !hasApproval) {
                 // CI green + Copilot reviewed → approve and merge
                 await github.rest.pulls.createReview({
@@ -262,5 +282,6 @@ jobs:
                 owner, repo, issue_number: issue.number, body: comment
               });
             }
+
 
 
