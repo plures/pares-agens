@@ -26,6 +26,7 @@ chrono.workspace = true
 thiserror.workspace = true
 reqwest.workspace = true
 subtle = "2"
+pares-agens-privacy = { path = "../privacy" }
 pluresdb = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3" }
 pluresdb-procedures = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3" }
 vault-core = { git = "https://github.com/plures/plures-vault", rev = "d4e4783ddd14f63af2699ea97f29ca5895ef6590", package = "vault-core", optional = true }
