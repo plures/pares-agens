@@ -170,7 +170,8 @@ impl ModelDownloader {
         use std::io::Write;
 
         // Derive a local model ID from the repository name (second path
-        // component, e.g. "BitNet-b1.58-2B-4T").
+        // component, e.g. "BitNet-b1.58-2B-4T").  Reject any component that
+        // could lead to path traversal.
         let model_id = repo
             .split('/')
             .nth(1)
@@ -179,6 +180,13 @@ impl ModelDownloader {
                 reason: "expected `owner/repo` format".to_owned(),
             })?
             .to_owned();
+
+        if model_id.contains("..") || model_id.contains('/') || model_id.contains('\\') {
+            return Err(InferenceError::Download {
+                repo: repo.to_owned(),
+                reason: "model ID contains illegal path characters".to_owned(),
+            });
+        }
 
         // Return early if already cached.
         if let Some(cached) = self.cached_path(&model_id) {
