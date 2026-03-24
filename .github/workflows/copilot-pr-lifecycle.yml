@@ -5,6 +5,7 @@ on:
     types: [opened, ready_for_review, closed]
   check_suite:
     types: [completed]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -207,6 +208,32 @@ jobs:
               }
             }
 
+            // Phase 3: Stall detection — if Copilot assigned but no PR after 30min, re-ping
+            const assigned = allIssues.data.filter(i =>
+              !i.pull_request && i.assignees.some(a => a.login === 'Copilot')
+            );
+            for (const issue of assigned) {
+              const assignedAt = new Date(issue.updated_at);
+              const age = Date.now() - assignedAt.getTime();
+              if (age > 30 * 60 * 1000) {
+                // Check no open PR references this issue
+                const hasPR = copilotPRs.some(pr => pr.body && pr.body.includes(`#${issue.number}`));
+                if (!hasPR) {
+                  // Ensure type is set
+                  try {
+                    await github.request('PATCH /repos/{owner}/{repo}/issues/{issue_number}', {
+                      owner, repo, issue_number: issue.number, type: 'Task'
+                    });
+                  } catch (e) {}
+                  await github.rest.issues.createComment({
+                    owner, repo, issue_number: issue.number,
+                    body: '@copilot This issue has been assigned for over 30 minutes with no PR. Please implement it.'
+                  });
+                  console.log(`⏰ Stall: re-pinged #${issue.number}`);
+                }
+              }
+            }
+
             console.log('🎉 No eligible issues remaining');
 
             async function ensureLabelsAndType(github, owner, repo, issue, type) {
@@ -235,4 +262,5 @@ jobs:
                 owner, repo, issue_number: issue.number, body: comment
               });
             }
+
 
