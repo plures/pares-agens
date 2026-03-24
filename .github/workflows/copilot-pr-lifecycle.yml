@@ -171,17 +171,17 @@ jobs:
                 const checkLabels = pr.labels.filter(l => l.name.startsWith('queue-check:'));
                 const count = checkLabels.length > 0 ? parseInt(checkLabels[0].name.split(':')[1]) || 0 : 0;
                 if (count >= 4) {
-                  console.log(\`🛑 PR #\${pr.number} hit max periodic checks (4). Manual intervention needed.\`);
+                  console.log(`🛑 PR #${pr.number} hit max periodic checks (4). Manual intervention needed.`);
                   return;
                 }
                 // Update counter label
                 for (const cl of checkLabels) {
                   await github.rest.issues.removeLabel({ owner, repo, issue_number: pr.number, name: cl.name }).catch(() => {});
                 }
-                await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: [\`queue-check:\${count + 1}\`] }).catch(() => {});
-                console.log(\`🔄 Periodic check \${count + 1}/4 on PR #\${pr.number} (CI done: \${allDone}, green: \${allGreen}, reviewed: \${!!copilotReview})\`);
+                await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: [`queue-check:${count + 1}`] }).catch(() => {});
+                console.log(`🔄 Periodic check ${count + 1}/4 on PR #${pr.number} (CI done: ${allDone}, green: ${allGreen}, reviewed: ${!!copilotReview})`);
               } else {
-                console.log(\`⏸️ PR #\${pr.number} open but not ready (CI done: \${allDone}, green: \${allGreen}, reviewed: \${!!copilotReview})\`);
+                console.log(`⏸️ PR #${pr.number} open but not ready (CI done: ${allDone}, green: ${allGreen}, reviewed: ${!!copilotReview})`);
               }
               return;
             }
