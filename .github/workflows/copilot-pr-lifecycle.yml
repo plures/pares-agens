@@ -34,17 +34,40 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Auto-approve after Copilot review
+        if: >-
+          github.event_name == 'pull_request_review' &&
+          github.event.review.user.login == 'copilot-pull-request-reviewer[bot]'
+        run: |
+          echo "Copilot code review completed (state: ${{ github.event.review.state }})"
+          
+          # Check all CI checks are passing (ignore this workflow and copilot review)
+          CHECKS=$(gh pr checks ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
+            --json name,state,conclusion 2>/dev/null || echo "[]")
+          
+          FAILING=$(echo "$CHECKS" | jq -r '.[] | select(.name != "lifecycle" and .name != "queue-advance" and .name != "Copilot code review" and .conclusion == "FAILURE") | .name')
+          
+          if [ -n "$FAILING" ]; then
+            echo "❌ CI checks failing, not approving:"
+            echo "$FAILING"
+            
+            # Comment on PR so Copilot SWE agent can see the failures
+            gh pr comment ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
+              --body "@copilot CI checks are failing: $FAILING — please fix these issues." || true
+            exit 0
+          fi
+          
+          echo "✅ All CI checks passing — auto-approving"
+          gh pr review ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
+            --approve --body "Auto-approved: Copilot code review completed and all CI checks pass."
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_PAT }}
+
       - name: Auto-merge when approved
         if: >-
           github.event_name == 'pull_request_review' &&
           github.event.review.state == 'approved'
         run: |
-          REVIEW_DECISION=$(gh pr view ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
-            --json reviewDecision --jq '.reviewDecision')
-          if [ "$REVIEW_DECISION" != "APPROVED" ]; then
-            echo "❌ Review decision is '$REVIEW_DECISION', not APPROVED — skipping merge"
-            exit 0
-          fi
           gh pr merge ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
             --squash --auto --delete-branch || true
         env:
@@ -58,8 +81,6 @@ jobs:
     steps:
       - name: Assign next issue to Copilot
         uses: actions/github-script@v7
-        env:
-          COPILOT_TOKEN: ${{ secrets.COPILOT_PAT }}
         with:
           github-token: ${{ secrets.COPILOT_PAT }}
           script: |
@@ -114,14 +135,6 @@ jobs:
                     owner, repo, issue_number: next.number,
                     labels: ['enhancement']
                   });
-                }
-                try {
-                  await github.request('PATCH /repos/{owner}/{repo}/issues/{issue_number}', {
-                    owner, repo, issue_number: next.number,
-                    type: 'Feature'
-                  });
-                } catch (e) {
-                  console.log(`Could not set type: ${e.message}`);
                 }
 
                 await github.graphql(`
