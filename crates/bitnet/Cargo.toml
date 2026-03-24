@@ -1,0 +1,19 @@
+[package]
+name = "pares-agens-bitnet"
+description = "Safe Rust wrapper for bitnet.cpp — local BitNet CPU inference for Pares Agens"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+# Enable native bitnet.cpp FFI linkage.  Requires the third_party/bitnet
+# submodule and CMake ≥ 3.21 to be present.  Without this feature every
+# public function returns InferenceError::NativeUnavailable.
+inference = ["pares-agens-bitnet-sys/native"]
+
+[dependencies]
+pares-agens-bitnet-sys = { path = "../bitnet-sys" }
+thiserror = "2"
+
+[dev-dependencies]

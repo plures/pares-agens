@@ -60,5 +60,12 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: cargo check (inference feature)
+        # Type-check the BitNet inference crate with the `inference` feature
+        # enabled.  This exercises the FFI declarations and safe wrapper without
+        # requiring the bitnet.cpp submodule or CMake — `cargo check` does not
+        # link the native library.
+        run: cargo check -p pares-agens-bitnet --features inference
+
       - name: cargo test
         run: cargo test --workspace

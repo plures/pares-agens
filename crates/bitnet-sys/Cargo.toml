@@ -1,0 +1,16 @@
+[package]
+name = "pares-agens-bitnet-sys"
+description = "Raw C FFI bindings for bitnet.cpp — unsafe, auto-generated layer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+links = "bitnet"
+
+[features]
+# Enable the actual C FFI linkage against bitnet.cpp.
+# Requires the bitnet.cpp submodule at third_party/bitnet and CMake ≥ 3.21.
+# `cargo check --features native` type-checks without linking.
+native = []
+
+[build-dependencies]

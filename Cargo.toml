@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client", "crates/tauri-app", "crates/desktop", "crates/migrate", "crates/trainer", "crates/privacy", "crates/marketplace", "crates/arca", "crates/faber", "crates/agenda", "crates/optimizer", "crates/praxis", "crates/sync", "crates/service", "crates/autoresearch"]
+members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client", "crates/tauri-app", "crates/desktop", "crates/migrate", "crates/trainer", "crates/privacy", "crates/marketplace", "crates/arca", "crates/faber", "crates/agenda", "crates/optimizer", "crates/praxis", "crates/sync", "crates/service", "crates/autoresearch", "crates/bitnet-sys", "crates/bitnet"]
 
 [workspace.package]
 version = "0.5.0"
