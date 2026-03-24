@@ -122,8 +122,9 @@ jobs:
                   console.log(`✅ Merged PR #${pr.number}`);
                 } catch (e) {
                   console.log(`⚠️ Merge failed for #${pr.number}: ${e.message}`);
+                  return;
                 }
-                return; // Merged — next queue-advance will run on merge event
+                // Continue to Phase 2 to assign next issue
               }
 
               if (allGreen && hasApproval) {
@@ -136,8 +137,9 @@ jobs:
                   console.log(`✅ Merged PR #${pr.number} (already approved)`);
                 } catch (e) {
                   console.log(`⚠️ Merge failed: ${e.message}`);
+                  return;
                 }
-                return;
+                // Continue to Phase 2 to assign next issue
               }
 
               if (failing.length > 0) {
@@ -305,6 +307,7 @@ jobs:
                 owner, repo, issue_number: issue.number, body: comment
               });
             }
+
 
 
 
