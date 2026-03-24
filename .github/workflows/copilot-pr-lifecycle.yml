@@ -39,6 +39,7 @@ jobs:
       github.event_name == 'schedule'
     steps:
       - name: Notify QA repo
+        if: github.event.action == 'closed' && github.event.pull_request.merged == true
         run: |
           gh api repos/plures/qa/dispatches \
             --method POST \
@@ -307,6 +308,7 @@ jobs:
                 owner, repo, issue_number: issue.number, body: comment
               });
             }
+
 
 
 
