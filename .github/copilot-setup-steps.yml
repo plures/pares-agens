@@ -1,0 +1,14 @@
+name: "Copilot Setup Steps"
+on: workflow_dispatch
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - run: cargo build
+      - run: cargo test
