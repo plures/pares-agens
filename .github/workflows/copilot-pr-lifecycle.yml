@@ -46,7 +46,7 @@ jobs:
           FAILING=$(echo "$CHECKS" | grep -v ":success" | grep -v ":skipped" | grep -v ":null" | grep -v "^$" || true)
 
           if [ -n "$FAILING" ]; then
-            echo "❌ CI checks not passing:"
+            echo "❌ CI not passing:"
             echo "$FAILING"
             gh pr comment ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
               --body "@copilot CI checks are failing. Please fix:
@@ -54,9 +54,9 @@ jobs:
             exit 0
           fi
 
-          echo "✅ All CI checks passing — auto-approving"
+          echo "✅ CI passing — auto-approving"
           gh pr review ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
-            --approve -b "Auto-approved: Copilot code review completed and all CI checks pass."
+            --approve -b "Auto-approved: Copilot review + CI green."
         env:
           GH_TOKEN: ${{ secrets.COPILOT_PAT }}
 
@@ -95,8 +95,8 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const botId = 'BOT_kgDOC9w8XQ';
-            const alertPrefixes = ['[cross-repo]', '[ci-feedback]', '[praxis-health]', '[docs]'];
 
+            // One PR at a time (ADR-0003)
             const openPRs = await github.rest.pulls.list({
               owner, repo, state: 'open', per_page: 5
             });
@@ -105,21 +105,89 @@ jobs:
               return;
             }
 
-            const issues = await github.rest.issues.listForRepo({
+            // Check if Copilot already has work
+            const allIssues = await github.rest.issues.listForRepo({
               owner, repo, state: 'open', per_page: 100
             });
-            const copilotIssues = issues.data.filter(i =>
+            const copilotBusy = allIssues.data.some(i =>
               !i.pull_request && i.assignees.some(a => a.login === 'Copilot')
             );
-            if (copilotIssues.length > 0) {
-              console.log(`Copilot already assigned to #${copilotIssues[0].number}`);
+            if (copilotBusy) {
+              console.log('Copilot already has an assigned issue');
               return;
             }
 
-            // Priority: milestoned issues first, then doc issues
+            // PRIORITY 1: Doc debt blocks feature queue (ADR-0005)
+            const docIssues = allIssues.data.filter(i =>
+              !i.pull_request &&
+              !i.assignees.some(a => a.login === 'Copilot') &&
+              i.labels.some(l => l.name === 'documentation')
+            );
+            if (docIssues.length > 0) {
+              const doc = docIssues[0];
+              await github.rest.issues.addLabels({
+                owner, repo, issue_number: doc.number, labels: ['enhancement']
+              }).catch(() => {});
+              try {
+                await github.request('PATCH /repos/{owner}/{repo}/issues/{issue_number}', {
+                  owner, repo, issue_number: doc.number, type: 'Task'
+                });
+              } catch (e) {}
+
+              await github.graphql(`
+                mutation($id: ID!, $assignees: [ID!]!) {
+                  addAssigneesToAssignable(input: { assignableId: $id, assigneeIds: $assignees }) {
+                    clientMutationId
+                  }
+                }
+              `, { id: doc.node_id, assignees: [botId] });
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: doc.number,
+                body: '@copilot Update docs per the diff in this issue. Do NOT trust existing docs — verify against source.'
+              });
+              console.log(`📝 Doc debt first: assigned #${doc.number}`);
+              return;
+            }
+
+            // PRIORITY 2: QA bugs block feature queue (ADR-0006)
+            const qaBugs = allIssues.data.filter(i =>
+              !i.pull_request &&
+              !i.assignees.some(a => a.login === 'Copilot') &&
+              i.labels.some(l => l.name === 'qa') &&
+              i.labels.some(l => l.name === 'bug')
+            );
+            if (qaBugs.length > 0) {
+              const bug = qaBugs[0];
+              await github.rest.issues.addLabels({
+                owner, repo, issue_number: bug.number, labels: ['enhancement']
+              }).catch(() => {});
+              try {
+                await github.request('PATCH /repos/{owner}/{repo}/issues/{issue_number}', {
+                  owner, repo, issue_number: bug.number, type: 'Bug'
+                });
+              } catch (e) {}
+
+              await github.graphql(`
+                mutation($id: ID!, $assignees: [ID!]!) {
+                  addAssigneesToAssignable(input: { assignableId: $id, assigneeIds: $assignees }) {
+                    clientMutationId
+                  }
+                }
+              `, { id: bug.node_id, assignees: [botId] });
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: bug.number,
+                body: '@copilot Please fix this QA regression.'
+              });
+              console.log(`🐛 QA bug first: assigned #${bug.number}`);
+              return;
+            }
+
+            // PRIORITY 3: Milestoned feature work
             const milestones = await github.rest.issues.listMilestones({
               owner, repo, state: 'open', sort: 'title', direction: 'asc'
             });
+
+            const skipPrefixes = ['[cross-repo]', '[ci-feedback]', '[praxis-health]', '[docs]'];
 
             for (const ms of milestones.data) {
               const msIssues = await github.rest.issues.listForRepo({
@@ -130,7 +198,7 @@ jobs:
               const next = msIssues.data.find(i => {
                 if (i.pull_request) return false;
                 if (i.assignees.some(a => a.login === 'Copilot')) return false;
-                if (alertPrefixes.some(p => i.title.includes(p))) return false;
+                if (skipPrefixes.some(p => i.title.includes(p))) return false;
                 return true;
               });
 
@@ -144,7 +212,7 @@ jobs:
                   await github.request('PATCH /repos/{owner}/{repo}/issues/{issue_number}', {
                     owner, repo, issue_number: next.number, type: 'Feature'
                   });
-                } catch (e) { console.log(`Type set: ${e.message}`); }
+                } catch (e) {}
 
                 await github.graphql(`
                   mutation($id: ID!, $assignees: [ID!]!) {
@@ -153,49 +221,13 @@ jobs:
                     }
                   }
                 `, { id: next.node_id, assignees: [botId] });
-
                 await github.rest.issues.createComment({
                   owner, repo, issue_number: next.number,
                   body: '@copilot Please implement this issue.'
                 });
-                console.log(`✅ Assigned Copilot to #${next.number}: ${next.title}`);
+                console.log(`✅ Feature: assigned #${next.number}: ${next.title}`);
                 return;
               }
-            }
-
-            // Fallback: pick up doc issues if no milestoned work
-            const docIssues = issues.data.filter(i =>
-              !i.pull_request &&
-              !i.assignees.some(a => a.login === 'Copilot') &&
-              i.labels.some(l => l.name === 'documentation')
-            );
-            if (docIssues.length > 0) {
-              const doc = docIssues[0];
-              if (doc.labels.length === 1 && doc.labels[0].name === 'documentation') {
-                await github.rest.issues.addLabels({
-                  owner, repo, issue_number: doc.number, labels: ['enhancement']
-                });
-              }
-              try {
-                await github.request('PATCH /repos/{owner}/{repo}/issues/{issue_number}', {
-                  owner, repo, issue_number: doc.number, type: 'Task'
-                });
-              } catch (e) { console.log(`Type set: ${e.message}`); }
-
-              await github.graphql(`
-                mutation($id: ID!, $assignees: [ID!]!) {
-                  addAssigneesToAssignable(input: { assignableId: $id, assigneeIds: $assignees }) {
-                    clientMutationId
-                  }
-                }
-              `, { id: doc.node_id, assignees: [botId] });
-
-              await github.rest.issues.createComment({
-                owner, repo, issue_number: doc.number,
-                body: '@copilot Please update the documentation as described.'
-              });
-              console.log(`📝 Assigned Copilot to doc issue #${doc.number}: ${doc.title}`);
-              return;
             }
 
             console.log('🎉 No eligible issues remaining');
