@@ -617,8 +617,7 @@ mod tests {
             // Return the last user message content so we can assert on it.
             let user_msg = messages
                 .iter()
-                .filter(|m| m.role == "user")
-                .last()
+                .rfind(|m| m.role == "user")
                 .map(|m| m.content.clone())
                 .unwrap_or_default();
             Ok(ModelCompletion { content: Some(user_msg), tool_calls: vec![] })
