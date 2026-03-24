@@ -2,7 +2,7 @@ name: Copilot PR Lifecycle
 
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review]
+    types: [opened, synchronize, ready_for_review, closed]
   pull_request_review:
     types: [submitted]
 
@@ -15,8 +15,10 @@ jobs:
   lifecycle:
     runs-on: ubuntu-latest
     if: >-
-      github.event.pull_request.user.login == 'Copilot' ||
-      github.event.pull_request.user.login == 'copilot-swe-agent[bot]'
+      github.event.pull_request.merged != true &&
+      (github.event.pull_request.user.login == 'Copilot' ||
+       github.event.pull_request.user.login == 'copilot-swe-agent[bot]' ||
+       github.event.pull_request.user.login == 'app/copilot-swe-agent')
     steps:
       - name: Mark ready for review
         if: github.event.action == 'opened' && github.event.pull_request.draft == true
@@ -44,7 +46,9 @@ jobs:
 
   queue-advance:
     runs-on: ubuntu-latest
-    if: github.event.pull_request.merged == true
+    if: >-
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true
     steps:
       - name: Assign next issue to Copilot
         uses: actions/github-script@v7
@@ -53,7 +57,7 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
-            // Check if Copilot already has an open issue
+            // Check if Copilot already has an open issue assigned
             const issues = await github.rest.issues.listForRepo({
               owner, repo, state: 'open', per_page: 100
             });
@@ -66,12 +70,13 @@ jobs:
               return;
             }
 
-            // Find milestones sorted by title
+            // Find milestones sorted by title (earliest first)
             const milestones = await github.rest.issues.listMilestones({
               owner, repo, state: 'open', sort: 'title', direction: 'asc'
             });
 
-            // Find first unassigned issue in earliest milestone
+            const botId = 'BOT_kgDOC9w8XQ';
+
             for (const ms of milestones.data) {
               const msIssues = await github.rest.issues.listForRepo({
                 owner, repo, state: 'open', milestone: ms.number,
@@ -82,8 +87,24 @@ jobs:
                 !i.assignees.some(a => a.login === 'Copilot')
               );
               if (next) {
-                // Assign via GraphQL (triggers Copilot)
-                const botId = 'BOT_kgDOC9w8XQ';
+                // Ensure label + type exist (ADR-0004)
+                if (next.labels.length === 0) {
+                  await github.rest.issues.addLabels({
+                    owner, repo, issue_number: next.number,
+                    labels: ['enhancement']
+                  });
+                }
+                // Set type via REST
+                try {
+                  await github.request('PATCH /repos/{owner}/{repo}/issues/{issue_number}', {
+                    owner, repo, issue_number: next.number,
+                    type: 'Feature'
+                  });
+                } catch (e) {
+                  console.log(`Could not set type: ${e.message}`);
+                }
+
+                // Assign Copilot via GraphQL
                 await github.graphql(`
                   mutation($id: ID!, $assignees: [ID!]!) {
                     addAssigneesToAssignable(input: { assignableId: $id, assigneeIds: $assignees }) {
@@ -97,8 +118,41 @@ jobs:
                   owner, repo, issue_number: next.number,
                   body: '@copilot Please implement this issue.'
                 });
-                console.log(`Assigned Copilot to #${next.number}: ${next.title}`);
+                console.log(`✅ Assigned Copilot to #${next.number}: ${next.title}`);
                 return;
               }
             }
-            console.log('No unassigned milestone issues found');
+
+            // No milestone issues — try any open issue without Copilot
+            const anyIssue = issues.data.find(i =>
+              !i.pull_request &&
+              !i.assignees.some(a => a.login === 'Copilot')
+            );
+            if (anyIssue) {
+              if (anyIssue.labels.length === 0) {
+                await github.rest.issues.addLabels({
+                  owner, repo, issue_number: anyIssue.number,
+                  labels: ['enhancement']
+                });
+              }
+              try {
+                await github.request('PATCH /repos/{owner}/{repo}/issues/{issue_number}', {
+                  owner, repo, issue_number: anyIssue.number,
+                  type: 'Feature'
+                });
+              } catch (e) {}
+              await github.graphql(`
+                mutation($id: ID!, $assignees: [ID!]!) {
+                  addAssigneesToAssignable(input: { assignableId: $id, assigneeIds: $assignees }) {
+                    clientMutationId
+                  }
+                }
+              `, { id: anyIssue.node_id, assignees: [botId] });
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: anyIssue.number,
+                body: '@copilot Please implement this issue.'
+              });
+              console.log(`✅ Assigned Copilot to #${anyIssue.number}: ${anyIssue.title}`);
+            } else {
+              console.log('🎉 No more open issues — milestone complete!');
+            }
