@@ -10,15 +10,18 @@
 //! | [`BitNetLocalRunner`] | CPU BitNet implementation of [`ModelClient`]. |
 //! | [`GenParams`] | Sampling hyper-parameters including stop sequences. |
 //! | [`InferenceConfig`] | Configuration for the inference engine. |
+//! | [`LocalModelsConfig`] | `[models.local]` config section (cache dir, default model). |
 //! | [`ModelRegistry`] | Registry of locally available models. |
 //! | [`ModelDownloader`] | Manages model file caching on disk. |
 //! | [`InferenceError`] | Unified error type for all inference failures. |
+//! | [`ModelCommand`] | CLI sub-commands for `pares-agens model`. |
 //!
 //! # Feature flags
 //!
-//! | Feature  | Description |
-//! |----------|-------------|
-//! | `native` | Enable native bitnet.cpp FFI linkage (requires the `third_party/bitnet` submodule and CMake ≥ 3.21). |
+//! | Feature       | Description |
+//! |---------------|-------------|
+//! | `native`      | Enable native bitnet.cpp FFI linkage (requires the `third_party/bitnet` submodule and CMake ≥ 3.21). |
+//! | `hf-download` | Enable downloading models from Hugging Face Hub over HTTPS (adds reqwest and serde_json). |
 //!
 //! Without the `native` feature all public entry-points that require a live
 //! model return [`InferenceError::NativeUnavailable`].  This lets CI run
@@ -51,6 +54,7 @@
 //! # }
 //! ```
 
+pub mod cli;
 pub mod client;
 pub mod config;
 pub mod downloader;
@@ -59,10 +63,11 @@ pub mod params;
 pub mod registry;
 pub mod runner;
 
+pub use cli::{ModelCommand, run_cli};
 pub use client::{ModelClient, TokenReceiver, TokenSender};
-pub use config::InferenceConfig;
+pub use config::{InferenceConfig, LocalModelsConfig};
 pub use downloader::ModelDownloader;
 pub use error::InferenceError;
 pub use params::GenParams;
-pub use registry::{ModelEntry, ModelRegistry};
+pub use registry::{ModelEntry, ModelRegistry, default_cache_dir};
 pub use runner::BitNetLocalRunner;

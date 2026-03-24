@@ -7,8 +7,8 @@
 use std::path::Path;
 
 use pares_agens_inference::{
-    BitNetLocalRunner, GenParams, InferenceConfig, InferenceError, ModelDownloader,
-    ModelRegistry,
+    BitNetLocalRunner, GenParams, InferenceConfig, InferenceError, LocalModelsConfig,
+    ModelDownloader, ModelRegistry, default_cache_dir,
 };
 
 // ── Stub path tests (always run, no native library required) ──────────────────
@@ -206,6 +206,146 @@ async fn generate_returns_native_unavailable_without_native_feature() {
             "expected ModelLoad, got: {result:?}"
         );
     }
+}
+
+// ── New error variants ────────────────────────────────────────────────────────
+
+#[test]
+fn download_error_has_non_empty_message() {
+    let e = InferenceError::Download {
+        repo: "owner/repo".to_string(),
+        reason: "connection refused".to_string(),
+    };
+    assert!(!e.to_string().is_empty());
+    assert!(e.to_string().contains("owner/repo"));
+}
+
+#[test]
+fn model_not_found_error_has_non_empty_message() {
+    let e = InferenceError::ModelNotFound { repo: "owner/missing".to_string() };
+    assert!(!e.to_string().is_empty());
+    assert!(e.to_string().contains("owner/missing"));
+}
+
+// ── ModelEntry fields ─────────────────────────────────────────────────────────
+
+#[test]
+fn model_entry_has_file_size_and_capabilities() {
+    let tmp = tempdir();
+    let path = tmp.join("model.gguf");
+    std::fs::write(&path, vec![0u8; 2048]).unwrap();
+
+    let mut registry = ModelRegistry::new();
+    registry.register("test-model", path, "A test model");
+
+    let entry = registry.get("test-model").unwrap();
+    assert_eq!(entry.file_size_bytes, Some(2048));
+    assert!(entry.capabilities.is_empty());
+}
+
+#[test]
+fn registry_scan_dir_counts_gguf_files() {
+    let tmp = tempdir();
+    std::fs::write(tmp.join("model-x.gguf"), b"gguf content").unwrap();
+    std::fs::write(tmp.join("model-y.bin"), b"bin content").unwrap();
+    std::fs::write(tmp.join("readme.txt"), b"ignore").unwrap();
+
+    let mut registry = ModelRegistry::new();
+    let added = registry.scan_dir(&tmp).expect("scan_dir should succeed");
+    assert_eq!(added, 2, "should count both .gguf and .bin files");
+    assert!(registry.get("model-x").is_some());
+    assert!(registry.get("model-y").is_some());
+    assert!(registry.get("readme").is_none());
+}
+
+#[test]
+fn registry_scan_dir_populates_file_size() {
+    let tmp = tempdir();
+    std::fs::write(tmp.join("sized-model.gguf"), vec![42u8; 512]).unwrap();
+
+    let mut registry = ModelRegistry::new();
+    registry.scan_dir(&tmp).unwrap();
+
+    let entry = registry.get("sized-model").unwrap();
+    assert_eq!(entry.file_size_bytes, Some(512));
+}
+
+#[test]
+fn registry_register_full_sets_all_fields() {
+    let mut registry = ModelRegistry::new();
+    registry.register_full(
+        "full-model",
+        std::path::PathBuf::from("full.gguf"),
+        "Full model",
+        Some(1024),
+        vec!["chat".to_string(), "instruct".to_string()],
+    );
+    let entry = registry.get("full-model").unwrap();
+    assert_eq!(entry.file_size_bytes, Some(1024));
+    assert_eq!(entry.capabilities, vec!["chat", "instruct"]);
+}
+
+// ── LocalModelsConfig ─────────────────────────────────────────────────────────
+
+#[test]
+fn local_models_config_default_has_expected_fields() {
+    let cfg = LocalModelsConfig::default();
+    assert!(!cfg.cache_dir.as_os_str().is_empty());
+    assert!(cfg.default_model.is_none());
+}
+
+#[test]
+fn local_models_config_serialization_roundtrip() {
+    let original = LocalModelsConfig {
+        cache_dir: std::path::PathBuf::from("/tmp/models"),
+        default_model: Some("BitNet-b1.58-2B-4T".to_string()),
+    };
+    let json = serde_json::to_string(&original).unwrap();
+    let decoded: LocalModelsConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded.cache_dir, original.cache_dir);
+    assert_eq!(decoded.default_model, original.default_model);
+}
+
+// ── InferenceConfig.local_models ──────────────────────────────────────────────
+
+#[test]
+fn inference_config_local_models_default() {
+    let cfg = InferenceConfig::default();
+    assert!(cfg.local_models.default_model.is_none());
+    assert!(!cfg.local_models.cache_dir.as_os_str().is_empty());
+}
+
+// ── default_cache_dir ─────────────────────────────────────────────────────────
+
+#[test]
+fn default_cache_dir_ends_with_expected_components() {
+    let dir = default_cache_dir();
+    let s = dir.to_string_lossy();
+    assert!(s.contains(".pares-agens"), "expected `.pares-agens` in cache dir: {s}");
+    assert!(s.ends_with("models"), "expected path to end with `models`: {s}");
+}
+
+// ── ModelDownloader extended ──────────────────────────────────────────────────
+
+#[test]
+fn downloader_verify_local_checks_gguf_variant() {
+    let tmp = tempdir();
+    let dl = ModelDownloader::new(&*tmp);
+    let path = tmp.join("my-model.gguf");
+    std::fs::write(&path, b"data").unwrap();
+    assert!(dl.verify_local("my-model"), "verify_local should find .gguf file");
+}
+
+#[test]
+fn downloader_evict_removes_gguf_file() {
+    let tmp = tempdir();
+    let dl = ModelDownloader::new(&*tmp);
+    let path = tmp.join("evict-me.gguf");
+    std::fs::write(&path, b"data").unwrap();
+
+    let removed = dl.evict("evict-me").unwrap();
+    assert!(removed, "evict should return true for existing .gguf file");
+    assert!(!path.exists(), "gguf file should be deleted");
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
