@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 
 use pares_agens_channels::tauri_ipc::TauriIpcHandle;
+use pares_agens_core::license::License;
 use pares_agens_core::memory::store::MemoryStore;
 use pares_agens_core::optimization::OptimizationSafetyGate;
 use pares_agens_core::praxis::GuidanceService;
@@ -285,6 +286,8 @@ pub struct AppState {
     pub mcp_clients: Arc<Mutex<HashMap<String, McpClient>>>,
     /// Cached tool list across all connected MCP servers.
     pub mcp_tools: Arc<RwLock<Vec<(String, McpTool)>>>,
+    /// Current license — Free by default; updated on successful activation.
+    pub license: Mutex<License>,
 }
 
 // ---------------------------------------------------------------------------
@@ -513,6 +516,7 @@ mod tests {
             optimization_safety_gate: OptimizationSafetyGate::new(),
             mcp_clients: Arc::new(Mutex::new(HashMap::new())),
             mcp_tools: Arc::new(RwLock::new(Vec::new())),
+            license: Mutex::new(pares_agens_core::license::License::free()),
         };
 
         rebuild_model_router(&state).await;

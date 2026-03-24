@@ -7,12 +7,12 @@
   let dialog = $state(null);
 
   // ── Tab state ───────────────────────────────────────────────────────────
-  /** @type {'providers'|'routing'|'channels'|'preferences'|'mcp'} */
+  /** @type {'providers'|'routing'|'channels'|'preferences'|'mcp'|'license'} */
   let activeTab = $state('providers');
   /** @type {HTMLButtonElement[]} */
   let tabButtons = $state([]);
 
-  const TABS = /** @type {const} */ (['providers', 'routing', 'channels', 'preferences', 'mcp']);
+  const TABS = /** @type {const} */ (['providers', 'routing', 'channels', 'preferences', 'mcp', 'license']);
 
   // ── Provider state ───────────────────────────────────────────────────────
   /**
@@ -76,6 +76,16 @@
   let editMcpName = $state(null);
   let mcpRestarting = $state(false);
 
+  // ── License state ────────────────────────────────────────────────────────
+  /**
+   * @typedef {{ tier: 'free'|'pro', valid: boolean, expires_at?: string }} LicenseStatus
+   */
+  /** @type {LicenseStatus} */
+  let licenseStatus = $state({ tier: 'free', valid: true });
+  let licenseKey = $state('');
+  let licenseError = $state('');
+  let licenseActivating = $state(false);
+
   // ── Dialog lifecycle ─────────────────────────────────────────────────────
   $effect(() => {
     if (!dialog) return;
@@ -130,6 +140,13 @@
       mcpTools = await invoke('list_mcp_tools');
     } catch {
       mcpTools = [];
+    }
+
+    // License
+    try {
+      licenseStatus = await invoke('get_license_status');
+    } catch {
+      licenseStatus = { tier: 'free', valid: true };
     }
   }
 
@@ -336,6 +353,25 @@
       alert(`MCP restart failed: ${err}`);
     } finally {
       mcpRestarting = false;
+    }
+  }
+
+  // ── License ──────────────────────────────────────────────────────────────
+  async function activateLicense() {
+    const key = licenseKey.trim();
+    if (!key) {
+      licenseError = 'Please enter a license key.';
+      return;
+    }
+    licenseActivating = true;
+    licenseError = '';
+    try {
+      licenseStatus = await invoke('activate_license', { key });
+      licenseKey = '';
+    } catch (err) {
+      licenseError = `Activation failed: ${err}`;
+    } finally {
+      licenseActivating = false;
     }
   }
 </script>
@@ -719,6 +755,67 @@
             {/each}
           </div>
         </div>
+      {/if}
+    </div>
+
+    <!-- License panel -->
+    <div
+      role="tabpanel"
+      id="panel-license"
+      aria-labelledby="tab-license"
+      class="settings-panel"
+      hidden={activeTab !== 'license'}>
+
+      <div class="license-status-row">
+        <span
+          class="license-badge"
+          class:license-pro={licenseStatus.tier === 'pro' && licenseStatus.valid}
+          class:license-free={!(licenseStatus.tier === 'pro' && licenseStatus.valid)}>
+          {licenseStatus.tier === 'pro' && licenseStatus.valid ? 'Pro' : 'Free'}
+        </span>
+        {#if licenseStatus.expires_at}
+          <span class="pref-hint">Expires: {new Date(licenseStatus.expires_at).toLocaleDateString()}</span>
+        {/if}
+      </div>
+
+      {#if !(licenseStatus.tier === 'pro' && licenseStatus.valid)}
+        <div class="upgrade-features">
+          <p>Unlock the full power of Pares Agens:</p>
+          <ul class="feature-list">
+            <li>✅ Multiple channel adapters</li>
+            <li>✅ Multi-provider model routing</li>
+            <li>✅ Hyperswarm P2P sync</li>
+            <li>✅ MCP tool orchestration</li>
+            <li>✅ Praxis audit export</li>
+            <li>✅ Procedure editor</li>
+          </ul>
+        </div>
+
+        <div class="upgrade-activate">
+          <label for="license-key-input">License Key</label>
+          <input
+            id="license-key-input"
+            type="text"
+            class="license-key-input"
+            bind:value={licenseKey}
+            placeholder="XXXX-XXXX-XXXX-XXXX"
+            autocomplete="off"
+            aria-label="License key"
+            onkeydown={(e) => { if (e.key === 'Enter') activateLicense(); }}
+          />
+          {#if licenseError}
+            <p class="upgrade-error" role="alert">{licenseError}</p>
+          {/if}
+          <button
+            type="button"
+            class="btn-primary"
+            onclick={activateLicense}
+            disabled={licenseActivating}>
+            {licenseActivating ? 'Activating…' : 'Activate'}
+          </button>
+        </div>
+      {:else}
+        <p class="pref-hint" style="margin-top: 12px;">Pro features are active. Thank you for your support!</p>
       {/if}
     </div>
 

@@ -1156,3 +1156,17 @@ body {
 .mcp-tool-name { font-weight: 500; color: var(--text-primary); font-family: var(--font-mono); }
 .mcp-tool-server { color: var(--text-tertiary, rgba(255,255,255,0.4)); font-size: 11px; }
 .mcp-tool-desc { color: var(--text-secondary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── License tab ──────────────────────────────────────────────────────────── */
+.license-status-row { display: flex; align-items: center; gap: 12px; padding-top: 4px; }
+.license-badge { display: inline-block; border-radius: 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; padding: 2px 8px; text-transform: uppercase; }
+.license-free { background: var(--bg-secondary, rgba(255,255,255,0.04)); border: 1px solid var(--border-primary, rgba(255,255,255,0.08)); color: var(--text-secondary); }
+.license-pro { background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.6); color: rgba(165,180,252,1); }
+.upgrade-features { padding: 16px 0 8px; }
+.upgrade-features p { color: var(--text-secondary); font-size: 13px; margin: 0 0 8px 0; }
+.feature-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; color: var(--text-secondary); font-size: 13px; }
+.upgrade-activate { display: flex; flex-direction: column; gap: 8px; padding: 12px 0 4px; }
+.upgrade-activate label { font-size: 12px; color: var(--text-secondary); }
+.license-key-input { background: var(--bg-secondary, rgba(255,255,255,0.04)); border: 1px solid var(--border-primary, rgba(255,255,255,0.08)); border-radius: 4px; color: var(--text-primary); font-family: var(--font-mono); font-size: 13px; padding: 8px 12px; width: 100%; box-sizing: border-box; transition: border-color 0.15s; }
+.license-key-input:focus { border-color: rgba(99,102,241,0.6); outline: none; }
+.upgrade-error { color: var(--danger, #f87171); font-size: 12px; margin: 0; }

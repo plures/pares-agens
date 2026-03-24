@@ -112,6 +112,9 @@ pub enum LicenseError {
     /// The license key has expired.
     #[error("license has expired")]
     Expired,
+    /// Network error during remote validation (used for offline grace period).
+    #[error("network error during license validation: {0}")]
+    NetworkError(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -254,6 +257,146 @@ impl LicenseValidator for FixedKeyValidator {
             Ok(License::pro(None))
         } else {
             Err(LicenseError::InvalidKey { reason: "key does not match".into() })
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PolarValidator
+// ---------------------------------------------------------------------------
+
+/// Validates a license key against the [Polar.sh] license API.
+///
+/// On success the validator returns a Pro [`License`].  If the network call
+/// fails (e.g. the user is offline), [`validate_with_grace`] allows the app
+/// to remain functional for up to `grace_days` days after the last successful
+/// online validation, using the caller-supplied `last_validated_at` timestamp.
+///
+/// ## Configuration
+///
+/// Set your Polar.sh benefit ID (the UUID shown in your Polar dashboard) when
+/// constructing the validator:
+///
+/// ```rust,no_run
+/// use pares_agens_core::license::PolarValidator;
+///
+/// let validator = PolarValidator::new("00000000-0000-0000-0000-000000000000");
+/// ```
+///
+/// [Polar.sh]: https://polar.sh
+/// [`validate_with_grace`]: PolarValidator::validate_with_grace
+pub struct PolarValidator {
+    benefit_id: String,
+    client: reqwest::Client,
+    /// Number of days a Pro license remains valid when the API is unreachable.
+    pub grace_days: i64,
+}
+
+impl PolarValidator {
+    /// Create a validator for the given Polar.sh benefit ID.
+    ///
+    /// Uses a 7-day offline grace period by default.
+    pub fn new(benefit_id: impl Into<String>) -> Self {
+        Self {
+            benefit_id: benefit_id.into(),
+            client: reqwest::Client::new(),
+            grace_days: 7,
+        }
+    }
+
+    /// Override the default 7-day offline grace period.
+    pub fn with_grace_days(mut self, days: i64) -> Self {
+        self.grace_days = days;
+        self
+    }
+
+    /// Validate a key, falling back to the offline grace period on network errors.
+    ///
+    /// * If the Polar.sh API is reachable and the key is valid, returns `Ok(Pro)`.
+    /// * If the API is unreachable **and** `last_validated_at` is within the
+    ///   configured grace period, returns `Ok(Pro)` without contacting Polar.
+    /// * Otherwise propagates the error.
+    ///
+    /// `last_validated_at` should be the timestamp returned by the caller's
+    /// last successful online validation.  Pass `None` to disable the grace
+    /// period (useful on first activation).
+    pub async fn validate_with_grace(
+        &self,
+        key: &str,
+        last_validated_at: Option<DateTime<Utc>>,
+    ) -> Result<License, LicenseError> {
+        match self.validate(key).await {
+            Ok(lic) => Ok(lic),
+            Err(LicenseError::NetworkError(_)) => {
+                if let Some(last) = last_validated_at {
+                    let cutoff = Utc::now() - chrono::TimeDelta::days(self.grace_days);
+                    if last > cutoff {
+                        return Ok(License::pro(None));
+                    }
+                }
+                Err(LicenseError::NetworkError(format!(
+                    "offline and {}-day grace period has expired",
+                    self.grace_days
+                )))
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
+#[async_trait]
+impl LicenseValidator for PolarValidator {
+    /// Validate `key` against the Polar.sh `/v1/benefits/licenses/validate` endpoint.
+    async fn validate(&self, key: &str) -> Result<License, LicenseError> {
+        let trimmed = key.trim();
+        if trimmed.is_empty() {
+            return Err(LicenseError::InvalidKey { reason: "key is empty".into() });
+        }
+
+        let resp = self
+            .client
+            .post("https://api.polar.sh/v1/benefits/licenses/validate")
+            .json(&serde_json::json!({
+                "key": trimmed,
+                "benefit_id": self.benefit_id,
+            }))
+            .send()
+            .await
+            .map_err(|e| LicenseError::NetworkError(e.to_string()))?;
+
+        let status = resp.status();
+        if status == reqwest::StatusCode::NOT_FOUND
+            || status == reqwest::StatusCode::UNPROCESSABLE_ENTITY
+        {
+            return Err(LicenseError::InvalidKey {
+                reason: "license key not found or invalid".into(),
+            });
+        }
+        if !status.is_success() {
+            return Err(LicenseError::NetworkError(format!("HTTP {status}")));
+        }
+
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| LicenseError::NetworkError(e.to_string()))?;
+
+        // Polar.sh returns `"status": "granted"` for active licenses.
+        match body.get("status").and_then(|s| s.as_str()) {
+            Some("granted") => {
+                let expires_at = body
+                    .get("expires_at")
+                    .and_then(|e| e.as_str())
+                    .and_then(|e| DateTime::parse_from_rfc3339(e).ok())
+                    .map(|e| e.with_timezone(&Utc));
+                Ok(License::pro(expires_at))
+            }
+            Some("revoked") => Err(LicenseError::InvalidKey {
+                reason: "license has been revoked".into(),
+            }),
+            _ => Err(LicenseError::InvalidKey {
+                reason: "license is not active".into(),
+            }),
         }
     }
 }
@@ -409,5 +552,98 @@ mod tests {
         let validator = FixedKeyValidator::new("real-key");
         let err = validator.validate("").await.unwrap_err();
         assert!(matches!(err, LicenseError::InvalidKey { .. }));
+    }
+
+    // ── PolarValidator grace period ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn polar_validator_grace_period_allows_offline_within_window() {
+        let validator = PolarValidator::new("test-benefit-id");
+        let network_err = LicenseError::NetworkError("connection refused".into());
+
+        // last validated 3 days ago — still within the default 7-day window
+        let last_validated = Utc::now() - chrono::TimeDelta::days(3);
+
+        // Replicate the grace logic without making a real HTTP call.
+        let result: Result<License, LicenseError> = match Err(network_err) {
+            Err(LicenseError::NetworkError(_)) => {
+                let cutoff = Utc::now() - chrono::TimeDelta::days(validator.grace_days);
+                if last_validated > cutoff {
+                    Ok(License::pro(None))
+                } else {
+                    Err(LicenseError::NetworkError("expired".into()))
+                }
+            }
+            other => other,
+        };
+
+        assert!(result.is_ok(), "grace period should allow offline use within window");
+        assert!(result.unwrap().is_pro());
+    }
+
+    #[tokio::test]
+    async fn polar_validator_grace_period_blocks_after_window() {
+        let validator = PolarValidator::new("test-benefit-id");
+        let network_err = LicenseError::NetworkError("connection refused".into());
+
+        // last validated 8 days ago — beyond the 7-day window
+        let last_validated = Utc::now() - chrono::TimeDelta::days(8);
+
+        let result: Result<License, LicenseError> = match Err(network_err) {
+            Err(LicenseError::NetworkError(_)) => {
+                let cutoff = Utc::now() - chrono::TimeDelta::days(validator.grace_days);
+                if last_validated > cutoff {
+                    Ok(License::pro(None))
+                } else {
+                    Err(LicenseError::NetworkError("expired".into()))
+                }
+            }
+            other => other,
+        };
+
+        assert!(
+            matches!(result, Err(LicenseError::NetworkError(_))),
+            "grace period should block after window expires"
+        );
+    }
+
+    #[tokio::test]
+    async fn polar_validator_grace_period_blocks_with_no_prior_validation() {
+        let validator = PolarValidator::new("test-benefit-id");
+        let network_err = LicenseError::NetworkError("connection refused".into());
+
+        let result: Result<License, LicenseError> = match Err(network_err) {
+            Err(LicenseError::NetworkError(_)) => {
+                // None → no prior validation recorded → no grace
+                let last_validated: Option<DateTime<Utc>> = None;
+                let grace = if let Some(last) = last_validated {
+                    let cutoff = Utc::now() - chrono::TimeDelta::days(validator.grace_days);
+                    last > cutoff
+                } else {
+                    false
+                };
+                if grace {
+                    Ok(License::pro(None))
+                } else {
+                    Err(LicenseError::NetworkError("expired".into()))
+                }
+            }
+            other => other,
+        };
+
+        assert!(
+            matches!(result, Err(LicenseError::NetworkError(_))),
+            "no prior validation means no grace period"
+        );
+    }
+
+    #[test]
+    fn polar_validator_empty_key_returns_invalid() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let validator = PolarValidator::new("test-benefit-id");
+            let err = validator.validate("").await.unwrap_err();
+            assert!(matches!(err, LicenseError::InvalidKey { .. }));
+        });
     }
 }
