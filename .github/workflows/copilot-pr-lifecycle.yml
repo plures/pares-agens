@@ -29,7 +29,6 @@ jobs:
       - name: Request Copilot code review
         if: github.event.action == 'opened' || github.event.action == 'ready_for_review'
         run: |
-          # Request Copilot as PR reviewer (the code review bot)
           gh pr edit ${{ github.event.pull_request.number }} -R ${{ github.repository }} \
             --add-reviewer copilot || true
         env:
@@ -59,7 +58,10 @@ jobs:
     steps:
       - name: Assign next issue to Copilot
         uses: actions/github-script@v7
+        env:
+          COPILOT_TOKEN: ${{ secrets.COPILOT_PAT }}
         with:
+          github-token: ${{ secrets.COPILOT_PAT }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
