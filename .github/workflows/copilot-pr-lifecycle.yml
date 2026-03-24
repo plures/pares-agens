@@ -3,6 +3,8 @@ name: Copilot PR Lifecycle
 on:
   pull_request:
     types: [opened, ready_for_review, closed]
+  check_suite:
+    types: [completed]
 
 permissions:
   contents: write
@@ -25,8 +27,8 @@ jobs:
   queue-advance:
     runs-on: ubuntu-latest
     if: >-
-      github.event.action == 'closed' &&
-      github.event.pull_request.merged == true
+      (github.event.action == 'closed' && github.event.pull_request.merged == true) ||
+      github.event_name == 'check_suite'
     steps:
       - name: Notify QA repo
         run: |
@@ -233,3 +235,4 @@ jobs:
                 owner, repo, issue_number: issue.number, body: comment
               });
             }
+
