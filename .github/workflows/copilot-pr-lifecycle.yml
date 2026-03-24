@@ -2,7 +2,7 @@ name: Copilot PR Lifecycle
 
 on:
   pull_request:
-    types: [opened, ready_for_review, closed]
+    types: [opened, ready_for_review, synchronize, closed]
   check_suite:
     types: [completed]
   workflow_dispatch:
@@ -29,7 +29,10 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       (github.event.action == 'closed' && github.event.pull_request.merged == true) ||
-      github.event_name == 'check_suite'
+      github.event_name == 'check_suite' ||
+      github.event.action == 'synchronize' ||
+      github.event.action == 'opened' ||
+      github.event.action == 'ready_for_review'
     steps:
       - name: Notify QA repo
         run: |
@@ -282,6 +285,7 @@ jobs:
                 owner, repo, issue_number: issue.number, body: comment
               });
             }
+
 
 
 
