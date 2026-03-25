@@ -6,10 +6,15 @@
 //! - [`PluresLm::capture`] — quality-gated extraction and storage from a conversation exchange
 //! - [`PluresLm::inject_context`] — format memories for model prompt with budget enforcement
 
+/// Embedding provider trait and mock implementation.
 pub mod embed;
+/// Memory entry data structures and category taxonomy.
 pub mod entry;
+/// Controlled forgetting — retention policies, purge engine, and simulation drills.
 pub mod forgetting;
+/// Quality gate helpers for filtering low-signal content.
 pub mod quality;
+/// Memory store trait and backend implementations.
 pub mod store;
 
 use std::sync::Arc;
@@ -26,8 +31,10 @@ use self::{
 /// Error type for memory operations.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// The embedding provider failed to produce a vector for the input text.
     #[error("embedding failed: {0}")]
     Embed(String),
+    /// The backing memory store returned an error.
     #[error("store operation failed: {0}")]
     Store(String),
 }
@@ -443,21 +450,31 @@ mod tests {
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+/// A recalled memory record (compatibility re-export for handler interfaces).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Memory {
+    /// Unique memory identifier.
     pub id: String,
+    /// Role associated with this memory (e.g. `"user"`, `"assistant"`).
     pub role: String,
+    /// Text content of the memory.
     pub content: String,
 }
 
+/// A memory capture request submitted by a handler procedure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryCapture {
+    /// Role of the message being captured.
     pub role: String,
+    /// Text content to store as a memory.
     pub content: String,
 }
 
+/// Simplified memory client interface used by the built-in handler procedures.
 #[async_trait]
 pub trait MemoryClient: Send + Sync {
+    /// Recall up to `limit` memories matching `query`.
     async fn recall(&self, query: &str, limit: usize) -> Vec<Memory>;
+    /// Capture a memory entry.
     async fn capture(&self, entry: MemoryCapture) -> Result<(), String>;
 }

@@ -54,10 +54,34 @@ fn extract_key_terms(text: &str) -> Vec<String> {
 /// Structured primitives that can be extracted from free-form conversation text.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Primitive {
-    Entity { name: String, kind: String },
-    Decision { text: String, context: String },
-    Preference { text: String },
-    Fact { subject: String, predicate: String, object: String },
+    /// A named entity mentioned in conversation.
+    Entity {
+        /// The entity's name or label.
+        name: String,
+        /// The entity type (e.g. `"person"`, `"project"`, `"tool"`).
+        kind: String,
+    },
+    /// A decision that was made or recorded.
+    Decision {
+        /// Short description of the decision.
+        text: String,
+        /// Surrounding sentence or paragraph providing context.
+        context: String,
+    },
+    /// A stated preference (e.g. "I prefer tabs").
+    Preference {
+        /// The preference statement.
+        text: String,
+    },
+    /// A simple subject–predicate–object fact.
+    Fact {
+        /// Entity the fact is about.
+        subject: String,
+        /// Relationship or attribute connecting subject and object.
+        predicate: String,
+        /// Value or entity the predicate points to.
+        object: String,
+    },
 }
 
 /// Find `needle` in `haystack` in a case-insensitive way.
@@ -280,6 +304,8 @@ pub struct Autorecall {
 }
 
 impl Autorecall {
+    /// Create an `Autorecall` procedure using the given `PluresLm` instance and
+    /// tuning parameters from `config`.
     pub fn new(memory: Arc<PluresLm>, config: &super::CerebellumConfig) -> Self {
         Self {
             memory,
@@ -353,6 +379,7 @@ pub struct PrimitiveExtract {
 }
 
 impl PrimitiveExtract {
+    /// Create a `PrimitiveExtract` procedure backed by `memory`.
     pub fn new(memory: Arc<PluresLm>) -> Self {
         Self { memory }
     }
@@ -420,6 +447,8 @@ pub struct CerebellumSweep {
 }
 
 impl CerebellumSweep {
+    /// Create a `CerebellumSweep` procedure using `config` for staleness and
+    /// similarity thresholds.
     pub fn new(memory: Arc<PluresLm>, config: &super::CerebellumConfig) -> Self {
         Self {
             memory,

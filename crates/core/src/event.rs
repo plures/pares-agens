@@ -1,3 +1,5 @@
+//! Event types consumed and emitted by the reactive event loop.
+
 use serde::{Deserialize, Serialize};
 
 /// All event types the executor can receive and dispatch.
@@ -6,34 +8,51 @@ use serde::{Deserialize, Serialize};
 pub enum Event {
     /// An inbound message from a user or channel.
     Message {
+        /// Unique message identifier.
         id: String,
+        /// Channel the message arrived on (e.g. `"telegram"`, `"stdin"`).
         channel: String,
+        /// Display name or ID of the sender.
         sender: String,
+        /// Raw message text.
         content: String,
     },
     /// A scheduled timer fired.
     Timer {
+        /// Unique timer identifier.
         id: String,
+        /// Human-readable timer name used for handler lookup.
         name: String,
+        /// Whether the timer should be rescheduled after firing.
         recurring: bool,
     },
     /// A key in PluresDB state changed.
     StateChange {
+        /// The key whose value changed.
         key: String,
+        /// Previous value, or `None` if the key was newly created.
         old_value: Option<serde_json::Value>,
+        /// New value after the change.
         new_value: serde_json::Value,
     },
     /// A model finished generating a response.
     ModelResponse {
+        /// ID of the originating request (correlates with a `Message` ID).
         request_id: String,
+        /// Identifier of the model that produced the response.
         model: String,
+        /// Generated response text.
         content: String,
     },
     /// A tool/MCP call returned a result.
     ToolResult {
+        /// ID correlating this result with the originating tool call.
         tool_call_id: String,
+        /// Name of the tool that was invoked.
         tool_name: String,
+        /// Text output returned by the tool.
         content: String,
+        /// `true` when the tool reported an error.
         is_error: bool,
     },
 }

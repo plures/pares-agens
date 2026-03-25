@@ -8,15 +8,22 @@ use chrono::Utc;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum GuidanceCategory {
+    /// Factual statements derived from memory.
     Facts,
+    /// Operative rules the agent should follow.
     Rules,
-    Constraints, 
+    /// Hard constraints that must not be violated.
+    Constraints,
+    /// Recorded decisions and their rationale.
     Decisions,
+    /// Identified risks and mitigations.
     Risks,
+    /// General advisory guidance and recommendations.
     Guidance,
 }
 
 impl GuidanceCategory {
+    /// Return a stable kebab-case string identifier for this category.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Facts => "facts",
