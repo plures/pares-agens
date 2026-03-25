@@ -1,18 +1,20 @@
 <script>
   const { invoke } = window.__TAURI__.core;
 
+  import MarketplaceTab from './MarketplaceTab.svelte';
+
   let { open = $bindable(false) } = $props();
 
   /** @type {HTMLDialogElement} */
   let dialog = $state(null);
 
   // ── Tab state ───────────────────────────────────────────────────────────
-  /** @type {'providers'|'routing'|'channels'|'preferences'|'mcp'|'license'} */
+  /** @type {'providers'|'routing'|'channels'|'preferences'|'mcp'|'license'|'marketplace'} */
   let activeTab = $state('providers');
   /** @type {HTMLButtonElement[]} */
   let tabButtons = $state([]);
 
-  const TABS = /** @type {const} */ (['providers', 'routing', 'channels', 'preferences', 'mcp', 'license']);
+  const TABS = /** @type {const} */ (['providers', 'routing', 'channels', 'preferences', 'mcp', 'license', 'marketplace']);
 
   // ── Provider state ───────────────────────────────────────────────────────
   /**
@@ -817,6 +819,16 @@
       {:else}
         <p class="pref-hint" style="margin-top: 12px;">Pro features are active. Thank you for your support!</p>
       {/if}
+    </div>
+
+    <!-- Marketplace panel -->
+    <div
+      role="tabpanel"
+      id="panel-marketplace"
+      aria-labelledby="tab-marketplace"
+      class="settings-panel"
+      hidden={activeTab !== 'marketplace'}>
+      <MarketplaceTab />
     </div>
 
     <footer class="dialog-footer">
