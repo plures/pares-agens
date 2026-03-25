@@ -14,6 +14,8 @@
 //! - [`cli`] — [`VaultCommand`](cli::VaultCommand): CLI sub-commands for vault
 //!   operations (`lock`, `unlock`, `rotate`).
 
+#![warn(missing_docs)]
+
 pub mod cache;
 pub mod cli;
 pub mod vault;

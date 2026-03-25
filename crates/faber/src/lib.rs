@@ -10,6 +10,8 @@
 //! - [`pipeline`] — [`Pipeline`](pipeline::Pipeline) and [`Step`](pipeline::Step) definitions.
 //! - [`runner`] — [`CiRunner`](runner::CiRunner) execution engine.
 
+#![warn(missing_docs)]
+
 pub mod pipeline;
 pub mod runner;
 

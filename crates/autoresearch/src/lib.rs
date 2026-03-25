@@ -59,6 +59,8 @@
 //! // runner.run().await  — drives the autonomous loop
 //! ```
 
+#![warn(missing_docs)]
+
 pub mod hypothesis;
 pub mod ledger;
 pub mod measurement;

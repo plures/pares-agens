@@ -34,6 +34,8 @@
 //! # }
 //! ```
 
+#![warn(missing_docs)]
+
 mod error;
 pub mod runner;
 
