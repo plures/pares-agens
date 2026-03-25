@@ -8,6 +8,7 @@
 
 pub mod embed;
 pub mod entry;
+pub mod forgetting;
 pub mod quality;
 pub mod store;
 
