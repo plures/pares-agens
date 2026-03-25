@@ -5,6 +5,15 @@ on:
     branches: [main, "copilot/**", "feature/**"]
   pull_request:
 
+# Cancel any in-progress CI run for the same branch/PR when a new one is
+# triggered.  This prevents two concurrent runs competing for runner resources
+# (e.g. one from a `push` event and one from a `pull_request` event on the
+# same commit), which was the root cause of a transient cache-upload failure
+# on PR #332.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
