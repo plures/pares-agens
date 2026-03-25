@@ -230,7 +230,56 @@ jobs:
               return;
             }
 
-            // Priority 3: Milestoned features
+            // Priority 3: Level-critical issues (below floor — treat as bugs)
+            const levelCritical = allIssues.data.filter(i =>
+              !i.pull_request &&
+              !i.assignees.some(a => a.login === 'Copilot') &&
+              i.labels.some(l => l.name === 'critical') &&
+              i.labels.some(l => l.name === 'continuous-improvement')
+            );
+            if (levelCritical.length > 0) {
+              const issue = levelCritical[0];
+              await ensureLabelsAndType(github, owner, repo, issue, 'Bug');
+              await assignCopilot(github, owner, repo, issue, botId,
+                '@copilot This is a level-critical issue. The repo health dimension is below its minimum acceptable threshold. Please fix it.');
+              console.log(`🔴 Level-critical: assigned #${issue.number}: ${issue.title}`);
+              return;
+            }
+
+            // Priority 4: Level improvement issues (below target)
+            const levelImprovement = allIssues.data.filter(i =>
+              !i.pull_request &&
+              !i.assignees.some(a => a.login === 'Copilot') &&
+              i.labels.some(l => l.name === 'continuous-improvement') &&
+              !i.labels.some(l => l.name === 'critical') &&
+              !skipPrefixes.some(p => i.title.includes(p))
+            );
+            if (levelImprovement.length > 0) {
+              const issue = levelImprovement[0];
+              await ensureLabelsAndType(github, owner, repo, issue, 'Task');
+              await assignCopilot(github, owner, repo, issue, botId,
+                '@copilot This is a continuous improvement issue. Please implement the improvement described.');
+              console.log(`📈 Improvement: assigned #${issue.number}: ${issue.title}`);
+              return;
+            }
+
+            // Priority 5: Strategic gate issues
+            const strategicGate = allIssues.data.filter(i =>
+              !i.pull_request &&
+              !i.assignees.some(a => a.login === 'Copilot') &&
+              i.labels.some(l => l.name === 'strategic-gate') &&
+              !skipPrefixes.some(p => i.title.includes(p))
+            );
+            if (strategicGate.length > 0) {
+              const issue = strategicGate[0];
+              await ensureLabelsAndType(github, owner, repo, issue, 'Task');
+              await assignCopilot(github, owner, repo, issue, botId,
+                '@copilot This is a strategic gate issue blocking downstream repos. Please implement the fix.');
+              console.log(`🎯 Strategic: assigned #${issue.number}: ${issue.title}`);
+              return;
+            }
+
+            // Priority 6: Milestoned features
             const milestones = await github.rest.issues.listMilestones({
               owner, repo, state: 'open', sort: 'title', direction: 'asc'
             });
