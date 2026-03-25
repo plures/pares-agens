@@ -27,6 +27,10 @@ pub struct InstalledSkill {
 
     /// ISO 8601 timestamp of when the skill was installed.
     pub installed_at: String,
+
+    /// ISO 8601 timestamp of the most recent execution of this skill, or
+    /// `None` when the skill has never been used.
+    pub last_used: Option<String>,
 }
 
 // ── Installer ─────────────────────────────────────────────────────────────────
@@ -94,6 +98,7 @@ impl Installer {
             metadata,
             install_path,
             installed_at: timestamp_now(),
+            last_used: None,
         };
 
         self.installed.push(installed_skill.clone());
@@ -127,6 +132,24 @@ impl Installer {
     #[must_use]
     pub fn is_installed(&self, skill_id: &str) -> bool {
         self.installed.iter().any(|s| s.metadata.id == skill_id)
+    }
+
+    /// Record that the skill identified by `skill_id` was used now.
+    ///
+    /// Updates the `last_used` timestamp to the current placeholder value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MarketplaceError::NotFound`] when no skill with the given
+    /// `skill_id` is currently installed.
+    pub fn record_use(&mut self, skill_id: &str) -> Result<(), MarketplaceError> {
+        let skill = self
+            .installed
+            .iter_mut()
+            .find(|s| s.metadata.id == skill_id)
+            .ok_or_else(|| MarketplaceError::NotFound(skill_id.to_string()))?;
+        skill.last_used = Some(timestamp_now());
+        Ok(())
     }
 }
 
@@ -244,5 +267,36 @@ mod tests {
         installer.install(valid_metadata()).unwrap();
         installer.uninstall("pares/rust-helper").unwrap();
         assert!(!installer.is_installed("pares/rust-helper"));
+    }
+
+    // ── last_used / record_use ────────────────────────────────────────────────
+
+    #[test]
+    fn install_sets_last_used_to_none() {
+        let mut installer = make_installer();
+        let skill = installer.install(valid_metadata()).unwrap();
+        assert!(skill.last_used.is_none());
+    }
+
+    #[test]
+    fn record_use_updates_last_used() {
+        let mut installer = make_installer();
+        installer.install(valid_metadata()).unwrap();
+        installer.record_use("pares/rust-helper").unwrap();
+        let skill = installer
+            .list_installed()
+            .iter()
+            .find(|s| s.metadata.id == "pares/rust-helper")
+            .unwrap();
+        assert!(skill.last_used.is_some());
+    }
+
+    #[test]
+    fn record_use_returns_not_found_for_unknown_skill() {
+        let mut installer = make_installer();
+        assert!(matches!(
+            installer.record_use("unknown/skill"),
+            Err(MarketplaceError::NotFound(_))
+        ));
     }
 }

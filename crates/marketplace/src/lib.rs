@@ -12,9 +12,13 @@
 //! - [`security`] — [`SecurityChecker`](security::SecurityChecker) for validating third-party code.
 
 pub mod adapter;
+pub mod cli;
 pub mod discovery;
 pub mod installer;
+pub mod permissions;
+pub mod ratings;
 pub mod security;
+pub mod update;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
