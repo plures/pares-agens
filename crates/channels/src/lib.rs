@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! Channel adapters for Pares Agens.
 //!
 //! Provides the [`ChannelAdapter`] trait and concrete adapter implementations
@@ -9,7 +10,6 @@
 //!
 //! Running more than one adapter simultaneously requires a Pro license.
 //! Use [`check_channel_count`] to enforce this at startup.
-#![warn(missing_docs)]
 
 pub mod adapter;
 pub mod stdin;

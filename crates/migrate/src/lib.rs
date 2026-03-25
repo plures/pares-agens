@@ -1,8 +1,8 @@
+#![warn(missing_docs)]
 //! `pares-agens-migrate` — OpenClaw → Pares Agens migration library.
 //!
 //! Provides the [`migrate::run`] function and supporting types for importing
 //! data from an existing OpenClaw installation into pares-agens format.
-#![warn(missing_docs)]
 
 pub mod migrate;
 pub mod openclaw;
