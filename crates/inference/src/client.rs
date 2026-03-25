@@ -1,3 +1,5 @@
+//! [`ModelClient`] async trait and streaming channel type aliases.
+
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 

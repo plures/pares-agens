@@ -53,8 +53,11 @@ pub struct CachedEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CacheTier {
+    /// Most recently accessed entries; served directly without decompression.
     Hot,
+    /// Older entries demoted from hot; stored in compressed form.
     Warm,
+    /// Least recently accessed entries; heavily compressed and rarely read.
     Cold,
 }
 

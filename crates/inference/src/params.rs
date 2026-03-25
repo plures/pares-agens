@@ -1,3 +1,5 @@
+//! Token-sampling hyper-parameters.
+
 /// Hyper-parameters that control the token-sampling strategy.
 ///
 /// All fields have sensible defaults via [`GenParams::default`].
