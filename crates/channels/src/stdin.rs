@@ -1,3 +1,8 @@
+//! Stdin/stdout channel adapter.
+//!
+//! Reads newline-delimited messages from standard input, emits them as
+//! [`Event::Message`] events, and prints [`Event::ModelResponse`] content
+//! back to standard output.
 use async_trait::async_trait;
 use pares_agens_core::Event;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -7,10 +12,12 @@ use crate::adapter::{ChannelAdapter, ChannelError};
 
 /// Reads lines from stdin, emits Message events, prints responses to stdout.
 pub struct StdinAdapter {
+    /// Display name used as the `sender` field in emitted [`Event::Message`] events.
     pub from: String,
 }
 
 impl StdinAdapter {
+    /// Create a new [`StdinAdapter`] that identifies its messages with the given sender name.
     pub fn new(from: impl Into<String>) -> Self {
         Self { from: from.into() }
     }

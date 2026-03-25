@@ -41,6 +41,7 @@ pub struct TelegramConfig {
 }
 
 impl TelegramConfig {
+    /// Create a new [`TelegramConfig`] with the given bot token.
     pub fn new(token: impl Into<String>) -> Self {
         Self { token: token.into() }
     }
@@ -56,6 +57,7 @@ pub struct TelegramAdapter {
 }
 
 impl TelegramAdapter {
+    /// Create a new [`TelegramAdapter`] with the given configuration.
     pub fn new(config: TelegramConfig) -> Self {
         Self { config }
     }

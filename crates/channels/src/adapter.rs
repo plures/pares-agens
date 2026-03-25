@@ -1,3 +1,4 @@
+//! Core adapter trait and shared error type for channel adapters.
 use async_trait::async_trait;
 use pares_agens_core::Event;
 
@@ -16,12 +17,16 @@ pub trait ChannelAdapter: Send + Sync {
     ) -> Result<(), ChannelError>;
 }
 
+/// Errors that can occur while running a channel adapter.
 #[derive(Debug, thiserror::Error)]
 pub enum ChannelError {
+    /// An underlying I/O error (e.g. broken pipe on stdin).
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    /// The channel was closed by the remote end.
     #[error("Channel closed")]
     Closed,
+    /// A Telegram-specific error (API or networking failure).
     #[error("Telegram error: {0}")]
     Telegram(String),
 }

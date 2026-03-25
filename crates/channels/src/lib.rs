@@ -1,3 +1,16 @@
+//! Channel adapters for Pares Agens.
+//!
+//! Provides the [`ChannelAdapter`] trait and concrete adapter implementations
+//! for stdin, Tauri IPC, and Telegram. A [`ChannelAdapter`] bridges an external
+//! communication channel (e.g. a Telegram bot, a desktop UI, or standard input)
+//! to the core agent event loop.
+//!
+//! # License gating
+//!
+//! Running more than one adapter simultaneously requires a Pro license.
+//! Use [`check_channel_count`] to enforce this at startup.
+#![warn(missing_docs)]
+
 pub mod adapter;
 pub mod stdin;
 pub mod tauri_ipc;

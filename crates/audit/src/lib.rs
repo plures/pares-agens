@@ -8,6 +8,7 @@
 //! - [`event`] — [`EventKind`], [`AuditEvent`]: structured event definitions.
 //! - [`store`] — [`AuditStore`] trait and [`InMemoryAuditStore`] implementation.
 //! - [`query`] — [`AuditQuery`]: filter by date, action type, and destination.
+#![warn(missing_docs)]
 //! - [`export`] — [`export_json`] / [`export_csv`]: compliance export helpers.
 //! - [`retention`] — [`RetentionConfig`] and [`apply_retention`]: log rotation.
 //!
