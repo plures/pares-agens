@@ -3247,6 +3247,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pares-agens-gpu"
+version = "0.5.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "pares-agens-inference"
 version = "0.5.0"
 dependencies = [
