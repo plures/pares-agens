@@ -49,6 +49,7 @@
 //! ```
 
 pub mod audit;
+pub mod db;
 pub mod factory;
 pub mod module;
 pub mod modules;
