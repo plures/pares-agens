@@ -31,6 +31,7 @@
 
 pub mod agent;
 pub mod cerebellum;
+pub mod delegation;
 pub mod event;
 pub mod executor;
 pub mod features;
