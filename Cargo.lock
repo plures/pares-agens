@@ -3236,6 +3236,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "pares-agens-dmem"
+version = "0.5.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "pares-agens-faber"
 version = "0.5.0"
 dependencies = [
