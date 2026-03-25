@@ -51,6 +51,14 @@ pub enum InferenceError {
     /// An I/O error occurred (e.g. reading a model registry file).
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+
+    /// A network or HTTP error occurred while downloading a model.
+    #[error("download failed for `{repo}`: {reason}")]
+    Download { repo: String, reason: String },
+
+    /// The model repository or file was not found on the remote.
+    #[error("model not found: `{repo}` — check the repository name and try again")]
+    ModelNotFound { repo: String },
 }
 
 /// Map a [`pares_agens_bitnet::InferenceError`] to our richer error type,

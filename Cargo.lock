@@ -3238,7 +3238,12 @@ name = "pares-agens-inference"
 version = "0.5.0"
 dependencies = [
  "async-trait",
+ "futures-util",
  "pares-agens-bitnet",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
