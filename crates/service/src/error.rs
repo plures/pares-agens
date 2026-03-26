@@ -29,7 +29,12 @@ pub enum ServiceError {
 
     /// A subprocess invoked by the manager returned a non-zero exit code.
     #[error("command failed with status {status}: {message}")]
-    CommandFailed { status: i32, message: String },
+    CommandFailed {
+        /// The exit status code returned by the subprocess.
+        status: i32,
+        /// Human-readable description of the failure.
+        message: String,
+    },
 
     /// Failed to parse the service manager's output.
     #[error("failed to parse service manager output: {0}")]

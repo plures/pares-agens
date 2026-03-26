@@ -24,13 +24,19 @@ pub enum IpcRequest {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum IpcResponse {
     /// Response to a Health request.
-    Health { status: String },
+    Health {
+        /// Current health status string (e.g. `"ok"` or `"degraded"`).
+        status: String,
+    },
     /// Acknowledgment of a shutdown request.
     ShutdownAck,
     /// Response to a Ping.
     Pong,
     /// An error occurred while processing the request.
-    Error { message: String },
+    Error {
+        /// Human-readable description of the error.
+        message: String,
+    },
 }
 
 /// Platform-agnostic IPC transport abstraction.
