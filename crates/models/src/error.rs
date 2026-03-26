@@ -2,6 +2,7 @@
 
 use thiserror::Error;
 
+/// All errors that can arise when using the `pares-models` client.
 #[derive(Debug, Error)]
 pub enum Error {
     /// An underlying HTTP transport error from `reqwest`.
@@ -10,7 +11,12 @@ pub enum Error {
 
     /// The API returned a non-2xx status code.
     #[error("API error {status}: {body}")]
-    ApiError { status: u16, body: String },
+    ApiError {
+        /// HTTP status code returned by the server.
+        status: u16,
+        /// Response body text (may contain the provider's error message).
+        body: String,
+    },
 
     /// JSON (de)serialisation failed.
     #[error("JSON error: {0}")]
