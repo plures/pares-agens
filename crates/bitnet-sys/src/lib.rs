@@ -212,9 +212,13 @@ mod tests {
 
     #[test]
     fn eos_and_error_constants_are_negative() {
-        assert!(BITNET_TOKEN_EOS < 0);
-        assert!(BITNET_TOKEN_ERROR < 0);
-        assert_ne!(BITNET_TOKEN_EOS, BITNET_TOKEN_ERROR);
+        // Use let-bindings so clippy doesn't treat these as constant-folded
+        // assertions (clippy::assertions_on_constants).
+        let eos = BITNET_TOKEN_EOS;
+        let err = BITNET_TOKEN_ERROR;
+        assert!(eos < 0);
+        assert!(err < 0);
+        assert_ne!(eos, err);
     }
 
     #[test]
