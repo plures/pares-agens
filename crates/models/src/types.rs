@@ -258,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn role_serialises_as_lowercase() {
+    fn role_serializes_as_lowercase() {
         assert_eq!(serde_json::to_string(&Role::User).unwrap(), "\"user\"");
         assert_eq!(serde_json::to_string(&Role::Assistant).unwrap(), "\"assistant\"");
         assert_eq!(serde_json::to_string(&Role::System).unwrap(), "\"system\"");
@@ -278,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn chat_message_skips_none_fields_in_serialisation() {
+    fn chat_message_skips_none_fields_in_serialization() {
         let msg = ChatMessage::text(Role::User, "Hello");
         let json = serde_json::to_string(&msg).unwrap();
         assert!(!json.contains("tool_calls"));

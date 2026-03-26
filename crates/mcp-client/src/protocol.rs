@@ -308,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn jsonrpc_notification_omits_id_field_when_serialised() {
+    fn jsonrpc_notification_omits_id_field_when_serialized() {
         let notif = JsonRpcRequest::notification("ping", None);
         let json = serde_json::to_string(&notif).unwrap();
         assert!(!json.contains("\"id\""), "id should be absent in notification JSON");
