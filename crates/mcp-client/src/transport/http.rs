@@ -67,3 +67,21 @@ impl Transport for HttpTransport {
         Ok(response.json::<JsonRpcResponse>().await?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn http_transport_new_stores_url() {
+        let t = HttpTransport::new("http://localhost:3000/message");
+        assert_eq!(t.url, "http://localhost:3000/message");
+    }
+
+    #[test]
+    fn http_transport_with_client_stores_url() {
+        let client = Client::new();
+        let t = HttpTransport::with_client(client, "http://custom:8080/mcp");
+        assert_eq!(t.url, "http://custom:8080/mcp");
+    }
+}

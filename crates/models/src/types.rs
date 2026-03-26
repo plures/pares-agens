@@ -240,3 +240,159 @@ pub struct DeltaMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── Role ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn role_serde_roundtrip() {
+        for role in [Role::System, Role::User, Role::Assistant, Role::Tool] {
+            let json = serde_json::to_string(&role).unwrap();
+            let decoded: Role = serde_json::from_str(&json).unwrap();
+            assert_eq!(decoded, role);
+        }
+    }
+
+    #[test]
+    fn role_serialises_as_lowercase() {
+        assert_eq!(serde_json::to_string(&Role::User).unwrap(), "\"user\"");
+        assert_eq!(serde_json::to_string(&Role::Assistant).unwrap(), "\"assistant\"");
+        assert_eq!(serde_json::to_string(&Role::System).unwrap(), "\"system\"");
+        assert_eq!(serde_json::to_string(&Role::Tool).unwrap(), "\"tool\"");
+    }
+
+    // ── ChatMessage ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn chat_message_text_constructor() {
+        let msg = ChatMessage::text(Role::User, "Hello");
+        assert_eq!(msg.role, Role::User);
+        assert_eq!(msg.content.as_deref(), Some("Hello"));
+        assert!(msg.tool_calls.is_none());
+        assert!(msg.tool_call_id.is_none());
+        assert!(msg.name.is_none());
+    }
+
+    #[test]
+    fn chat_message_skips_none_fields_in_serialisation() {
+        let msg = ChatMessage::text(Role::User, "Hello");
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(!json.contains("tool_calls"));
+        assert!(!json.contains("tool_call_id"));
+        assert!(!json.contains("\"name\""));
+    }
+
+    #[test]
+    fn chat_message_serde_roundtrip_with_all_fields() {
+        let msg = ChatMessage {
+            role: Role::Tool,
+            content: Some("result".into()),
+            tool_calls: None,
+            tool_call_id: Some("call-1".into()),
+            name: Some("my_tool".into()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: ChatMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(decoded.name.as_deref(), Some("my_tool"));
+    }
+
+    // ── Tool / FunctionDefinition ─────────────────────────────────────────────
+
+    #[test]
+    fn tool_function_constructor() {
+        let schema = json!({"type": "object", "properties": {"city": {"type": "string"}}});
+        let tool = Tool::function("get_weather", "Get weather for a city", schema.clone());
+        assert_eq!(tool.kind, "function");
+        assert_eq!(tool.function.name, "get_weather");
+        assert_eq!(tool.function.description.as_deref(), Some("Get weather for a city"));
+        assert_eq!(tool.function.parameters.as_ref().unwrap()["type"], "object");
+    }
+
+    #[test]
+    fn tool_serde_roundtrip() {
+        let tool = Tool::function(
+            "search",
+            "Search the web",
+            json!({"type": "object", "properties": {}}),
+        );
+        let json = serde_json::to_string(&tool).unwrap();
+        let decoded: Tool = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.function.name, "search");
+    }
+
+    // ── ChatCompletionRequest ─────────────────────────────────────────────────
+
+    #[test]
+    fn chat_completion_request_new() {
+        let req = ChatCompletionRequest::new(
+            "gpt-4o",
+            vec![ChatMessage::text(Role::User, "hi")],
+        );
+        assert_eq!(req.model, "gpt-4o");
+        assert_eq!(req.messages.len(), 1);
+        assert!(req.tools.is_none());
+        assert!(req.temperature.is_none());
+        assert!(req.stream.is_none());
+    }
+
+    #[test]
+    fn chat_completion_request_serde_skips_none_fields() {
+        let req = ChatCompletionRequest::new(
+            "gpt-4o",
+            vec![ChatMessage::text(Role::User, "hi")],
+        );
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(!json.contains("\"tools\""));
+        assert!(!json.contains("\"stream\""));
+        assert!(!json.contains("\"temperature\""));
+    }
+
+    // ── ChatCompletionResponse / Choice / Usage ───────────────────────────────
+
+    #[test]
+    fn chat_completion_response_serde_roundtrip() {
+        let resp_json = json!({
+            "id": "cmpl-1",
+            "object": "chat.completion",
+            "created": 1700000000u64,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "Hello!"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+        });
+        let resp: ChatCompletionResponse = serde_json::from_value(resp_json).unwrap();
+        assert_eq!(resp.id, "cmpl-1");
+        assert_eq!(resp.choices[0].message.content.as_deref(), Some("Hello!"));
+        let usage = resp.usage.as_ref().unwrap();
+        assert_eq!(usage.total_tokens, 8);
+    }
+
+    // ── Streaming types ───────────────────────────────────────────────────────
+
+    #[test]
+    fn chat_completion_chunk_serde_roundtrip() {
+        let chunk_json = json!({
+            "id": "c1",
+            "object": "chat.completion.chunk",
+            "created": 1700000000u64,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "delta": {"role": "assistant", "content": "Hi"},
+                "finish_reason": null
+            }]
+        });
+        let chunk: ChatCompletionChunk = serde_json::from_value(chunk_json).unwrap();
+        assert_eq!(chunk.id, "c1");
+        assert_eq!(chunk.choices[0].delta.content.as_deref(), Some("Hi"));
+        assert_eq!(chunk.choices[0].delta.role, Some(Role::Assistant));
+    }
+}
