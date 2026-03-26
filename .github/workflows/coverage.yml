@@ -45,12 +45,24 @@ jobs:
 
       - name: Check coverage threshold (≥80%)
         run: |
-          cargo llvm-cov \
-            --workspace \
-            --exclude pares-agens-desktop \
-            --exclude pares-agens-tauri \
-            --summary-only \
-            --fail-under-coverage 80
+          # Parse the LCOV report to compute overall line-coverage percentage.
+          # Summing LF (lines found) and LH (lines hit) across all source files
+          # avoids re-running the full test suite a second time and does not
+          # depend on a --fail-under-coverage flag that varies between
+          # cargo-llvm-cov versions.
+          LF=$(awk -F: '/^LF:/{s+=$2} END{print s+0}' lcov.info)
+          LH=$(awk -F: '/^LH:/{s+=$2} END{print s+0}' lcov.info)
+          if [ "$LF" -eq 0 ]; then
+            echo "::error::No coverage data found in lcov.info"
+            exit 1
+          fi
+          COVERAGE=$(echo "scale=2; $LH * 100 / $LF" | bc | awk '{printf "%d", $1}')
+          echo "Line coverage: ${COVERAGE}% (${LH}/${LF} lines hit)"
+          if [ "$COVERAGE" -lt 80 ]; then
+            echo "::error::Coverage ${COVERAGE}% is below the 80% threshold"
+            exit 1
+          fi
+          echo "Coverage ${COVERAGE}% meets the ≥80% threshold ✓"
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
