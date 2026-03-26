@@ -267,3 +267,246 @@ pub enum ToolContent {
         resource: Value,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── JsonRpcRequest ───────────────────────────────────────────────────────
+
+    #[test]
+    fn jsonrpc_request_new_sets_id_and_method() {
+        let req = JsonRpcRequest::new(1u64, "tools/list", None);
+        assert_eq!(req.jsonrpc, "2.0");
+        assert_eq!(req.id, Some(json!(1u64)));
+        assert_eq!(req.method, "tools/list");
+        assert!(req.params.is_none());
+    }
+
+    #[test]
+    fn jsonrpc_request_new_with_params() {
+        let params = json!({"cursor": "next-page"});
+        let req = JsonRpcRequest::new(2u64, "tools/list", Some(params.clone()));
+        assert_eq!(req.params, Some(params));
+    }
+
+    #[test]
+    fn jsonrpc_notification_has_no_id() {
+        let notif = JsonRpcRequest::notification("notifications/initialized", None);
+        assert!(notif.id.is_none());
+        assert_eq!(notif.method, "notifications/initialized");
+    }
+
+    #[test]
+    fn jsonrpc_request_serde_roundtrip() {
+        let req = JsonRpcRequest::new("req-1", "initialize", Some(json!({"key": "val"})));
+        let json = serde_json::to_string(&req).unwrap();
+        let decoded: JsonRpcRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.method, req.method);
+        assert_eq!(decoded.id, req.id);
+    }
+
+    #[test]
+    fn jsonrpc_notification_omits_id_field_when_serialized() {
+        let notif = JsonRpcRequest::notification("ping", None);
+        let json = serde_json::to_string(&notif).unwrap();
+        assert!(!json.contains("\"id\""), "id should be absent in notification JSON");
+    }
+
+    // ── JsonRpcResponse ──────────────────────────────────────────────────────
+
+    #[test]
+    fn jsonrpc_response_success_serde_roundtrip() {
+        let resp = JsonRpcResponse {
+            jsonrpc: "2.0".into(),
+            id: json!(1u64),
+            result: Some(json!({"tools": []})),
+            error: None,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let decoded: JsonRpcResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.id, json!(1u64));
+        assert!(decoded.result.is_some());
+        assert!(decoded.error.is_none());
+    }
+
+    #[test]
+    fn jsonrpc_response_error_serde_roundtrip() {
+        let resp = JsonRpcResponse {
+            jsonrpc: "2.0".into(),
+            id: json!(42u64),
+            result: None,
+            error: Some(JsonRpcError {
+                code: -32601,
+                message: "Method not found".into(),
+                data: None,
+            }),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let decoded: JsonRpcResponse = serde_json::from_str(&json).unwrap();
+        let err = decoded.error.unwrap();
+        assert_eq!(err.code, -32601);
+        assert_eq!(err.message, "Method not found");
+    }
+
+    #[test]
+    fn jsonrpc_error_with_data_roundtrip() {
+        let err = JsonRpcError {
+            code: -32700,
+            message: "Parse error".into(),
+            data: Some(json!({"detail": "unexpected token"})),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let decoded: JsonRpcError = serde_json::from_str(&json).unwrap();
+        assert!(decoded.data.is_some());
+    }
+
+    // ── InitializeParams ─────────────────────────────────────────────────────
+
+    #[test]
+    fn initialize_params_default_has_correct_protocol_version() {
+        let params = InitializeParams::default();
+        assert_eq!(params.protocol_version, "2024-11-05");
+        assert_eq!(params.client_info.name, "pares-agens");
+    }
+
+    #[test]
+    fn initialize_params_serde_roundtrip() {
+        let params = InitializeParams::default();
+        let json = serde_json::to_string(&params).unwrap();
+        let decoded: InitializeParams = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.protocol_version, params.protocol_version);
+        assert_eq!(decoded.client_info.name, params.client_info.name);
+    }
+
+    // ── Tool ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn tool_serde_roundtrip_with_description() {
+        let tool = Tool {
+            name: "web_search".into(),
+            description: Some("Search the web".into()),
+            input_schema: ToolInputSchema {
+                schema_type: "object".into(),
+                properties: Some(json!({"q": {"type": "string"}})),
+                required: Some(vec!["q".into()]),
+            },
+        };
+        let json = serde_json::to_string(&tool).unwrap();
+        let decoded: Tool = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.name, "web_search");
+        assert_eq!(decoded.description.as_deref(), Some("Search the web"));
+        assert_eq!(decoded.input_schema.required.as_deref(), Some(["q".to_string()].as_slice()));
+    }
+
+    #[test]
+    fn tool_serde_roundtrip_without_optional_fields() {
+        let tool = Tool {
+            name: "ping".into(),
+            description: None,
+            input_schema: ToolInputSchema {
+                schema_type: "object".into(),
+                properties: None,
+                required: None,
+            },
+        };
+        let json = serde_json::to_string(&tool).unwrap();
+        assert!(!json.contains("\"description\""));
+        assert!(!json.contains("\"required\""));
+        let decoded: Tool = serde_json::from_str(&json).unwrap();
+        assert!(decoded.description.is_none());
+    }
+
+    // ── CallToolResult / ToolContent ─────────────────────────────────────────
+
+    #[test]
+    fn call_tool_result_text_content_serde_roundtrip() {
+        let result = CallToolResult {
+            content: vec![ToolContent::Text { text: "42".into() }],
+            is_error: false,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let decoded: CallToolResult = serde_json::from_str(&json).unwrap();
+        assert!(!decoded.is_error);
+        match &decoded.content[0] {
+            ToolContent::Text { text } => assert_eq!(text, "42"),
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn call_tool_result_error_flag_roundtrip() {
+        let result = CallToolResult {
+            content: vec![ToolContent::Text { text: "error detail".into() }],
+            is_error: true,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let decoded: CallToolResult = serde_json::from_str(&json).unwrap();
+        assert!(decoded.is_error);
+    }
+
+    #[test]
+    fn tool_content_image_variant_roundtrip() {
+        let img = ToolContent::Image {
+            data: "base64data".into(),
+            mime_type: "image/png".into(),
+        };
+        let json = serde_json::to_string(&img).unwrap();
+        let decoded: ToolContent = serde_json::from_str(&json).unwrap();
+        match decoded {
+            ToolContent::Image { data, mime_type } => {
+                assert_eq!(data, "base64data");
+                assert_eq!(mime_type, "image/png");
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_content_resource_variant_roundtrip() {
+        let res = ToolContent::Resource { resource: json!({"uri": "file:///tmp/test"}) };
+        let json = serde_json::to_string(&res).unwrap();
+        let decoded: ToolContent = serde_json::from_str(&json).unwrap();
+        match decoded {
+            ToolContent::Resource { resource } => {
+                assert_eq!(resource["uri"], "file:///tmp/test");
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    // ── ListToolsParams / ListToolsResult ────────────────────────────────────
+
+    #[test]
+    fn list_tools_params_default_has_no_cursor() {
+        let p = ListToolsParams::default();
+        assert!(p.cursor.is_none());
+    }
+
+    #[test]
+    fn list_tools_result_serde_roundtrip() {
+        let result = ListToolsResult {
+            tools: vec![],
+            next_cursor: Some("cursor-abc".into()),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let decoded: ListToolsResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.next_cursor.as_deref(), Some("cursor-abc"));
+        assert!(decoded.tools.is_empty());
+    }
+
+    // ── CallToolParams ───────────────────────────────────────────────────────
+
+    #[test]
+    fn call_tool_params_serde_roundtrip() {
+        let p = CallToolParams {
+            name: "get_weather".into(),
+            arguments: Some(json!({"city": "London"})),
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        let decoded: CallToolParams = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.name, "get_weather");
+        assert_eq!(decoded.arguments.as_ref().unwrap()["city"], "London");
+    }
+}

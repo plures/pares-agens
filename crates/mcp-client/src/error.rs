@@ -41,3 +41,48 @@ pub enum McpError {
 
 /// Convenience `Result` type for MCP client operations.
 pub type Result<T> = std::result::Result<T, McpError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transport_error_display() {
+        let e = McpError::Transport("connection refused".into());
+        assert!(e.to_string().contains("connection refused"));
+    }
+
+    #[test]
+    fn jsonrpc_error_display_includes_code_and_message() {
+        let e = McpError::JsonRpc { code: -32601, message: "Method not found".into() };
+        let s = e.to_string();
+        assert!(s.contains("-32601"));
+        assert!(s.contains("Method not found"));
+    }
+
+    #[test]
+    fn tool_not_found_error_display() {
+        let e = McpError::ToolNotFound("search_web".into());
+        assert!(e.to_string().contains("search_web"));
+    }
+
+    #[test]
+    fn unexpected_response_error_display() {
+        let e = McpError::UnexpectedResponse("missing result field".into());
+        assert!(e.to_string().contains("missing result field"));
+    }
+
+    #[test]
+    fn json_error_converted_from_serde() {
+        let json_err = serde_json::from_str::<serde_json::Value>("{not json}").unwrap_err();
+        let e: McpError = json_err.into();
+        assert!(matches!(e, McpError::Json(_)));
+    }
+
+    #[test]
+    fn io_error_converted_from_std_io() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let e: McpError = io_err.into();
+        assert!(matches!(e, McpError::Io(_)));
+    }
+}

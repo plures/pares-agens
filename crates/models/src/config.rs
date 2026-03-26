@@ -84,3 +84,74 @@ pub trait ConfigStore: Send + Sync {
     /// Return the current router configuration.
     async fn router_config(&self) -> Result<RouterConfig, Error>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_config_new() {
+        let p = ProviderConfig::new("http://localhost:12434", Some("sk-key".into()));
+        assert_eq!(p.base_url, "http://localhost:12434");
+        assert_eq!(p.api_key.as_deref(), Some("sk-key"));
+    }
+
+    #[test]
+    fn provider_config_no_key() {
+        let p = ProviderConfig::new("http://localhost:11434", None);
+        assert!(p.api_key.is_none());
+    }
+
+    #[test]
+    fn provider_config_serde_skips_none_api_key() {
+        let p = ProviderConfig::new("http://host", None);
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(!json.contains("api_key"));
+    }
+
+    #[test]
+    fn provider_config_serde_roundtrip_with_key() {
+        let p = ProviderConfig::new("http://host", Some("token".into()));
+        let json = serde_json::to_string(&p).unwrap();
+        let decoded: ProviderConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.api_key.as_deref(), Some("token"));
+    }
+
+    #[test]
+    fn router_config_single_constructor() {
+        let p = ProviderConfig::new("http://local", None);
+        let cfg = RouterConfig::single("local", p.clone());
+        assert_eq!(cfg.default_provider, "local");
+        assert!(cfg.rules.is_empty());
+        assert!(cfg.providers.contains_key("local"));
+    }
+
+    #[test]
+    fn routing_rule_serde_roundtrip() {
+        let rule = RoutingRule {
+            model_prefix: Some("gpt-".into()),
+            provider: "openai".into(),
+        };
+        let json = serde_json::to_string(&rule).unwrap();
+        let decoded: RoutingRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.model_prefix.as_deref(), Some("gpt-"));
+        assert_eq!(decoded.provider, "openai");
+    }
+
+    #[test]
+    fn routing_rule_without_prefix_serde() {
+        let rule = RoutingRule { model_prefix: None, provider: "fallback".into() };
+        let json = serde_json::to_string(&rule).unwrap();
+        assert!(!json.contains("model_prefix"));
+        let decoded: RoutingRule = serde_json::from_str(&json).unwrap();
+        assert!(decoded.model_prefix.is_none());
+    }
+
+    #[test]
+    fn router_config_serde_roundtrip() {
+        let cfg = RouterConfig::single("x", ProviderConfig::new("http://x", None));
+        let json = serde_json::to_string(&cfg).unwrap();
+        let decoded: RouterConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.default_provider, "x");
+    }
+}

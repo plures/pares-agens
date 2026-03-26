@@ -181,3 +181,47 @@ extern "C" {
     /// - `params` must be a valid pointer to a [`BitNetGenParams`] value.
     pub fn bitnet_sample(ctx: *mut BitNetContextOpaque, params: *const BitNetGenParams) -> c_int;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gen_params_default_values() {
+        let p = BitNetGenParams::default();
+        assert!((p.temperature - 1.0).abs() < f32::EPSILON);
+        assert!((p.top_p - 0.9).abs() < 1e-6);
+        assert_eq!(p.seed, -1);
+        assert_eq!(p.n_predict, 256);
+        assert_eq!(p.n_threads, 4);
+    }
+
+    #[test]
+    fn gen_params_is_copy() {
+        let a = BitNetGenParams::default();
+        let b = a; // Copy
+        assert!((a.temperature - b.temperature).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn gen_params_debug_output() {
+        let p = BitNetGenParams::default();
+        let s = format!("{p:?}");
+        assert!(s.contains("temperature"));
+    }
+
+    #[test]
+    fn eos_and_error_constants_are_negative() {
+        assert!(BITNET_TOKEN_EOS < 0);
+        assert!(BITNET_TOKEN_ERROR < 0);
+        assert_ne!(BITNET_TOKEN_EOS, BITNET_TOKEN_ERROR);
+    }
+
+    #[test]
+    fn opaque_types_are_zero_sized_in_repr() {
+        // BitNetModelOpaque and BitNetContextOpaque should have zero-byte
+        // private fields — they are only ever used behind raw pointers.
+        assert_eq!(std::mem::size_of::<BitNetModelOpaque>(), 0);
+        assert_eq!(std::mem::size_of::<BitNetContextOpaque>(), 0);
+    }
+}

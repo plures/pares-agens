@@ -90,3 +90,32 @@ impl OpenAiClient {
         Ok(parse_sse_stream(response))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completions_url_appends_path() {
+        let c = OpenAiClient::new("https://api.openai.com", None);
+        assert_eq!(c.completions_url(), "https://api.openai.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn completions_url_trims_trailing_slash() {
+        let c = OpenAiClient::new("http://localhost:12434/", None);
+        assert_eq!(c.completions_url(), "http://localhost:12434/v1/chat/completions");
+    }
+
+    #[test]
+    fn client_stores_api_key() {
+        let c = OpenAiClient::new("http://host", Some("sk-abc".into()));
+        assert_eq!(c.api_key.as_deref(), Some("sk-abc"));
+    }
+
+    #[test]
+    fn client_stores_no_api_key() {
+        let c = OpenAiClient::new("http://host", None);
+        assert!(c.api_key.is_none());
+    }
+}
