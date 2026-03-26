@@ -22,6 +22,7 @@ pub struct ProviderConfig {
 }
 
 impl ProviderConfig {
+    /// Constructs a new [`ProviderConfig`].
     pub fn new(base_url: impl Into<String>, api_key: Option<String>) -> Self {
         Self { base_url: base_url.into(), api_key }
     }
