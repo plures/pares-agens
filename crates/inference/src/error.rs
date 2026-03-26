@@ -1,3 +1,5 @@
+//! Error types for `pares-agens-inference`.
+
 use thiserror::Error;
 
 /// All errors that can surface from the inference layer.
@@ -14,7 +16,12 @@ pub enum InferenceError {
 
     /// The model file could not be loaded (file not found, wrong format, etc.).
     #[error("failed to load model from `{path}`: {reason}")]
-    ModelLoad { path: String, reason: String },
+    ModelLoad {
+        /// Path to the model file that failed to load.
+        path: String,
+        /// Human-readable description of the failure.
+        reason: String,
+    },
 
     /// An inference context could not be created (out of memory, etc.).
     #[error("failed to create inference context: {0}")]
@@ -26,7 +33,12 @@ pub enum InferenceError {
 
     /// The model file appears to be corrupt or has an unsupported format.
     #[error("corrupt or incompatible model file `{path}`: {reason}")]
-    CorruptModel { path: String, reason: String },
+    CorruptModel {
+        /// Path to the corrupt model file.
+        path: String,
+        /// Human-readable description of the failure.
+        reason: String,
+    },
 
     /// The input text could not be tokenised.
     #[error("tokenisation failed: {0}")]
@@ -34,7 +46,12 @@ pub enum InferenceError {
 
     /// A token ID could not be decoded to a text piece.
     #[error("token decode failed for token {token}: {reason}")]
-    TokenDecode { token: i32, reason: String },
+    TokenDecode {
+        /// The raw token ID that failed to decode.
+        token: i32,
+        /// Human-readable description of the failure.
+        reason: String,
+    },
 
     /// The model forward pass (eval step) returned an error code.
     #[error("model eval failed with code {0}")]
@@ -54,11 +71,19 @@ pub enum InferenceError {
 
     /// A network or HTTP error occurred while downloading a model.
     #[error("download failed for `{repo}`: {reason}")]
-    Download { repo: String, reason: String },
+    Download {
+        /// Hugging Face repository identifier (`owner/name`).
+        repo: String,
+        /// Human-readable description of the failure.
+        reason: String,
+    },
 
     /// The model repository or file was not found on the remote.
     #[error("model not found: `{repo}` — check the repository name and try again")]
-    ModelNotFound { repo: String },
+    ModelNotFound {
+        /// Hugging Face repository identifier (`owner/name`) that was not found.
+        repo: String,
+    },
 }
 
 /// Map a [`pares_agens_bitnet::InferenceError`] to our richer error type,

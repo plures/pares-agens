@@ -48,6 +48,8 @@
 //! println!("completeness: {}%", report.completeness_pct);
 //! ```
 
+#![warn(missing_docs)]
+
 pub mod audit;
 pub mod db;
 pub mod factory;

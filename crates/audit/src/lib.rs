@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! `pares-agens-audit` — Comprehensive audit log for Pares Agens.
 //!
 //! Provides a full audit trail of what data went where: every model call,

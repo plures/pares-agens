@@ -55,6 +55,8 @@
 //! # }
 //! ```
 
+#![warn(missing_docs)]
+
 pub mod backend;
 pub mod config;
 pub mod eviction;
@@ -80,31 +82,58 @@ mod error {
     pub enum GpuError {
         /// Not enough VRAM to load the requested model.
         #[error("insufficient VRAM: need {needed_mb} MB but only {available_mb} MB available")]
-        InsufficientVram { needed_mb: u64, available_mb: u64 },
+        InsufficientVram {
+            /// VRAM required by the model, in MiB.
+            needed_mb: u64,
+            /// VRAM currently available in the pool, in MiB.
+            available_mb: u64,
+        },
 
         /// The pool already holds the maximum number of models.
         #[error("model pool is full: max_models={max_models}")]
-        PoolFull { max_models: usize },
+        PoolFull {
+            /// Configured maximum number of simultaneously loaded models.
+            max_models: usize,
+        },
 
         /// A model with the given ID is not currently loaded.
         #[error("model `{model_id}` is not loaded in the GPU pool")]
-        ModelNotLoaded { model_id: String },
+        ModelNotLoaded {
+            /// The model ID that was not found.
+            model_id: String,
+        },
 
         /// A model with the same ID is already loaded.
         #[error("model `{model_id}` is already loaded")]
-        AlreadyLoaded { model_id: String },
+        AlreadyLoaded {
+            /// The duplicate model ID.
+            model_id: String,
+        },
 
         /// The KV cache has no space left for this request.
         #[error("KV cache exhausted: need {needed_mb} MB but only {available_mb} MB available")]
-        KvCacheExhausted { needed_mb: u64, available_mb: u64 },
+        KvCacheExhausted {
+            /// KV cache space required by the request, in MiB.
+            needed_mb: u64,
+            /// KV cache space currently available, in MiB.
+            available_mb: u64,
+        },
 
         /// Inference failed on the GPU backend.
         #[error("GPU inference failed for model `{model_id}`: {reason}")]
-        InferenceFailed { model_id: String, reason: String },
+        InferenceFailed {
+            /// The model ID that failed.
+            model_id: String,
+            /// Human-readable description of the failure.
+            reason: String,
+        },
 
         /// All fallback tiers (GPU, CPU, cloud) failed.
         #[error("all fallback tiers failed: {reason}")]
-        AllFallbacksFailed { reason: String },
+        AllFallbacksFailed {
+            /// Summary of all tier failures.
+            reason: String,
+        },
 
         /// The `cuda` Cargo feature is not enabled.
         #[error("CUDA is unavailable: recompile with the `cuda` feature enabled")]

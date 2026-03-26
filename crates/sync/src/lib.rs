@@ -42,6 +42,8 @@
 //! assert_eq!(pending.len(), 1);
 //! ```
 
+#![warn(missing_docs)]
+
 pub mod conflict;
 pub mod engine;
 pub mod pairing;

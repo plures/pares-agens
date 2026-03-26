@@ -11,6 +11,8 @@
 //! - [`installer`] — [`Installer`](installer::Installer) for managing skill installations.
 //! - [`security`] — [`SecurityChecker`](security::SecurityChecker) for validating third-party code.
 
+#![warn(missing_docs)]
+
 pub mod adapter;
 pub mod cli;
 pub mod discovery;

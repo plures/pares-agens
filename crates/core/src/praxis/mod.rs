@@ -25,7 +25,9 @@
 //! 4. User calls [`Ledger::resolve_gate`] with `Approved` or `Rejected`.
 //! 5. Procedure continues or aborts based on the resolved status.
 
+/// Guidance service — stores and retrieves Praxis coprocessor guidance entries.
 pub mod guidance;
+/// Decision ledger — append-only audit trail with optional approval gates.
 pub mod ledger;
 
 pub use guidance::{AnalysisEvent, GuidanceCategory, GuidanceEntry, GuidanceService, SourceSpan};

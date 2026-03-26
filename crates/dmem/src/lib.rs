@@ -69,6 +69,8 @@
 //! # }
 //! ```
 
+#![warn(missing_docs)]
+
 pub mod cache;
 pub mod capacity;
 pub mod compress;

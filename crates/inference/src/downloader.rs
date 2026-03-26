@@ -1,3 +1,5 @@
+//! Model file download and local cache management.
+
 use std::path::{Path, PathBuf};
 
 use crate::error::InferenceError;

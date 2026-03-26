@@ -3,6 +3,8 @@
 //! Provides LoRA-based fine-tuning, training data preparation, evaluation,
 //! and scheduling for periodic model refresh.
 
+#![warn(missing_docs)]
+
 pub mod skill_detection;
 
 use serde::{Deserialize, Serialize};

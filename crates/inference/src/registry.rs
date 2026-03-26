@@ -1,3 +1,5 @@
+//! Local model registry — maps model IDs to on-disk file paths.
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 

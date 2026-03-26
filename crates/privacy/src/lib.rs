@@ -30,6 +30,8 @@
 //! assert!(spans.iter().any(|m| m.pii_type == PIIType::Email));
 //! ```
 
+#![warn(missing_docs)]
+
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

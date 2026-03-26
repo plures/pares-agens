@@ -22,6 +22,8 @@
 //! - [`benchmark`] — [`BenchmarkHarness`](benchmark::BenchmarkHarness) for comparing
 //!   baseline policy vs optimized policy.
 
+#![warn(missing_docs)]
+
 pub mod benchmark;
 pub mod engine;
 pub mod telemetry;

@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! `pares-agens-core` — reactive event loop and procedure executor.
 //!
 //! # Quick start
@@ -29,22 +30,39 @@
 //! # }
 //! ```
 
+/// High-level agent abstraction and in-memory storage.
 pub mod agent;
+/// Cerebellum orchestrator — autorecall, routing, and pipeline execution.
 pub mod cerebellum;
+/// Local multi-agent delegation and concurrent sub-task execution.
 pub mod delegation;
+/// Event types consumed and emitted by the reactive event loop.
 pub mod event;
+/// Reactive event loop executor with optimization safety enforcement.
 pub mod executor;
+/// Feature-gate helpers over the license tier.
 pub mod features;
+/// Built-in event handler procedures.
 pub mod handlers;
+/// License key validation and Pro feature gates.
 pub mod license;
+/// PluresLM — native memory recall, capture, and context injection.
 pub mod memory;
+/// LLM model client and tool dispatcher abstractions.
 pub mod model;
+/// Optimization safety gates for runtime enforcement.
 pub mod optimization;
+/// Procedure registry and priority-based event dispatch.
 pub mod procedure;
+/// Encrypted secret storage abstraction.
 pub mod secrets;
+/// First-run wizard configuration and state persistence.
 pub mod setup;
+/// Event source abstraction for polling inbound events.
 pub mod source;
+/// Key-value state store backed by PluresDB.
 pub mod state;
+/// Praxis decision ledger and approval gate procedures.
 pub mod praxis;
 
 pub use agent::{Agent, InMemory};

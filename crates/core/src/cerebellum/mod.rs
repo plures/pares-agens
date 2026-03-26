@@ -45,7 +45,10 @@ pub enum Route {
     Conscious,
     /// Both conscious and subconscious in parallel.
     /// The `reason` field is injected into the subconscious prompt.
-    Deep { reason: String },
+    Deep {
+        /// Human-readable explanation of why the subconscious is being invoked.
+        reason: String,
+    },
     /// Pure procedure — no LLM needed, cerebellum handles it directly.
     Procedural,
     /// Drop the event (e.g. noise, heartbeat-ok).
@@ -119,6 +122,7 @@ pub struct CerebellumContext {
 /// autorecall and compression.  When `None`, the pure-Rust implementations
 /// are used as fallback.
 pub struct Cerebellum {
+    /// Tuning configuration for this cerebellum instance.
     pub config: CerebellumConfig,
     /// Optional PluresDB bridge for native procedure execution.
     pub pluresdb: Option<PluresDbBridge>,
@@ -183,8 +187,10 @@ impl Cerebellum {
 /// Cerebellum-level errors.
 #[derive(Debug, thiserror::Error)]
 pub enum CerebellumError {
+    /// A memory subsystem operation failed.
     #[error("memory error: {0}")]
     Memory(String),
+    /// A procedure execution step failed.
     #[error("procedure error: {0}")]
     Procedure(String),
 }

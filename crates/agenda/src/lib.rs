@@ -9,6 +9,8 @@
 //! - [`issue`] — [`Issue`](issue::Issue) work-item model and lifecycle.
 //! - [`manager`] — [`AgendaManager`](manager::AgendaManager): CRUD for issues and PRs.
 
+#![warn(missing_docs)]
+
 pub mod issue;
 pub mod manager;
 

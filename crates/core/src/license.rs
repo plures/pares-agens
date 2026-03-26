@@ -105,10 +105,16 @@ pub struct LicenseStatus {
 pub enum LicenseError {
     /// The requested feature is not available on the current tier.
     #[error("feature '{feature}' requires a Pro license")]
-    FeatureNotAvailable { feature: String },
+    FeatureNotAvailable {
+        /// The name of the gated feature (see [`Feature::name`]).
+        feature: String,
+    },
     /// The supplied license key is not valid.
     #[error("invalid license key: {reason}")]
-    InvalidKey { reason: String },
+    InvalidKey {
+        /// Human-readable description of why validation failed.
+        reason: String,
+    },
     /// The license key has expired.
     #[error("license has expired")]
     Expired,

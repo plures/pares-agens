@@ -25,7 +25,10 @@ pub enum StorageTier {
     /// All memories, all indexes, full embeddings — no eviction under budget.
     Full,
     /// Caller-specified recency window in days.
-    Custom { max_age_days: u32 },
+    Custom {
+        /// Maximum age of retained memories, in days.
+        max_age_days: u32,
+    },
 }
 
 impl StorageTier {

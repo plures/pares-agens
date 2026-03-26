@@ -48,7 +48,12 @@ pub enum DelegationError {
     UnknownAgent(String),
     /// The underlying model client returned an error.
     #[error("model error in agent '{agent}': {message}")]
-    ModelError { agent: String, message: String },
+    ModelError {
+        /// Name of the agent that encountered the error.
+        agent: String,
+        /// Human-readable error description from the model client.
+        message: String,
+    },
     /// A task join handle panicked.
     #[error("sub-task panicked: {0}")]
     Panic(String),

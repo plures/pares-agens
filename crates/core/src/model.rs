@@ -20,6 +20,7 @@ pub struct ChatMessage {
 }
 
 impl ChatMessage {
+    /// Create a system message (role `"system"`).
     pub fn system(content: impl Into<String>) -> Self {
         Self {
             role: "system".into(),
@@ -29,6 +30,7 @@ impl ChatMessage {
         }
     }
 
+    /// Create a user message (role `"user"`).
     pub fn user(content: impl Into<String>) -> Self {
         Self {
             role: "user".into(),
@@ -38,6 +40,7 @@ impl ChatMessage {
         }
     }
 
+    /// Create an assistant message (role `"assistant"`).
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
             role: "assistant".into(),
@@ -47,6 +50,8 @@ impl ChatMessage {
         }
     }
 
+    /// Create a tool-result message (role `"tool"`) correlating with
+    /// `tool_call_id`.
     pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             role: "tool".into(),

@@ -23,6 +23,8 @@
 //! # }
 //! ```
 
+#![warn(missing_docs)]
+
 mod error;
 pub mod health;
 pub mod ipc;
