@@ -14,7 +14,12 @@ pub enum InferenceError {
 
     /// The model file could not be loaded (file not found, wrong format, etc.).
     #[error("failed to load model from `{path}`: {reason}")]
-    ModelLoad { path: String, reason: String },
+    ModelLoad {
+        /// Path to the model file that failed to load.
+        path: String,
+        /// Human-readable description of the load failure.
+        reason: String,
+    },
 
     /// An inference context could not be created (out of memory, etc.).
     #[error("failed to create inference context: {0}")]
@@ -26,7 +31,12 @@ pub enum InferenceError {
 
     /// A token ID could not be decoded to a text piece.
     #[error("token decode failed for token {token}: {reason}")]
-    TokenDecode { token: i32, reason: String },
+    TokenDecode {
+        /// The numeric token ID that could not be decoded.
+        token: i32,
+        /// Human-readable description of the decode failure.
+        reason: String,
+    },
 
     /// The model forward pass (eval step) returned an error code.
     #[error("model eval failed with code {0}")]

@@ -1,3 +1,9 @@
+//! Transport abstraction for the MCP client.
+//!
+//! Provides the [`Transport`] trait plus two built-in implementations:
+//! - [`stdio::StdioTransport`] — communicates with a spawned subprocess over stdin/stdout.
+//! - [`http::HttpTransport`] — sends requests as HTTP POST to a configured URL.
+
 use async_trait::async_trait;
 use crate::error::Result;
 use crate::protocol::{JsonRpcRequest, JsonRpcResponse};
