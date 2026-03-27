@@ -159,10 +159,11 @@ impl MemoryStore for PluresDbStore {
     }
 
     async fn remove(&self, id: &str) -> Result<bool, Error> {
-        self.store
-            .delete(id)
-            .map(|_| true)
-            .or_else(|_| Ok(false))
+        match self.store.delete(id) {
+            Ok(()) => Ok(true),
+            // StoreError::NotFound is the only variant — entry did not exist.
+            Err(_) => Ok(false),
+        }
     }
 }
 

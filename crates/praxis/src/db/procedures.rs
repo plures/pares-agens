@@ -1,6 +1,6 @@
 //! Praxis procedures evaluated against [`PraxisStore`].
 //!
-//! These are the five procedures specified in the issue:
+//! These are the procedures available in this module:
 //!
 //! | Procedure | Description |
 //! |-----------|-------------|
@@ -9,6 +9,7 @@
 //! | [`compile_nl`] | Compiles natural-language text into a [`Constraint`] insert |
 //! | [`query_gaps`] | Returns [`Evidence`] records whose `result` is `Unknown` |
 //! | [`apply_correction`] | Creates or updates a constraint from a user correction |
+//! | [`undo_correction`] | Removes a correction-sourced constraint from the store |
 
 use crate::db::schema::{AgentContext, Condition, Constraint, Evidence, EvidenceResult, Severity};
 use crate::db::store::PraxisStore;

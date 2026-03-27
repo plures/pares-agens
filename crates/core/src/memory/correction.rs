@@ -258,7 +258,14 @@ fn derive_rule_summary(user_message: &str) -> String {
     // Fallback: use the original message (trimmed).
     let trimmed = user_message.trim();
     if trimmed.len() > 80 {
-        format!("follow user correction: {}…", &trimmed[..77])
+        // Find a safe UTF-8 boundary at or before byte position 77.
+        let end = trimmed
+            .char_indices()
+            .take_while(|(i, _)| *i < 77)
+            .last()
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(77);
+        format!("follow user correction: {}…", &trimmed[..end])
     } else {
         format!("follow user correction: {trimmed}")
     }
