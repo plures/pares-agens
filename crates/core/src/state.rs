@@ -110,9 +110,9 @@ impl PluresDbStateStore {
     /// Returns an error string if [`SledStorage`] cannot be opened (e.g.
     /// permission denied, corrupted database).
     pub fn open(path: impl AsRef<Path>) -> Result<Self, String> {
-        let storage: Arc<dyn StorageEngine> = Arc::new(
-            SledStorage::open(path).map_err(|e| format!("open failed: {e}"))?,
-        );
+        let storage: Arc<dyn StorageEngine> =
+            Arc::new(SledStorage::open(path).map_err(|e| format!("open failed: {e}"))?);
+
         let store = CrdtStore::default().with_persistence(storage);
         Ok(Self { store })
     }
@@ -225,10 +225,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = PluresDbStateStore::open(dir.path()).unwrap();
         store.set("persistent", json!({ "ok": true })).await;
-        assert_eq!(
-            store.get("persistent").await,
-            Some(json!({ "ok": true }))
-        );
+        assert_eq!(store.get("persistent").await, Some(json!({ "ok": true })));
     }
 
     #[tokio::test]
