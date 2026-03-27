@@ -1,0 +1,104 @@
+# API Overview
+
+This document summarizes the **public Rust API surface** exposed by the core Pares Agens runtime.
+For the CLI and procedure DSL reference, see
+[`docs/book/src/api-reference.md`](book/src/api-reference.md).
+
+## Crate: `pares-agens-core`
+
+The core crate provides the reactive event loop, procedure registry, and
+abstractions for memory/model/tool integrations.
+
+### Event loop
+
+- **`Executor`** (`pares_agens_core::executor::Executor`)
+  - `new(registry: ProcedureRegistry) -> Executor`
+  - `with_safety_gate(registry, safety_gate) -> Executor`
+  - `dispatch(&self, event: &Event) -> Vec<Event>`
+  - `run(&self, source: &dyn EventSource, max_iterations: usize)`
+
+- **`EventSource`** (`pares_agens_core::source::EventSource`)
+  - `poll_events(&self) -> Vec<Event>`
+
+### Events
+
+- **`Event`** (`pares_agens_core::event::Event`)
+  - Variants: `Message`, `Timer`, `StateChange`, `ModelResponse`, `ToolResult`
+  - `kind(&self) -> &'static str`
+
+### Procedures
+
+- **`Procedure`** (`pares_agens_core::procedure::Procedure`)
+  - `name(&self) -> &str`
+  - `handles(&self) -> &str`
+  - `execute(&self, event: &Event) -> Vec<Event>`
+
+- **`ProcedureRegistry`** (`pares_agens_core::procedure::ProcedureRegistry`)
+  - `register(Box<dyn Procedure>)`
+  - `matching(event_kind: &str) -> impl Iterator<Item = &dyn Procedure>`
+  - `enable(name: &str)`, `disable(name: &str)`
+  - `set_priority(name: &str, priority: i32)`
+  - `list_configs() -> Vec<ProcedureConfig>`
+
+### Model + tools
+
+- **`ModelClient`** (`pares_agens_core::model::ModelClient`)
+  - `complete(messages: &[ChatMessage], tools: &[ToolDefinition]) -> ModelCompletion`
+
+- **`ToolDispatcher`** (`pares_agens_core::model::ToolDispatcher`)
+  - `available_tools() -> Vec<ToolDefinition>`
+  - `call_tool(name: &str, arguments: Value) -> String`
+
+- **`ChatMessage`**, **`ToolDefinition`**, **`ToolCall`**, **`ModelCompletion`**
+  - Located in `pares_agens_core::model`
+
+### Memory
+
+- **`PluresLm`** (`pares_agens_core::memory::PluresLm`)
+  - `new(store, embedder, context_window)`
+  - `recall(query, limit, exclude_categories)`
+  - `capture(exchange)`
+  - `inject_context(entries, budget_override)`
+
+### Agent convenience types
+
+`pares_agens_core::agent` provides the `Agent` abstraction and the in-memory
+`InMemory` state implementation used in tests and local wiring.
+
+## Examples
+
+### Wiring the event loop
+
+```rust,no_run
+use pares_agens_core::{
+    executor::Executor,
+    procedure::ProcedureRegistry,
+    source::EventSource,
+};
+
+# #[tokio::main]
+# async fn main() {
+let registry = ProcedureRegistry::new();
+let executor = Executor::new(registry);
+// executor.run(&my_source, 0).await;
+# }
+```
+
+### Defining a procedure
+
+```rust,no_run
+use async_trait::async_trait;
+use pares_agens_core::{event::Event, procedure::Procedure};
+
+struct OnMessage;
+
+#[async_trait]
+impl Procedure for OnMessage {
+    fn name(&self) -> &str { "on_message" }
+    fn handles(&self) -> &str { "message" }
+    async fn execute(&self, event: &Event) -> Vec<Event> {
+        // return follow-up events
+        vec![]
+    }
+}
+```

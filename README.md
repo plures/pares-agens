@@ -14,6 +14,7 @@ A reactive AI agent powered by PluresDB procedures, PluresLM memory, and any mod
 - [Features](#features)
 - [Model Support](#model-support)
 - [Quick Start](#quick-start)
+- [API & Usage](#api--usage)
 - [Prerequisites](#prerequisites)
 - [Build from Source](#build-from-source)
 - [Running Tests](#running-tests)
@@ -86,6 +87,13 @@ model = "gpt-5"
 # 3. Optionally connect devices (mobile, other desktops — syncs via Hyperswarm)
 # 4. Start chatting
 ```
+
+## API & Usage
+
+- **Rust API:** `pares-agens-core` is the public crate for embedding the runtime.
+  See [`docs/API.md`](docs/API.md) for the main entry points.
+- **CLI + Procedure DSL:** see
+  [`docs/book/src/api-reference.md`](docs/book/src/api-reference.md).
 
 ## Prerequisites
 
