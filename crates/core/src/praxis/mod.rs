@@ -31,4 +31,7 @@ pub mod guidance;
 pub mod ledger;
 
 pub use guidance::{AnalysisEvent, GuidanceCategory, GuidanceEntry, GuidanceService, SourceSpan};
-pub use ledger::{GateStatus, Ledger, LedgerEntry, ValidationStatus};
+pub use ledger::{
+    GateStatus, InMemoryLedgerStore, Ledger, LedgerContext, LedgerEntry, LedgerStore,
+    LedgerStoreError, NoOpChannel, NotificationChannel, PluresDbLedgerStore, ValidationStatus,
+};
