@@ -438,11 +438,28 @@ mod tests {
 
     #[tokio::test]
     async fn migrate_from_env_is_idempotent() {
+        // Temporarily clear any env vars that ENV_KEY_MAP would pick up so
+        // the first call genuinely finds nothing to migrate.
+        let saved: Vec<(&str, Option<String>)> = ENV_KEY_MAP
+            .iter()
+            .map(|(env_var, _)| (*env_var, std::env::var(env_var).ok()))
+            .collect();
+        for (env_var, _) in &saved {
+            std::env::remove_var(env_var);
+        }
+
         let store = InMemorySecretStore::new();
 
         // First call — nothing in env, but sentinel is written.
         let migrated = migrate_from_env(&store).await.unwrap();
         assert!(migrated.is_empty());
+
+        // Restore env vars.
+        for (env_var, val) in &saved {
+            if let Some(v) = val {
+                std::env::set_var(env_var, v);
+            }
+        }
 
         // Second call — sentinel already present, returns empty list.
         store

@@ -321,8 +321,8 @@ impl PluresDbLedgerStore {
 impl LedgerStore for PluresDbLedgerStore {
     async fn insert(&self, entry: LedgerEntry) -> Result<(), LedgerStoreError> {
         let id = entry.id.clone();
-        let data = serde_json::to_value(&entry)
-            .map_err(|e| LedgerStoreError::Serialise(e.to_string()))?;
+        let data =
+            serde_json::to_value(&entry).map_err(|e| LedgerStoreError::Serialise(e.to_string()))?;
         self.store.put(id, LEDGER_ACTOR, data);
         Ok(())
     }
@@ -801,9 +801,7 @@ mod tests {
     async fn log_captures_channel_context() {
         let ledger = Ledger::default();
         let event = msg_event();
-        let id = ledger
-            .log(&event, serde_json::json!(null))
-            .await;
+        let id = ledger.log(&event, serde_json::json!(null)).await;
         let entry = ledger.get(&id).await.unwrap();
         assert_eq!(entry.context.channel.as_deref(), Some("test"));
     }
@@ -1009,7 +1007,10 @@ mod tests {
         let status = ledger.validate(action);
         assert_eq!(status, ValidationStatus::GateRequired);
 
-        let gate_id = ledger.gate(action, "Post to Reddit community").await.unwrap();
+        let gate_id = ledger
+            .gate(action, "Post to Reddit community")
+            .await
+            .unwrap();
         ledger.resolve_gate(&gate_id, false).await.unwrap();
 
         let entry = ledger.get(&gate_id).await.unwrap();
@@ -1024,7 +1025,9 @@ mod tests {
     async fn export_json_produces_array() {
         let ledger = Ledger::default();
         let event = msg_event();
-        ledger.log(&event, serde_json::json!({"model": "qwen3"})).await;
+        ledger
+            .log(&event, serde_json::json!({"model": "qwen3"}))
+            .await;
         ledger.gate("send_email:x", "reason").await.unwrap();
 
         let lic = crate::license::License::pro(None);
@@ -1255,4 +1258,3 @@ mod tests {
         assert!(specific.matches(&wildcard));
     }
 }
-
