@@ -1,3 +1,15 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+- Initial changelog
+
 ## [0.5.0] — 2026-03-22
 
 - feat(praxis): adopt @plures/praxis for declarative logic management (#165) (ea405ba)
@@ -93,8 +105,6 @@
 ## [0.2.0] — 2026-02-26
 
 - feat: Telegram channel adapter (teloxide) (#23) (cb7b793)
-
-# Changelog
 
 ## [0.1.0] — 2026-02-23
 
