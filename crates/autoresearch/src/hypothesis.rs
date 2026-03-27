@@ -15,7 +15,6 @@ use crate::{
     AutoresearchError, ExperimentTarget,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 // ── Hypothesis ────────────────────────────────────────────────────────────────
 
@@ -205,14 +204,6 @@ fn estimate_confidence(ledger: &ExperimentLedger, factor: f64) -> f64 {
 
     let improved = matching.iter().filter(|e| e.improved()).count();
     improved as f64 / matching.len() as f64
-}
-
-/// Build a minimal ledger entry for serialising a mutation diff.
-///
-/// Helper used in the default engine so it can inspect past mutations via JSON.
-#[allow(dead_code)]
-fn mutation_diff_value(mutation: &MutationSet) -> serde_json::Value {
-    mutation.to_diff().unwrap_or(json!(null))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

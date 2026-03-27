@@ -70,10 +70,8 @@ where
     S: PeerSearcher,
     I: EmbeddingIndex,
 {
-    #[allow(dead_code)]
     profile: DeviceCapacityProfile,
-    #[allow(dead_code)]
-    policy: StoragePolicy,
+    _policy: StoragePolicy,
     cache: MemoryCache,
     eviction: SmartEviction,
     index: I,
@@ -98,11 +96,11 @@ where
         index: I,
         mesh: MeshSearch<S>,
     ) -> Self {
-        let policy = StoragePolicy::for_tier(&profile.tier);
+        let _policy = StoragePolicy::for_tier(&profile.tier);
         let cache = MemoryCache::new(profile.budget.clone());
         Self {
             profile,
-            policy,
+            _policy,
             cache,
             eviction: SmartEviction::new(),
             index,

@@ -274,9 +274,8 @@ fn sha256_hex(data: &[u8]) -> String {
     format!("{hash:016x}{hash:016x}{hash:016x}{hash:016x}")
 }
 
-#[allow(clippy::cast_lossless)]
 fn u64(b: u8) -> u64 {
-    b as u64
+    u64::from(b)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

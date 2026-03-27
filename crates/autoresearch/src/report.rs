@@ -51,6 +51,27 @@ impl From<&LedgerEntry> for ExperimentSummary {
     }
 }
 
+// ── ReportParams ──────────────────────────────────────────────────────────────
+
+/// Parameters required to build a [`ResearchReport`] from a ledger.
+#[derive(Debug, Clone)]
+pub struct ReportParams {
+    /// Research run identifier.
+    pub run_id: String,
+    /// `ExperimentTarget::label()` string.
+    pub target_label: String,
+    /// Metric name being optimised.
+    pub metric: String,
+    /// Whether a higher metric value is better.
+    pub higher_is_better: bool,
+    /// Metric value before any mutations.
+    pub baseline_metric: f64,
+    /// When the run started.
+    pub started_at: DateTime<Utc>,
+    /// Why the run terminated.
+    pub stop_condition: StopCondition,
+}
+
 // ── ResearchReport ────────────────────────────────────────────────────────────
 
 /// Full summary of a completed (or in-progress) autoresearch run.
@@ -114,26 +135,19 @@ impl ResearchReport {
     ///
     /// # Parameters
     ///
-    /// - `run_id` — research run identifier.
-    /// - `target_label` — `ExperimentTarget::label()` string.
-    /// - `metric` — metric name.
-    /// - `higher_is_better` — direction of improvement.
-    /// - `baseline_metric` — metric value before the run.
-    /// - `started_at` — when the run started.
-    /// - `stop_condition` — why the run terminated.
+    /// - `params` — run metadata (see [`ReportParams`]).
     /// - `ledger` — the full experiment ledger.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub fn from_ledger(
-        run_id: String,
-        target_label: String,
-        metric: String,
-        higher_is_better: bool,
-        baseline_metric: f64,
-        started_at: DateTime<Utc>,
-        stop_condition: StopCondition,
-        ledger: &ExperimentLedger,
-    ) -> Self {
+    pub fn from_ledger(params: ReportParams, ledger: &ExperimentLedger) -> Self {
+        let ReportParams {
+            run_id,
+            target_label,
+            metric,
+            higher_is_better,
+            baseline_metric,
+            started_at,
+            stop_condition,
+        } = params;
         let total_experiments = ledger.len();
         let kept_count = ledger
             .entries()
@@ -288,17 +302,23 @@ mod tests {
         ledger
     }
 
+    fn default_params(stop_condition: StopCondition) -> ReportParams {
+        ReportParams {
+            run_id: "run-1".into(),
+            target_label: "procedure:test".into(),
+            metric: "recall".into(),
+            higher_is_better: true,
+            baseline_metric: 0.5,
+            started_at: Utc::now(),
+            stop_condition,
+        }
+    }
+
     #[test]
     fn report_counts_are_correct() {
         let ledger = build_ledger();
         let report = ResearchReport::from_ledger(
-            "run-1".into(),
-            "procedure:test".into(),
-            "recall".into(),
-            true,
-            0.5,
-            Utc::now(),
-            StopCondition::ExperimentBudgetExhausted,
+            default_params(StopCondition::ExperimentBudgetExhausted),
             &ledger,
         );
         assert_eq!(report.total_experiments, 3);
@@ -310,16 +330,8 @@ mod tests {
     #[test]
     fn report_best_metric() {
         let ledger = build_ledger();
-        let report = ResearchReport::from_ledger(
-            "run-1".into(),
-            "procedure:test".into(),
-            "recall".into(),
-            true,
-            0.5,
-            Utc::now(),
-            StopCondition::Converged,
-            &ledger,
-        );
+        let report =
+            ResearchReport::from_ledger(default_params(StopCondition::Converged), &ledger);
         assert!((report.best_metric - 0.6).abs() < 1e-9);
         assert!(report.improved());
     }
@@ -327,16 +339,8 @@ mod tests {
     #[test]
     fn report_total_improvement_higher_is_better() {
         let ledger = build_ledger();
-        let report = ResearchReport::from_ledger(
-            "run-1".into(),
-            "procedure:test".into(),
-            "recall".into(),
-            true,
-            0.5,
-            Utc::now(),
-            StopCondition::Converged,
-            &ledger,
-        );
+        let report =
+            ResearchReport::from_ledger(default_params(StopCondition::Converged), &ledger);
         // best = 0.6, baseline = 0.5, improvement = 0.1
         assert!((report.total_improvement - 0.1).abs() < 1e-9);
     }
@@ -344,32 +348,16 @@ mod tests {
     #[test]
     fn report_has_recommendations() {
         let ledger = build_ledger();
-        let report = ResearchReport::from_ledger(
-            "run-1".into(),
-            "procedure:test".into(),
-            "recall".into(),
-            true,
-            0.5,
-            Utc::now(),
-            StopCondition::Converged,
-            &ledger,
-        );
+        let report =
+            ResearchReport::from_ledger(default_params(StopCondition::Converged), &ledger);
         assert!(!report.recommendations.is_empty());
     }
 
     #[test]
     fn report_serialises_to_json() {
         let ledger = build_ledger();
-        let report = ResearchReport::from_ledger(
-            "run-1".into(),
-            "procedure:test".into(),
-            "recall".into(),
-            true,
-            0.5,
-            Utc::now(),
-            StopCondition::Converged,
-            &ledger,
-        );
+        let report =
+            ResearchReport::from_ledger(default_params(StopCondition::Converged), &ledger);
         let json = report.to_json().unwrap();
         assert!(json.contains("\"run_id\""));
         assert!(json.contains("\"experiments\""));
