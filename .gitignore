@@ -7,3 +7,7 @@ crates/tauri-app/ui/node_modules/
 crates/tauri-app/ui/dist/
 crates/desktop/gen/
 node_modules/
+dist/
+.env
+coverage/
+target/
