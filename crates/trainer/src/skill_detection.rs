@@ -401,11 +401,7 @@ fn dominant_analysis_domain(examples: &[TrainingExample]) -> String {
 
 /// Return the item from `candidates` that appears most often across all
 /// example prompts, falling back to `default` when none appear.
-fn best_match(
-    examples: &[TrainingExample],
-    candidates: &[&str],
-    default: &str,
-) -> String {
+fn best_match(examples: &[TrainingExample], candidates: &[&str], default: &str) -> String {
     let combined: String = examples
         .iter()
         .map(|e| e.prompt.to_lowercase())
@@ -541,7 +537,10 @@ mod tests {
                 .iter()
                 .any(|cat| matches!(cat, SkillCategory::Writing(_)))
         });
-        assert!(any_writing, "expected a Writing category in writing clusters");
+        assert!(
+            any_writing,
+            "expected a Writing category in writing clusters"
+        );
     }
 
     #[test]
@@ -554,7 +553,10 @@ mod tests {
                 .iter()
                 .any(|cat| matches!(cat, SkillCategory::Analysis(_)))
         });
-        assert!(any_analysis, "expected an Analysis category in analysis clusters");
+        assert!(
+            any_analysis,
+            "expected an Analysis category in analysis clusters"
+        );
     }
 
     #[test]
@@ -581,7 +583,11 @@ mod tests {
     #[test]
     fn identify_skills_always_returns_at_least_one_category() {
         let detector = SkillDetector::new();
-        for example_set in [&coding_examples(), &writing_examples(), &analysis_examples()] {
+        for example_set in [
+            &coding_examples(),
+            &writing_examples(),
+            &analysis_examples(),
+        ] {
             let clusters = detector.cluster_by_domain(example_set).unwrap();
             for c in &clusters {
                 let cats = detector.identify_skills(c);

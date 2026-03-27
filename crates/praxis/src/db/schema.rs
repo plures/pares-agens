@@ -85,10 +85,7 @@ impl Condition {
         match self {
             Self::Always => true,
 
-            Self::FieldEq { field, value } => ctx
-                .metadata
-                .get(field)
-                .is_some_and(|v| v == value),
+            Self::FieldEq { field, value } => ctx.metadata.get(field).is_some_and(|v| v == value),
 
             Self::FieldGt { field, threshold } => ctx
                 .metadata
@@ -102,9 +99,7 @@ impl Condition {
                 .and_then(|v| v.as_f64())
                 .is_some_and(|n| n < *threshold),
 
-            Self::ActionStartsWith { prefix } => {
-                ctx.action_type.starts_with(prefix.as_str())
-            }
+            Self::ActionStartsWith { prefix } => ctx.action_type.starts_with(prefix.as_str()),
 
             Self::SessionIs { session_type } => &ctx.session_type == session_type,
 
@@ -322,20 +317,21 @@ mod tests {
 
     #[test]
     fn condition_field_gt() {
-        let c = Condition::FieldGt { field: "privilege_level".into(), threshold: 2.0 };
-        let meta_high = [("privilege_level".into(), json!(3))]
-            .into_iter()
-            .collect();
-        let meta_low = [("privilege_level".into(), json!(1))]
-            .into_iter()
-            .collect();
+        let c = Condition::FieldGt {
+            field: "privilege_level".into(),
+            threshold: 2.0,
+        };
+        let meta_high = [("privilege_level".into(), json!(3))].into_iter().collect();
+        let meta_low = [("privilege_level".into(), json!(1))].into_iter().collect();
         assert!(c.evaluate(&ctx("admin", meta_high)));
         assert!(!c.evaluate(&ctx("admin", meta_low)));
     }
 
     #[test]
     fn condition_action_starts_with() {
-        let c = Condition::ActionStartsWith { prefix: "write_".into() };
+        let c = Condition::ActionStartsWith {
+            prefix: "write_".into(),
+        };
         assert!(c.evaluate(&ctx("write_file", HashMap::new())));
         assert!(!c.evaluate(&ctx("read_file", HashMap::new())));
     }
@@ -353,7 +349,9 @@ mod tests {
         let c = Condition::All {
             conditions: vec![
                 Condition::Always,
-                Condition::ActionStartsWith { prefix: "write_".into() },
+                Condition::ActionStartsWith {
+                    prefix: "write_".into(),
+                },
             ],
         };
         assert!(c.evaluate(&ctx("write_file", HashMap::new())));
@@ -364,8 +362,12 @@ mod tests {
     fn condition_any_requires_one() {
         let c = Condition::Any {
             conditions: vec![
-                Condition::ActionStartsWith { prefix: "write_".into() },
-                Condition::ActionStartsWith { prefix: "delete_".into() },
+                Condition::ActionStartsWith {
+                    prefix: "write_".into(),
+                },
+                Condition::ActionStartsWith {
+                    prefix: "delete_".into(),
+                },
             ],
         };
         assert!(c.evaluate(&ctx("write_file", HashMap::new())));
@@ -377,7 +379,10 @@ mod tests {
     fn condition_serde_roundtrip() {
         let c = Condition::All {
             conditions: vec![
-                Condition::FieldEq { field: "x".into(), value: json!(1) },
+                Condition::FieldEq {
+                    field: "x".into(),
+                    value: json!(1),
+                },
                 Condition::Not {
                     condition: Box::new(Condition::Always),
                 },

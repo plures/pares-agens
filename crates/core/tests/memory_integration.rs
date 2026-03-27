@@ -27,25 +27,36 @@ async fn store_recall_verify_relevance() {
     let rust_exchange = Exchange {
         user: "How do I use async await in Rust programming?".into(),
         assistant: "Use `async fn` and `.await` on futures. Add tokio runtime to Cargo.toml for \
-                    the executor. Mark functions with async keyword.".into(),
+                    the executor. Mark functions with async keyword."
+            .into(),
     };
     let rust_ids = lm.capture(&rust_exchange).await.unwrap();
-    assert_eq!(rust_ids.len(), 1, "should store one memory for the rust exchange");
+    assert_eq!(
+        rust_ids.len(),
+        1,
+        "should store one memory for the rust exchange"
+    );
 
     // Store an unrelated memory about cooking
     let food_exchange = Exchange {
         user: "How do I make the best espresso coffee at home?".into(),
         assistant: "Grind fresh beans finely, use 200 degrees Fahrenheit water, pull a 25 second \
-                    shot with 9 bar pressure through a portafilter.".into(),
+                    shot with 9 bar pressure through a portafilter."
+            .into(),
     };
     let food_ids = lm.capture(&food_exchange).await.unwrap();
-    assert_eq!(food_ids.len(), 1, "should store one memory for the food exchange");
+    assert_eq!(
+        food_ids.len(),
+        1,
+        "should store one memory for the food exchange"
+    );
 
     // Store a Python memory to add more signal
     let python_exchange = Exchange {
         user: "What is the GIL in Python and how does it affect threading?".into(),
         assistant: "The Global Interpreter Lock prevents true parallel Python thread execution. \
-                    Use multiprocessing or async/await with asyncio for concurrency instead.".into(),
+                    Use multiprocessing or async/await with asyncio for concurrency instead."
+            .into(),
     };
     lm.capture(&python_exchange).await.unwrap();
 
@@ -99,7 +110,8 @@ async fn category_exclusion_works() {
     lm.capture(&Exchange {
         user: "I prefer snake_case for variable naming conventions always.".into(),
         assistant: "Agreed — snake_case is the standard Rust naming convention for \
-                    variables and function parameters.".into(),
+                    variables and function parameters."
+            .into(),
     })
     .await
     .unwrap();
@@ -107,7 +119,8 @@ async fn category_exclusion_works() {
     lm.capture(&Exchange {
         user: "How do I implement the Display trait in Rust?".into(),
         assistant: "Implement fmt::Display by writing impl fmt::Display for YourType and \
-                    provide the fmt method that formats the struct fields.".into(),
+                    provide the fmt method that formats the struct fields."
+            .into(),
     })
     .await
     .unwrap();
@@ -146,7 +159,8 @@ async fn quality_gate_rejects_noise_and_echoes() {
     let good = Exchange {
         user: "What is ownership in Rust and how does borrowing work with lifetimes?".into(),
         assistant: "Ownership ensures memory safety without garbage collection. Each value has \
-                    exactly one owner. Borrowing allows references with lifetime annotations.".into(),
+                    exactly one owner. Borrowing allows references with lifetime annotations."
+            .into(),
     };
     let first_ids = lm.capture(&good).await.unwrap();
     assert_eq!(first_ids.len(), 1, "good exchange must be stored");

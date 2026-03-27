@@ -160,14 +160,24 @@ mod tests {
 
     #[test]
     fn step_fail_fast_defaults_to_true() {
-        let s = Step::new("s", StepKind::Shell { command: "true".to_string() });
+        let s = Step::new(
+            "s",
+            StepKind::Shell {
+                command: "true".to_string(),
+            },
+        );
         assert!(s.fail_fast);
     }
 
     #[test]
     fn step_with_fail_fast_overrides() {
-        let s = Step::new("s", StepKind::Shell { command: "true".to_string() })
-            .with_fail_fast(false);
+        let s = Step::new(
+            "s",
+            StepKind::Shell {
+                command: "true".to_string(),
+            },
+        )
+        .with_fail_fast(false);
         assert!(!s.fail_fast);
     }
 }

@@ -37,7 +37,9 @@ pub struct ModelDownloader {
 impl ModelDownloader {
     /// Create a new downloader that stores models under `model_dir`.
     pub fn new(model_dir: impl Into<PathBuf>) -> Self {
-        Self { model_dir: model_dir.into() }
+        Self {
+            model_dir: model_dir.into(),
+        }
     }
 
     /// Return the directory where models are cached.
@@ -60,8 +62,7 @@ impl ModelDownloader {
     /// Return `true` if the model file is already present on disk (checks
     /// both `.bin` and `.gguf` variants).
     pub fn verify_local(&self, model_id: &str) -> bool {
-        self.model_path(model_id).is_file()
-            || self.model_path_with_ext(model_id, "gguf").is_file()
+        self.model_path(model_id).is_file() || self.model_path_with_ext(model_id, "gguf").is_file()
     }
 
     /// Return the path of the cached model file, checking both `.gguf` and
@@ -164,10 +165,7 @@ impl ModelDownloader {
     ///
     /// - [`InferenceError::ModelNotFound`] — repository does not exist on the Hub.
     /// - [`InferenceError::Download`] — HTTP or I/O failure during transfer.
-    pub async fn download_from_hf(
-        &self,
-        repo: &str,
-    ) -> Result<(String, PathBuf), InferenceError> {
+    pub async fn download_from_hf(&self, repo: &str) -> Result<(String, PathBuf), InferenceError> {
         use futures_util::StreamExt;
         use std::io::Write;
 
@@ -220,7 +218,9 @@ impl ModelDownloader {
             })?;
 
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            return Err(InferenceError::ModelNotFound { repo: repo.to_owned() });
+            return Err(InferenceError::ModelNotFound {
+                repo: repo.to_owned(),
+            });
         }
         if !resp.status().is_success() {
             return Err(InferenceError::Download {
@@ -229,11 +229,10 @@ impl ModelDownloader {
             });
         }
 
-        let info: HfModelInfo =
-            resp.json().await.map_err(|e| InferenceError::Download {
-                repo: repo.to_owned(),
-                reason: format!("failed to parse Hub API response: {e}"),
-            })?;
+        let info: HfModelInfo = resp.json().await.map_err(|e| InferenceError::Download {
+            repo: repo.to_owned(),
+            reason: format!("failed to parse Hub API response: {e}"),
+        })?;
 
         // Prefer .gguf; fall back to .bin.
         let chosen = info
@@ -245,7 +244,11 @@ impl ModelDownloader {
                 repo: repo.to_owned(),
             })?;
 
-        let ext = if chosen.rfilename.ends_with(".gguf") { "gguf" } else { "bin" };
+        let ext = if chosen.rfilename.ends_with(".gguf") {
+            "gguf"
+        } else {
+            "bin"
+        };
         let dest = self.model_path_with_ext(&model_id, ext);
 
         // ── Step 2: Stream the file to disk ───────────────────────────────────
@@ -255,14 +258,15 @@ impl ModelDownloader {
         );
         tracing::info!(%model_id, url = %file_url, dest = %dest.display(), "downloading model");
 
-        let download_resp = client
-            .get(&file_url)
-            .send()
-            .await
-            .map_err(|e| InferenceError::Download {
-                repo: repo.to_owned(),
-                reason: format!("download request failed: {e}"),
-            })?;
+        let download_resp =
+            client
+                .get(&file_url)
+                .send()
+                .await
+                .map_err(|e| InferenceError::Download {
+                    repo: repo.to_owned(),
+                    reason: format!("download request failed: {e}"),
+                })?;
 
         if !download_resp.status().is_success() {
             return Err(InferenceError::Download {
@@ -287,10 +291,11 @@ impl ModelDownloader {
                     repo: repo.to_owned(),
                     reason: format!("stream error: {e}"),
                 })?;
-                file.write_all(&bytes).map_err(|e| InferenceError::Download {
-                    repo: repo.to_owned(),
-                    reason: format!("write error: {e}"),
-                })?;
+                file.write_all(&bytes)
+                    .map_err(|e| InferenceError::Download {
+                        repo: repo.to_owned(),
+                        reason: format!("write error: {e}"),
+                    })?;
             }
         }
 

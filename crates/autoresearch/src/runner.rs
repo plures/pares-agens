@@ -145,7 +145,11 @@ impl ResearchRunner {
         // measurement; a real implementation would run the unmodified target).
         let baseline_output = self
             .sandbox
-            .execute(&target_label, &serde_json::Value::Null, self.config.schedule.experiment_timeout_secs)
+            .execute(
+                &target_label,
+                &serde_json::Value::Null,
+                self.config.schedule.experiment_timeout_secs,
+            )
             .unwrap_or_else(|_| crate::sandbox::SandboxOutput {
                 stdout: format!("{}: 0.0", self.config.metric),
                 exit_code: Some(0),
@@ -209,7 +213,10 @@ impl ResearchRunner {
         )?;
 
         // 2. Serialise the mutation diff for the ledger.
-        let mutation_diff = hypothesis.mutation.to_diff().unwrap_or(serde_json::Value::Null);
+        let mutation_diff = hypothesis
+            .mutation
+            .to_diff()
+            .unwrap_or(serde_json::Value::Null);
         let mutation_description = hypothesis.mutation.description();
 
         // 3. Execute in sandbox.
@@ -381,8 +388,7 @@ impl ResearchRunner {
 
             // Check time budget.
             if sched.max_hours > 0.0 {
-                let elapsed_hours =
-                    (Utc::now() - state.start_time).num_seconds() as f64 / 3600.0;
+                let elapsed_hours = (Utc::now() - state.start_time).num_seconds() as f64 / 3600.0;
                 if elapsed_hours >= sched.max_hours {
                     return StopCondition::TimeBudgetExhausted;
                 }
@@ -415,16 +421,12 @@ impl ResearchRunner {
     }
 }
 
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        schedule::ResearchSchedule,
-        ExperimentTarget,
-    };
+    use crate::{schedule::ResearchSchedule, ExperimentTarget};
 
     fn test_config(max_experiments: u32) -> AutoresearchConfig {
         AutoresearchConfig {
@@ -483,10 +485,9 @@ mod tests {
         use crate::sandbox::FailingSandbox;
 
         let config = test_config(3);
-        let runner = ResearchRunner::new(config)
-            .with_sandbox(Box::new(FailingSandbox {
-                error_message: "disk full".into(),
-            }));
+        let runner = ResearchRunner::new(config).with_sandbox(Box::new(FailingSandbox {
+            error_message: "disk full".into(),
+        }));
         let report = runner.run().unwrap();
         // All experiments should error.
         assert_eq!(report.error_count, 3);
@@ -498,8 +499,9 @@ mod tests {
         use crate::sandbox::TimeoutSandbox;
 
         let config = test_config(2);
-        let runner = ResearchRunner::new(config)
-            .with_sandbox(Box::new(TimeoutSandbox { elapsed_secs: 400.0 }));
+        let runner = ResearchRunner::new(config).with_sandbox(Box::new(TimeoutSandbox {
+            elapsed_secs: 400.0,
+        }));
         let report = runner.run().unwrap();
         assert_eq!(report.error_count, 2);
     }
@@ -527,8 +529,7 @@ mod tests {
             praxis_guidance: "Reduce val_bpb".into(),
         };
 
-        let runner =
-            ResearchRunner::new(config).with_sandbox(Box::new(DryRunSandbox::default()));
+        let runner = ResearchRunner::new(config).with_sandbox(Box::new(DryRunSandbox::default()));
         let report = runner.run().unwrap();
         assert_eq!(report.stop_condition, StopCondition::Converged);
         // Should have converged well before the 100-experiment cap.

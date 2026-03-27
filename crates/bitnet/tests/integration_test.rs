@@ -64,8 +64,5 @@ fn gen_params_default_values_are_sensible() {
     assert!(p.top_p > 0.0 && p.top_p <= 1.0, "top_p must be in (0, 1]");
     assert!(p.max_tokens > 0, "max_tokens must be positive");
     assert!(p.n_threads > 0, "n_threads must be positive");
-    assert!(
-        p.seed.is_none(),
-        "default seed should be None (time-based)"
-    );
+    assert!(p.seed.is_none(), "default seed should be None (time-based)");
 }

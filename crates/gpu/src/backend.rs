@@ -30,11 +30,7 @@ pub trait ModelBackend: Send + Sync {
     /// # Errors
     ///
     /// Returns [`GpuError::InferenceFailed`] on any backend error.
-    async fn generate(
-        &self,
-        prompt: &str,
-        params: InferenceParams,
-    ) -> Result<String, GpuError>;
+    async fn generate(&self, prompt: &str, params: InferenceParams) -> Result<String, GpuError>;
 }
 
 // ── SimulatedModelBackend ─────────────────────────────────────────────────────
@@ -87,11 +83,7 @@ impl ModelBackend for SimulatedModelBackend {
         self.vram_mb
     }
 
-    async fn generate(
-        &self,
-        prompt: &str,
-        _params: InferenceParams,
-    ) -> Result<String, GpuError> {
+    async fn generate(&self, prompt: &str, _params: InferenceParams) -> Result<String, GpuError> {
         // Simulate a small async delay (yield so the executor can interleave).
         tokio::task::yield_now().await;
         Ok(format!("[simulated:{} echo] {}", self.model_id, prompt))

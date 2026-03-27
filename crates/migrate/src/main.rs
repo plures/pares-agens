@@ -51,7 +51,11 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Migrate { from, output, dry_run } => {
+        Commands::Migrate {
+            from,
+            output,
+            dry_run,
+        } => {
             let source = match from.or_else(openclaw::auto_detect) {
                 Some(p) => p,
                 None => {

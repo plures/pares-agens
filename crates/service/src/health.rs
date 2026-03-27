@@ -68,7 +68,11 @@ impl HealthStatus {
     /// Derive the overall [`HealthLevel`] from the subsystem list.
     pub fn derive_level(subsystems: Vec<SubsystemStatus>) -> HealthLevel {
         let any_unhealthy = subsystems.iter().any(|s| !s.healthy);
-        if any_unhealthy { HealthLevel::Degraded } else { HealthLevel::Ok }
+        if any_unhealthy {
+            HealthLevel::Degraded
+        } else {
+            HealthLevel::Ok
+        }
     }
 }
 
@@ -154,8 +158,16 @@ mod tests {
     #[test]
     fn derive_level_ok_when_all_healthy() {
         let subsystems = vec![
-            SubsystemStatus { name: "memory".into(), healthy: true, detail: None },
-            SubsystemStatus { name: "cerebellum".into(), healthy: true, detail: None },
+            SubsystemStatus {
+                name: "memory".into(),
+                healthy: true,
+                detail: None,
+            },
+            SubsystemStatus {
+                name: "cerebellum".into(),
+                healthy: true,
+                detail: None,
+            },
         ];
         assert_eq!(HealthStatus::derive_level(subsystems), HealthLevel::Ok);
     }
@@ -163,10 +175,21 @@ mod tests {
     #[test]
     fn derive_level_degraded_when_any_unhealthy() {
         let subsystems = vec![
-            SubsystemStatus { name: "memory".into(), healthy: true, detail: None },
-            SubsystemStatus { name: "channels".into(), healthy: false, detail: Some("timeout".into()) },
+            SubsystemStatus {
+                name: "memory".into(),
+                healthy: true,
+                detail: None,
+            },
+            SubsystemStatus {
+                name: "channels".into(),
+                healthy: false,
+                detail: Some("timeout".into()),
+            },
         ];
-        assert_eq!(HealthStatus::derive_level(subsystems), HealthLevel::Degraded);
+        assert_eq!(
+            HealthStatus::derive_level(subsystems),
+            HealthLevel::Degraded
+        );
     }
 
     #[test]

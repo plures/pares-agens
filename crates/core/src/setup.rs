@@ -171,10 +171,7 @@ impl SetupWizard {
                 self.step = self.step.next();
                 Ok(())
             }
-            _ => Err(format!(
-                "cannot set model while in {:?} step",
-                self.step
-            )),
+            _ => Err(format!("cannot set model while in {:?} step", self.step)),
         }
     }
 
@@ -350,7 +347,10 @@ mod tests {
     fn wizard_step_labels() {
         assert_eq!(WizardStep::AgentName.label(), "Name your agent");
         assert_eq!(WizardStep::ModelPicker.label(), "Pick a model");
-        assert_eq!(WizardStep::TelegramConnect.label(), "Connect Telegram (optional)");
+        assert_eq!(
+            WizardStep::TelegramConnect.label(),
+            "Connect Telegram (optional)"
+        );
         assert_eq!(WizardStep::Done.label(), "Done");
     }
 
@@ -365,7 +365,11 @@ mod tests {
         let mut wizard = SetupWizard::new();
         wizard.set_agent_name("Aria").unwrap();
         wizard.set_model(docker_model()).unwrap();
-        wizard.set_telegram(Some(TelegramSetup { token: "tok".into() })).unwrap();
+        wizard
+            .set_telegram(Some(TelegramSetup {
+                token: "tok".into(),
+            }))
+            .unwrap();
 
         let config = wizard.build().unwrap();
         assert!(config.telegram.is_some());
@@ -376,11 +380,13 @@ mod tests {
     fn wizard_with_api_key_model() {
         let mut wizard = SetupWizard::new();
         wizard.set_agent_name("Aria").unwrap();
-        wizard.set_model(ModelChoice::ApiKey {
-            provider: "openai".into(),
-            base_url: "https://api.openai.com/v1".into(),
-            api_key: "sk-test".into(),
-        }).unwrap();
+        wizard
+            .set_model(ModelChoice::ApiKey {
+                provider: "openai".into(),
+                base_url: "https://api.openai.com/v1".into(),
+                api_key: "sk-test".into(),
+            })
+            .unwrap();
         wizard.set_telegram(None).unwrap();
 
         let config = wizard.build().unwrap();
@@ -396,7 +402,10 @@ mod tests {
             setup_complete: true,
         };
         let json = serde_json::to_string(&config).unwrap();
-        assert!(!json.contains("telegram"), "null telegram should be omitted");
+        assert!(
+            !json.contains("telegram"),
+            "null telegram should be omitted"
+        );
     }
 
     #[test]

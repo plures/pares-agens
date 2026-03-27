@@ -139,8 +139,12 @@ mod tests {
     #[tokio::test]
     async fn all_returns_in_insertion_order() {
         let store = InMemoryAuditStore::new();
-        store.append(make_event(EventKind::ModelCall, "first")).await;
-        store.append(make_event(EventKind::ToolExec, "second")).await;
+        store
+            .append(make_event(EventKind::ModelCall, "first"))
+            .await;
+        store
+            .append(make_event(EventKind::ToolExec, "second"))
+            .await;
         let all = store.all().await;
         assert_eq!(all[0].actor, "first");
         assert_eq!(all[1].actor, "second");

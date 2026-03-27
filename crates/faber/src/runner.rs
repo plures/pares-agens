@@ -160,15 +160,12 @@ impl CiRunner {
             }
         }
 
-        let overall_status = if aborted
-            || step_results
-                .iter()
-                .any(|r| r.status == StepStatus::Failed)
-        {
-            RunStatus::Failure
-        } else {
-            RunStatus::Success
-        };
+        let overall_status =
+            if aborted || step_results.iter().any(|r| r.status == StepStatus::Failed) {
+                RunStatus::Failure
+            } else {
+                RunStatus::Success
+            };
 
         Ok(RunReport {
             run_id: Uuid::new_v4().to_string(),
@@ -187,17 +184,11 @@ impl CiRunner {
         match kind {
             StepKind::Shell { command } => {
                 // MVP: echo the command rather than spawning a subprocess.
-                (
-                    StepStatus::Passed,
-                    Some(format!("[simulated] $ {command}")),
-                )
+                (StepStatus::Passed, Some(format!("[simulated] $ {command}")))
             }
             StepKind::AgentTool { tool, args } => (
                 StepStatus::Passed,
-                Some(format!(
-                    "[simulated] tool={tool} args={}",
-                    args
-                )),
+                Some(format!("[simulated] tool={tool} args={}", args)),
             ),
             StepKind::EmitEvent { payload } => (
                 StepStatus::Passed,
@@ -215,7 +206,12 @@ mod tests {
     use crate::pipeline::{Pipeline, Step, StepKind};
 
     fn shell(name: &str) -> Step {
-        Step::new(name, StepKind::Shell { command: format!("echo {name}") })
+        Step::new(
+            name,
+            StepKind::Shell {
+                command: format!("echo {name}"),
+            },
+        )
     }
 
     #[test]
@@ -249,14 +245,13 @@ mod tests {
         //
         // Instead, verify that a multi-step all-pass pipeline records all
         // steps as passed.
-        let p = Pipeline::new(
-            "multi",
-            vec![shell("a"), shell("b"), shell("c")],
-        )
-        .unwrap();
+        let p = Pipeline::new("multi", vec![shell("a"), shell("b"), shell("c")]).unwrap();
         let report = CiRunner::new().run(&p).unwrap();
         assert_eq!(report.step_results.len(), 3);
-        assert!(report.step_results.iter().all(|r| r.status == StepStatus::Passed));
+        assert!(report
+            .step_results
+            .iter()
+            .all(|r| r.status == StepStatus::Passed));
     }
 
     #[test]

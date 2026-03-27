@@ -25,19 +25,19 @@
 
 #![warn(missing_docs)]
 
+pub mod cli;
 mod error;
 pub mod health;
 pub mod ipc;
-pub mod cli;
 
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
-#[cfg(target_os = "windows")]
-mod windows;
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 mod stub;
+#[cfg(target_os = "windows")]
+mod windows;
 
 pub use error::ServiceError;
 

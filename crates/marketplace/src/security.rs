@@ -248,10 +248,26 @@ const SUSPICIOUS_PATTERNS: &[(&str, &str, Severity)] = &[
     ("eval(", "dynamic code execution", Severity::High),
     ("exec(", "dynamic code execution", Severity::High),
     ("__import__", "dynamic module import", Severity::High),
-    ("subprocess", "shell subprocess invocation", Severity::Medium),
-    ("os.system", "direct shell command execution", Severity::High),
-    ("base64.decode", "potentially obfuscated payload", Severity::Medium),
-    ("password", "hard-coded credential candidate", Severity::Medium),
+    (
+        "subprocess",
+        "shell subprocess invocation",
+        Severity::Medium,
+    ),
+    (
+        "os.system",
+        "direct shell command execution",
+        Severity::High,
+    ),
+    (
+        "base64.decode",
+        "potentially obfuscated payload",
+        Severity::Medium,
+    ),
+    (
+        "password",
+        "hard-coded credential candidate",
+        Severity::Medium,
+    ),
     ("secret", "hard-coded secret candidate", Severity::Medium),
     ("api_key", "hard-coded API key candidate", Severity::Medium),
 ];
@@ -304,7 +320,10 @@ mod tests {
         let result = checker.verify_checksum(data, &wrong);
         // Either ok (unlikely collision) or SecurityViolation.
         if result.is_err() {
-            assert!(matches!(result, Err(MarketplaceError::SecurityViolation(_))));
+            assert!(matches!(
+                result,
+                Err(MarketplaceError::SecurityViolation(_))
+            ));
         }
     }
 
@@ -363,7 +382,10 @@ mod tests {
         let checker = SecurityChecker::new();
         let report = checker.scan_content("result = eval(user_input)");
         assert!(!report.is_safe());
-        assert!(report.violations.iter().any(|v| v.kind == ViolationKind::SuspiciousPattern));
+        assert!(report
+            .violations
+            .iter()
+            .any(|v| v.kind == ViolationKind::SuspiciousPattern));
     }
 
     #[test]

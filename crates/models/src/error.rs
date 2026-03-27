@@ -41,7 +41,10 @@ mod tests {
 
     #[test]
     fn api_error_display_includes_status_and_body() {
-        let e = Error::ApiError { status: 429, body: "rate limit exceeded".into() };
+        let e = Error::ApiError {
+            status: 429,
+            body: "rate limit exceeded".into(),
+        };
         let s = e.to_string();
         assert!(s.contains("429"));
         assert!(s.contains("rate limit exceeded"));

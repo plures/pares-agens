@@ -120,7 +120,10 @@ mod tests {
         ]);
         assert!(!result.all_succeeded());
         assert_eq!(result.succeeded, vec!["researcher"]);
-        assert_eq!(result.failed, vec![("coder".to_string(), "model timeout".to_string())]);
+        assert_eq!(
+            result.failed,
+            vec![("coder".to_string(), "model timeout".to_string())]
+        );
     }
 
     #[test]

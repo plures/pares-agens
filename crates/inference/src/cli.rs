@@ -72,10 +72,7 @@ impl FromStr for ModelCommand {
 /// to use the platform default (`~/.pares-agens/models`).
 ///
 /// The `hf-download` feature must be enabled to use [`ModelCommand::Download`].
-pub async fn run_cli(
-    cmd: &ModelCommand,
-    cache_dir: Option<PathBuf>,
-) -> Result<(), InferenceError> {
+pub async fn run_cli(cmd: &ModelCommand, cache_dir: Option<PathBuf>) -> Result<(), InferenceError> {
     let dir = cache_dir.unwrap_or_else(default_cache_dir);
     match cmd {
         ModelCommand::List => cmd_list(&dir),
@@ -94,7 +91,10 @@ const SEPARATOR_WIDTH: usize = COL_MODEL_ID + 1 + COL_SIZE + 2 + "Description".l
 
 fn cmd_list(cache_dir: &std::path::Path) -> Result<(), InferenceError> {
     if !cache_dir.exists() {
-        println!("No models cached (directory does not exist: {}).", cache_dir.display());
+        println!(
+            "No models cached (directory does not exist: {}).",
+            cache_dir.display()
+        );
         return Ok(());
     }
 
@@ -109,7 +109,10 @@ fn cmd_list(cache_dir: &std::path::Path) -> Result<(), InferenceError> {
     let mut entries: Vec<_> = registry.entries().collect();
     entries.sort_by(|a, b| a.model_id.cmp(&b.model_id));
 
-    println!("{:<COL_MODEL_ID$} {:>COL_SIZE$}  Description", "Model ID", "Size");
+    println!(
+        "{:<COL_MODEL_ID$} {:>COL_SIZE$}  Description",
+        "Model ID", "Size"
+    );
     println!("{}", "-".repeat(SEPARATOR_WIDTH));
     for entry in entries {
         let size_str = match entry.file_size_bytes {
@@ -205,9 +208,18 @@ mod tests {
 
     #[test]
     fn from_str_list() {
-        assert!(matches!("list".parse::<ModelCommand>(), Ok(ModelCommand::List)));
-        assert!(matches!("LIST".parse::<ModelCommand>(), Ok(ModelCommand::List)));
-        assert!(matches!("List".parse::<ModelCommand>(), Ok(ModelCommand::List)));
+        assert!(matches!(
+            "list".parse::<ModelCommand>(),
+            Ok(ModelCommand::List)
+        ));
+        assert!(matches!(
+            "LIST".parse::<ModelCommand>(),
+            Ok(ModelCommand::List)
+        ));
+        assert!(matches!(
+            "List".parse::<ModelCommand>(),
+            Ok(ModelCommand::List)
+        ));
     }
 
     #[test]
@@ -221,7 +233,10 @@ mod tests {
     async fn run_cli_list_empty_dir() {
         let tmp = tempfile::tempdir().unwrap();
         let result = run_cli(&ModelCommand::List, Some(tmp.path().to_path_buf())).await;
-        assert!(result.is_ok(), "list on empty dir should not error: {result:?}");
+        assert!(
+            result.is_ok(),
+            "list on empty dir should not error: {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -239,11 +254,16 @@ mod tests {
     async fn run_cli_remove_missing_model_is_ok() {
         let tmp = tempfile::tempdir().unwrap();
         let result = run_cli(
-            &ModelCommand::Remove { model_id: "nonexistent".to_string() },
+            &ModelCommand::Remove {
+                model_id: "nonexistent".to_string(),
+            },
             Some(tmp.path().to_path_buf()),
         )
         .await;
-        assert!(result.is_ok(), "removing missing model should not error: {result:?}");
+        assert!(
+            result.is_ok(),
+            "removing missing model should not error: {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -254,7 +274,9 @@ mod tests {
         assert!(model_path.exists());
 
         let result = run_cli(
-            &ModelCommand::Remove { model_id: "test-model".to_string() },
+            &ModelCommand::Remove {
+                model_id: "test-model".to_string(),
+            },
             Some(tmp.path().to_path_buf()),
         )
         .await;
@@ -267,7 +289,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let nonexistent = tmp.path().join("does-not-exist");
         let result = run_cli(&ModelCommand::List, Some(nonexistent)).await;
-        assert!(result.is_ok(), "list with missing dir should not error: {result:?}");
+        assert!(
+            result.is_ok(),
+            "list with missing dir should not error: {result:?}"
+        );
     }
 
     #[test]

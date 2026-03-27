@@ -21,16 +21,14 @@ use crate::procedure::Procedure;
 // ── stop-word list ────────────────────────────────────────────────────────────
 
 const STOPWORDS: &[&str] = &[
-    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "must", "shall", "can", "to", "of", "in",
-    "on", "at", "by", "for", "with", "about", "as", "into", "through",
-    "during", "before", "after", "above", "below", "from", "up", "down",
-    "out", "off", "over", "under", "again", "further", "then", "once",
-    "i", "me", "my", "we", "our", "you", "your", "he", "him", "his",
-    "she", "her", "it", "its", "they", "them", "their", "this", "that",
-    "these", "those", "and", "but", "or", "not", "no", "so", "if",
-    "how", "what", "which", "who", "when", "where", "why",
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+    "do", "does", "did", "will", "would", "could", "should", "may", "might", "must", "shall",
+    "can", "to", "of", "in", "on", "at", "by", "for", "with", "about", "as", "into", "through",
+    "during", "before", "after", "above", "below", "from", "up", "down", "out", "off", "over",
+    "under", "again", "further", "then", "once", "i", "me", "my", "we", "our", "you", "your", "he",
+    "him", "his", "she", "her", "it", "its", "they", "them", "their", "this", "that", "these",
+    "those", "and", "but", "or", "not", "no", "so", "if", "how", "what", "which", "who", "when",
+    "where", "why",
 ];
 
 /// Extract key terms from `text` by tokenizing on non-alphanumeric characters,
@@ -142,9 +140,7 @@ fn extract_primitives(text: &str) -> Vec<Primitive> {
     ] {
         if let Some(pos) = find_case_insensitive(text, prefix) {
             let rest = &text[pos + prefix.len()..];
-            let end = rest
-                .find(['.', '!', '?', '\n'])
-                .unwrap_or(rest.len());
+            let end = rest.find(['.', '!', '?', '\n']).unwrap_or(rest.len());
             let decision_text = rest[..end].trim().to_string();
             if !decision_text.is_empty() {
                 primitives.push(Primitive::Decision {
@@ -156,17 +152,10 @@ fn extract_primitives(text: &str) -> Vec<Primitive> {
     }
 
     // Preferences — "I prefer X", "always use X", "never use X"
-    for prefix in &[
-        "i prefer ",
-        "always use ",
-        "never use ",
-        "prefer to use ",
-    ] {
+    for prefix in &["i prefer ", "always use ", "never use ", "prefer to use "] {
         if let Some(pos) = lower.find(prefix) {
             let rest = &text[pos + prefix.len()..];
-            let end = rest
-                .find(['.', '!', '?', '\n'])
-                .unwrap_or(rest.len());
+            let end = rest.find(['.', '!', '?', '\n']).unwrap_or(rest.len());
             let pref_text = rest[..end].trim().to_string();
             if !pref_text.is_empty() {
                 primitives.push(Primitive::Preference { text: pref_text });
@@ -186,9 +175,7 @@ fn extract_primitives(text: &str) -> Vec<Primitive> {
                 .cloned()
                 .collect::<Vec<_>>()
                 .join(" ");
-            if !subject.is_empty()
-                && !object.is_empty()
-                && subject.split_whitespace().count() <= 4
+            if !subject.is_empty() && !object.is_empty() && subject.split_whitespace().count() <= 4
             {
                 primitives.push(Primitive::Fact {
                     subject,
@@ -208,7 +195,13 @@ fn extract_primitives(text: &str) -> Vec<Primitive> {
 /// with an underscore to prevent malformed key paths.
 fn sanitize_key_segment(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -227,7 +220,11 @@ fn primitive_to_state_change(primitive: &Primitive) -> (String, serde_json::Valu
             "primitive.preference".into(),
             serde_json::json!({ "text": text }),
         ),
-        Primitive::Fact { subject, predicate, object } => (
+        Primitive::Fact {
+            subject,
+            predicate,
+            object,
+        } => (
             format!("primitive.fact.{}", sanitize_key_segment(subject)),
             serde_json::json!({ "predicate": predicate, "object": object }),
         ),
@@ -353,7 +350,9 @@ impl Procedure for Autorecall {
             return vec![];
         }
 
-        let context = self.memory.inject_context(&memories, Some(self.token_budget));
+        let context = self
+            .memory
+            .inject_context(&memories, Some(self.token_budget));
         debug!(context_len = context.len(), "autorecall: context assembled");
 
         vec![Event::StateChange {
@@ -411,7 +410,10 @@ impl Procedure for PrimitiveExtract {
             return vec![];
         }
 
-        debug!(count = primitives.len(), "primitive-extract: found primitives");
+        debug!(
+            count = primitives.len(),
+            "primitive-extract: found primitives"
+        );
 
         // Emit one StateChange event per extracted primitive.
         primitives
@@ -473,7 +475,10 @@ impl Procedure for CerebellumSweep {
             _ => return vec![],
         }
 
-        debug!(staleness_days = self.staleness_days, "cerebellum-sweep: starting");
+        debug!(
+            staleness_days = self.staleness_days,
+            "cerebellum-sweep: starting"
+        );
 
         let all_entries = match self.memory.scan_all().await {
             Ok(entries) => entries,
@@ -489,15 +494,14 @@ impl Procedure for CerebellumSweep {
         }
 
         let now = chrono::Utc::now();
-        let staleness_cutoff =
-            chrono::Duration::days(i64::from(self.staleness_days));
+        let staleness_cutoff = chrono::Duration::days(i64::from(self.staleness_days));
         let mut events = Vec::new();
 
         // Identify stale entries.
         let stale_ids: Vec<String> = all_entries
             .iter()
-            .filter(|entry| {
-                match chrono::DateTime::parse_from_rfc3339(&entry.created_at) {
+            .filter(
+                |entry| match chrono::DateTime::parse_from_rfc3339(&entry.created_at) {
                     Ok(created) => {
                         now.signed_duration_since(created.with_timezone(&chrono::Utc))
                             > staleness_cutoff
@@ -511,13 +515,16 @@ impl Procedure for CerebellumSweep {
                         );
                         false
                     }
-                }
-            })
+                },
+            )
             .map(|entry| entry.id.clone())
             .collect();
 
         if !stale_ids.is_empty() {
-            debug!(count = stale_ids.len(), "cerebellum-sweep: found stale entries");
+            debug!(
+                count = stale_ids.len(),
+                "cerebellum-sweep: found stale entries"
+            );
             events.push(Event::StateChange {
                 key: "cerebellum.sweep.stale".into(),
                 old_value: None,
@@ -607,13 +614,13 @@ mod tests {
         let mut registry = ProcedureRegistry::new();
         register_builtins(&mut registry, test_memory(), &test_config());
 
-        let message_procs: Vec<&str> = registry
-            .matching("message")
-            .map(|p| p.name())
-            .collect();
+        let message_procs: Vec<&str> = registry.matching("message").map(|p| p.name()).collect();
 
         // cerebellum (-200) → autorecall (-100) → primitive-extract (0)
-        assert_eq!(message_procs, vec!["cerebellum", "autorecall", "primitive-extract"]);
+        assert_eq!(
+            message_procs,
+            vec!["cerebellum", "autorecall", "primitive-extract"]
+        );
     }
 
     #[test]
@@ -621,10 +628,7 @@ mod tests {
         let mut registry = ProcedureRegistry::new();
         register_builtins(&mut registry, test_memory(), &test_config());
 
-        let timer_procs: Vec<&str> = registry
-            .matching("timer")
-            .map(|p| p.name())
-            .collect();
+        let timer_procs: Vec<&str> = registry.matching("timer").map(|p| p.name()).collect();
 
         assert_eq!(timer_procs, vec!["cerebellum-sweep"]);
     }
@@ -677,14 +681,20 @@ mod tests {
     #[test]
     fn extract_primitives_finds_preferences_always_use() {
         let primitives = extract_primitives("Always use async/await for IO operations.");
-        assert!(primitives.iter().any(|p| matches!(p, Primitive::Preference { .. })));
+        assert!(primitives
+            .iter()
+            .any(|p| matches!(p, Primitive::Preference { .. })));
     }
 
     #[test]
     fn extract_primitives_returns_no_decisions_or_prefs_for_plain_text() {
         let primitives = extract_primitives("The weather is nice today.");
-        assert!(!primitives.iter().any(|p| matches!(p, Primitive::Decision { .. })));
-        assert!(!primitives.iter().any(|p| matches!(p, Primitive::Preference { .. })));
+        assert!(!primitives
+            .iter()
+            .any(|p| matches!(p, Primitive::Decision { .. })));
+        assert!(!primitives
+            .iter()
+            .any(|p| matches!(p, Primitive::Preference { .. })));
     }
 
     // ── autorecall ────────────────────────────────────────────────────────────
@@ -692,7 +702,11 @@ mod tests {
     #[tokio::test]
     async fn autorecall_returns_empty_for_non_message_event() {
         let proc = Autorecall::new(test_memory(), &test_config());
-        let event = Event::Timer { id: "t".into(), name: "sweep".into(), recurring: true };
+        let event = Event::Timer {
+            id: "t".into(),
+            name: "sweep".into(),
+            recurring: true,
+        };
         assert!(proc.execute(&event).await.is_empty());
     }
 
@@ -717,7 +731,9 @@ mod tests {
         memory
             .capture(&Exchange {
                 user: "What is autorecall?".into(),
-                assistant: "Autorecall retrieves relevant memories and compresses them into context.".into(),
+                assistant:
+                    "Autorecall retrieves relevant memories and compresses them into context."
+                        .into(),
             })
             .await
             .unwrap();
@@ -781,7 +797,11 @@ mod tests {
     #[tokio::test]
     async fn primitive_extract_returns_empty_for_non_message() {
         let proc = PrimitiveExtract::new(test_memory());
-        let event = Event::Timer { id: "t".into(), name: "sweep".into(), recurring: true };
+        let event = Event::Timer {
+            id: "t".into(),
+            name: "sweep".into(),
+            recurring: true,
+        };
         assert!(proc.execute(&event).await.is_empty());
     }
 
@@ -835,7 +855,11 @@ mod tests {
     #[tokio::test]
     async fn sweep_returns_empty_for_empty_memory() {
         let proc = CerebellumSweep::new(test_memory(), &test_config());
-        let event = Event::Timer { id: "t".into(), name: "sweep".into(), recurring: true };
+        let event = Event::Timer {
+            id: "t".into(),
+            name: "sweep".into(),
+            recurring: true,
+        };
         assert!(proc.execute(&event).await.is_empty());
     }
 
@@ -862,13 +886,19 @@ mod tests {
         config.staleness_days = 30;
 
         let proc = CerebellumSweep::new(memory, &config);
-        let event = Event::Timer { id: "t".into(), name: "sweep".into(), recurring: true };
+        let event = Event::Timer {
+            id: "t".into(),
+            name: "sweep".into(),
+            recurring: true,
+        };
         let results = proc.execute(&event).await;
 
-        let stale_event = results.iter().find(|e| matches!(
-            e,
-            Event::StateChange { key, .. } if key == "cerebellum.sweep.stale"
-        ));
+        let stale_event = results.iter().find(|e| {
+            matches!(
+                e,
+                Event::StateChange { key, .. } if key == "cerebellum.sweep.stale"
+            )
+        });
         assert!(stale_event.is_some(), "sweep should detect the stale entry");
 
         if let Some(Event::StateChange { new_value, .. }) = stale_event {
@@ -914,7 +944,11 @@ mod tests {
         config.similarity_threshold = 0.85;
 
         let proc = CerebellumSweep::new(memory, &config);
-        let event = Event::Timer { id: "t".into(), name: "sweep".into(), recurring: true };
+        let event = Event::Timer {
+            id: "t".into(),
+            name: "sweep".into(),
+            recurring: true,
+        };
         let results = proc.execute(&event).await;
 
         assert!(

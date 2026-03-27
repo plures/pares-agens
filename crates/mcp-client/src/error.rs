@@ -54,7 +54,10 @@ mod tests {
 
     #[test]
     fn jsonrpc_error_display_includes_code_and_message() {
-        let e = McpError::JsonRpc { code: -32601, message: "Method not found".into() };
+        let e = McpError::JsonRpc {
+            code: -32601,
+            message: "Method not found".into(),
+        };
         let s = e.to_string();
         assert!(s.contains("-32601"));
         assert!(s.contains("Method not found"));

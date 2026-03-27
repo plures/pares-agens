@@ -61,17 +61,32 @@ mod tests {
     fn researcher_has_search_tools() {
         let def = researcher();
         assert_eq!(def.name, "researcher");
-        assert!(def.capabilities.allowed_tools.contains(&"web_search".to_string()));
-        assert!(def.capabilities.allowed_tools.contains(&"fetch_url".to_string()));
+        assert!(def
+            .capabilities
+            .allowed_tools
+            .contains(&"web_search".to_string()));
+        assert!(def
+            .capabilities
+            .allowed_tools
+            .contains(&"fetch_url".to_string()));
     }
 
     #[test]
     fn coder_has_file_tools() {
         let def = coder();
         assert_eq!(def.name, "coder");
-        assert!(def.capabilities.allowed_tools.contains(&"read_file".to_string()));
-        assert!(def.capabilities.allowed_tools.contains(&"write_file".to_string()));
-        assert!(def.capabilities.allowed_tools.contains(&"run_command".to_string()));
+        assert!(def
+            .capabilities
+            .allowed_tools
+            .contains(&"read_file".to_string()));
+        assert!(def
+            .capabilities
+            .allowed_tools
+            .contains(&"write_file".to_string()));
+        assert!(def
+            .capabilities
+            .allowed_tools
+            .contains(&"run_command".to_string()));
     }
 
     #[test]

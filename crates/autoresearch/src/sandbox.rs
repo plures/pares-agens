@@ -112,9 +112,7 @@ impl ExecutionSandbox for FailingSandbox {
         _mutation_diff: &serde_json::Value,
         _timeout_secs: f64,
     ) -> Result<SandboxOutput, AutoresearchError> {
-        Err(AutoresearchError::SandboxError(
-            self.error_message.clone(),
-        ))
+        Err(AutoresearchError::SandboxError(self.error_message.clone()))
     }
 }
 
@@ -183,9 +181,7 @@ mod tests {
     #[test]
     fn dry_run_sandbox_returns_fake_output() {
         let sandbox = DryRunSandbox::default();
-        let out = sandbox
-            .execute("procedure:test", &json!({}), 60.0)
-            .unwrap();
+        let out = sandbox.execute("procedure:test", &json!({}), 60.0).unwrap();
         assert!(out.succeeded());
         assert_eq!(out.stdout, "val_bpb: 1.234");
     }
@@ -203,7 +199,9 @@ mod tests {
 
     #[test]
     fn timeout_sandbox_reports_timeout() {
-        let sandbox = TimeoutSandbox { elapsed_secs: 400.0 };
+        let sandbox = TimeoutSandbox {
+            elapsed_secs: 400.0,
+        };
         let out = sandbox
             .execute("command:cargo test", &json!({}), 300.0)
             .unwrap();

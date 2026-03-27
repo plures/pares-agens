@@ -52,6 +52,8 @@ pub mod memory;
 pub mod model;
 /// Optimization safety gates for runtime enforcement.
 pub mod optimization;
+/// Praxis decision ledger and approval gate procedures.
+pub mod praxis;
 /// Procedure registry and priority-based event dispatch.
 pub mod procedure;
 /// Encrypted secret storage abstraction.
@@ -62,9 +64,7 @@ pub mod setup;
 pub mod source;
 /// Key-value state store backed by PluresDB.
 pub mod state;
-/// Praxis decision ledger and approval gate procedures.
-pub mod praxis;
 
-pub use agent::{Agent, InMemory};
 pub use agent::Memory as AgentMemory;
+pub use agent::{Agent, InMemory};
 pub use event::Event;

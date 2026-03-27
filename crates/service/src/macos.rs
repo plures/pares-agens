@@ -145,10 +145,17 @@ impl ServiceManager for MacosServiceManager {
         let (status, description) = if pid.is_some() {
             (ServiceStatus::Running, "Service is running".to_owned())
         } else {
-            (ServiceStatus::Stopped, "Service is loaded but not running".to_owned())
+            (
+                ServiceStatus::Stopped,
+                "Service is loaded but not running".to_owned(),
+            )
         };
 
-        Ok(ServiceInfo { status, pid, description })
+        Ok(ServiceInfo {
+            status,
+            pid,
+            description,
+        })
     }
 
     fn uninstall(&self) -> Result<(), ServiceError> {

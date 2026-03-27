@@ -90,8 +90,7 @@ impl ProcedureRegistry {
             .procedures
             .iter()
             .filter(move |p| {
-                p.handles() == event_kind
-                    && *self.enabled.get(p.name()).unwrap_or(&true)
+                p.handles() == event_kind && *self.enabled.get(p.name()).unwrap_or(&true)
             })
             .map(|p| p.as_ref())
             .collect();
@@ -175,8 +174,14 @@ mod tests {
     #[test]
     fn list_configs_reflects_registered_procedures() {
         let mut registry = ProcedureRegistry::new();
-        registry.register(Box::new(Noop { name: "p1", handles: "message" }));
-        registry.register(Box::new(Noop { name: "p2", handles: "timer" }));
+        registry.register(Box::new(Noop {
+            name: "p1",
+            handles: "message",
+        }));
+        registry.register(Box::new(Noop {
+            name: "p2",
+            handles: "timer",
+        }));
 
         let configs = registry.list_configs();
         assert_eq!(configs.len(), 2);
@@ -187,17 +192,26 @@ mod tests {
     #[tokio::test]
     async fn disabled_procedure_is_skipped_during_dispatch() {
         let mut registry = ProcedureRegistry::new();
-        registry.register(Box::new(Noop { name: "p1", handles: "message" }));
+        registry.register(Box::new(Noop {
+            name: "p1",
+            handles: "message",
+        }));
         registry.disable("p1");
 
         let matched: Vec<_> = registry.matching("message").collect();
-        assert!(matched.is_empty(), "disabled procedure must not be dispatched");
+        assert!(
+            matched.is_empty(),
+            "disabled procedure must not be dispatched"
+        );
     }
 
     #[tokio::test]
     async fn re_enabled_procedure_is_dispatched() {
         let mut registry = ProcedureRegistry::new();
-        registry.register(Box::new(Noop { name: "p1", handles: "message" }));
+        registry.register(Box::new(Noop {
+            name: "p1",
+            handles: "message",
+        }));
         registry.disable("p1");
         registry.enable("p1");
 
@@ -208,7 +222,10 @@ mod tests {
     #[test]
     fn list_configs_reflects_enabled_state() {
         let mut registry = ProcedureRegistry::new();
-        registry.register(Box::new(Noop { name: "p1", handles: "message" }));
+        registry.register(Box::new(Noop {
+            name: "p1",
+            handles: "message",
+        }));
         registry.disable("p1");
 
         let configs = registry.list_configs();
@@ -218,7 +235,10 @@ mod tests {
     #[test]
     fn set_priority_reflected_in_list_configs() {
         let mut registry = ProcedureRegistry::new();
-        registry.register(Box::new(Noop { name: "p1", handles: "message" }));
+        registry.register(Box::new(Noop {
+            name: "p1",
+            handles: "message",
+        }));
         registry.set_priority("p1", 10);
 
         let configs = registry.list_configs();
@@ -228,8 +248,14 @@ mod tests {
     #[tokio::test]
     async fn matching_returns_procedures_sorted_by_priority() {
         let mut registry = ProcedureRegistry::new();
-        registry.register(Box::new(Noop { name: "high", handles: "message" }));
-        registry.register(Box::new(Noop { name: "low", handles: "message" }));
+        registry.register(Box::new(Noop {
+            name: "high",
+            handles: "message",
+        }));
+        registry.register(Box::new(Noop {
+            name: "low",
+            handles: "message",
+        }));
         registry.set_priority("high", -1);
         registry.set_priority("low", 5);
 
@@ -257,7 +283,10 @@ mod tests {
     #[tokio::test]
     async fn unregistered_event_kind_returns_no_procedures() {
         let mut registry = ProcedureRegistry::new();
-        registry.register(Box::new(Noop { name: "p1", handles: "message" }));
+        registry.register(Box::new(Noop {
+            name: "p1",
+            handles: "message",
+        }));
 
         let matched: Vec<_> = registry.matching("timer").collect();
         assert!(matched.is_empty());

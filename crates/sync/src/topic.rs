@@ -122,9 +122,7 @@ impl TopicManager {
     /// Return `true` when `topic` is currently subscribed (and active).
     #[must_use]
     pub fn is_subscribed(&self, topic: SyncTopic) -> bool {
-        self.subscriptions
-            .get(&topic)
-            .is_some_and(|s| s.active)
+        self.subscriptions.get(&topic).is_some_and(|s| s.active)
     }
 
     /// Return an iterator over all active subscriptions.

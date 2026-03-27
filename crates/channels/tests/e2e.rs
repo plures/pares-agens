@@ -24,7 +24,10 @@ async fn e2e_message_echo_and_memory_capture() {
     );
 
     let recalled = memory.recall("hello").await.expect("recall failed");
-    assert!(!recalled.is_empty(), "memory should have captured the message");
+    assert!(
+        !recalled.is_empty(),
+        "memory should have captured the message"
+    );
 }
 
 #[test]

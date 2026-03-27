@@ -116,7 +116,7 @@ impl OptimizationSafetyGate {
     }
 
     /// Check safety status for an optimization action.
-    /// 
+    ///
     /// In a real implementation, this would call out to a control plane.
     /// For now, we provide a placeholder that demonstrates the interface.
     pub fn check_optimization_safety(&self, action: &str) -> OptimizationSafety {
@@ -174,7 +174,10 @@ impl OptimizationSafetyGate {
                 let telemetry = OptimizationTelemetry::new(action, safety.clone(), None);
                 self.record_telemetry(telemetry);
 
-                Err(format!("Action blocked: unsafe solution detected for '{}'", action))
+                Err(format!(
+                    "Action blocked: unsafe solution detected for '{}'",
+                    action
+                ))
             }
         }
     }
@@ -187,11 +190,8 @@ impl OptimizationSafetyGate {
         context: impl Into<String>,
     ) -> EvidenceRequest {
         let request = EvidenceRequest::new(description, required_evidence, context);
-        self.evidence_requests
-            .lock()
-            .unwrap()
-            .push(request.clone());
-        
+        self.evidence_requests.lock().unwrap().push(request.clone());
+
         tracing::warn!(
             request_id = %request.id,
             description = %request.description,
@@ -236,7 +236,11 @@ impl OptimizationSafetyGate {
     }
 
     /// Update the eventual outcome for a telemetry record.
-    pub fn update_telemetry_outcome(&self, telemetry_id: &str, outcome: impl Into<String>) -> Result<(), String> {
+    pub fn update_telemetry_outcome(
+        &self,
+        telemetry_id: &str,
+        outcome: impl Into<String>,
+    ) -> Result<(), String> {
         let mut records = self.telemetry.lock().unwrap();
         if let Some(record) = records.iter_mut().find(|r| r.id == telemetry_id) {
             record.set_eventual_outcome(outcome);
@@ -288,7 +292,9 @@ mod tests {
     async fn execute_with_safety_allows_ready_actions() {
         let gate = OptimizationSafetyGate::new();
         let result = gate
-            .execute_with_safety_check("safe_optimization", || Ok::<String, String>("success".into()))
+            .execute_with_safety_check("safe_optimization", || {
+                Ok::<String, String>("success".into())
+            })
             .await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "success");
@@ -298,7 +304,9 @@ mod tests {
     async fn execute_with_safety_blocks_unsafe_actions() {
         let gate = OptimizationSafetyGate::new();
         let result = gate
-            .execute_with_safety_check("delete_everything", || Ok::<String, String>("should_not_execute".into()))
+            .execute_with_safety_check("delete_everything", || {
+                Ok::<String, String>("should_not_execute".into())
+            })
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("unsafe solution"));
@@ -308,11 +316,13 @@ mod tests {
     async fn execute_with_safety_blocks_insufficient_data() {
         let gate = OptimizationSafetyGate::new();
         let result = gate
-            .execute_with_safety_check("experimental_ai", || Ok::<String, String>("should_not_execute".into()))
+            .execute_with_safety_check("experimental_ai", || {
+                Ok::<String, String>("should_not_execute".into())
+            })
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("insufficient data"));
-        
+
         // Should generate evidence request
         let requests = gate.get_pending_evidence_requests();
         assert_eq!(requests.len(), 1);
@@ -327,7 +337,7 @@ mod tests {
             vec!["metric1".into(), "metric2".into()],
             "test_action",
         );
-        
+
         assert!(!req.id.is_empty());
         assert_eq!(req.description, "Need more data");
         assert_eq!(req.required_evidence, vec!["metric1", "metric2"]);
@@ -341,25 +351,25 @@ mod tests {
     #[test]
     fn telemetry_recording() {
         let gate = OptimizationSafetyGate::new();
-        let telemetry = OptimizationTelemetry::new(
-            "blocked_action",
-            OptimizationSafety::UnsafeSolution,
-            None,
-        );
+        let telemetry =
+            OptimizationTelemetry::new("blocked_action", OptimizationSafety::UnsafeSolution, None);
         let telemetry_id = telemetry.id.clone();
-        
+
         gate.record_telemetry(telemetry);
-        
+
         let records = gate.get_telemetry(None);
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].blocked_action, "blocked_action");
-        
+
         // Test outcome update
         let result = gate.update_telemetry_outcome(&telemetry_id, "blocked_permanently");
         assert!(result.is_ok());
-        
+
         let updated_records = gate.get_telemetry(None);
-        assert_eq!(updated_records[0].eventual_outcome, Some("blocked_permanently".into()));
+        assert_eq!(
+            updated_records[0].eventual_outcome,
+            Some("blocked_permanently".into())
+        );
     }
 
     #[test]

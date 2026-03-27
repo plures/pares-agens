@@ -25,7 +25,14 @@ impl Procedure for EchoMessage {
         "message"
     }
     async fn execute(&self, event: &Event) -> Vec<Event> {
-        if let Event::Message { id, channel, content, sender, .. } = event {
+        if let Event::Message {
+            id,
+            channel,
+            content,
+            sender,
+            ..
+        } = event
+        {
             // Only echo user-originated messages to avoid an infinite loop
             if sender == "user" {
                 vec![Event::Message {
@@ -115,8 +122,15 @@ async fn on_message_echoes_via_executor() {
 
     let follow_ups = executor.dispatch(&msg("hello world")).await;
 
-    assert_eq!(follow_ups.len(), 1, "on_message should emit exactly one echo");
-    if let Event::Message { content, sender, .. } = &follow_ups[0] {
+    assert_eq!(
+        follow_ups.len(),
+        1,
+        "on_message should emit exactly one echo"
+    );
+    if let Event::Message {
+        content, sender, ..
+    } = &follow_ups[0]
+    {
         assert_eq!(content, "hello world");
         assert_eq!(sender, "agent");
     } else {
@@ -136,10 +150,7 @@ async fn on_timer_dispatches_cleanly() {
 
 #[tokio::test]
 async fn event_loop_processes_multiple_batches() {
-    let source = BatchSource::new(vec![
-        vec![msg("first")],
-        vec![msg("second"), timer("tick")],
-    ]);
+    let source = BatchSource::new(vec![vec![msg("first")], vec![msg("second"), timer("tick")]]);
 
     let mut registry = ProcedureRegistry::new();
     registry.register(Box::new(EchoMessage));
@@ -216,7 +227,13 @@ async fn all_five_event_kinds_are_constructible() {
         },
     ];
 
-    let kinds = ["message", "timer", "state_change", "model_response", "tool_result"];
+    let kinds = [
+        "message",
+        "timer",
+        "state_change",
+        "model_response",
+        "tool_result",
+    ];
     for (event, expected_kind) in events.iter().zip(kinds.iter()) {
         assert_eq!(event.kind(), *expected_kind);
     }

@@ -128,9 +128,15 @@ mod tests {
     }
 
     impl Rule for SimpleRule {
-        fn name(&self) -> &str { self.name }
-        fn category(&self) -> RuleCategory { self.cat.clone() }
-        fn evaluate(&self, _ctx: &RuleContext) -> RuleResult { self.result.clone() }
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn category(&self) -> RuleCategory {
+            self.cat.clone()
+        }
+        fn evaluate(&self, _ctx: &RuleContext) -> RuleResult {
+            self.result.clone()
+        }
     }
 
     fn make_rule(name: &'static str, cat: RuleCategory, result: RuleResult) -> Box<dyn Rule> {
@@ -156,7 +162,11 @@ mod tests {
     fn evaluate_all_returns_all_results() {
         let mut f = RulesFactory::new();
         f.register(make_rule("r1", RuleCategory::Input, RuleResult::Pass));
-        f.register(make_rule("r2", RuleCategory::State, RuleResult::Fail { reason: "x".into() }));
+        f.register(make_rule(
+            "r2",
+            RuleCategory::State,
+            RuleResult::Fail { reason: "x".into() },
+        ));
         let ctx = RuleContext::new("test", json!({}));
         let results = f.evaluate_all(&ctx);
         assert_eq!(results.len(), 2);

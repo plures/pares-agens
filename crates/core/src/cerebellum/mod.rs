@@ -28,10 +28,10 @@ pub mod invoke;
 pub mod pipeline;
 pub mod router;
 
+use crate::cerebellum::bridge::PluresDbBridge;
 use crate::event::Event;
 use crate::memory::PluresLm;
 use crate::procedure::{Procedure, ProcedureRegistry};
-use crate::cerebellum::bridge::PluresDbBridge;
 
 use async_trait::async_trait;
 use tracing::{debug, info, instrument};
@@ -131,12 +131,18 @@ pub struct Cerebellum {
 impl Cerebellum {
     /// Create a cerebellum without a PluresDB bridge (pure-Rust fallback).
     pub fn new(config: CerebellumConfig) -> Self {
-        Self { config, pluresdb: None }
+        Self {
+            config,
+            pluresdb: None,
+        }
     }
 
     /// Create a cerebellum with an attached [`PluresDbBridge`].
     pub fn with_bridge(config: CerebellumConfig, bridge: PluresDbBridge) -> Self {
-        Self { config, pluresdb: Some(bridge) }
+        Self {
+            config,
+            pluresdb: Some(bridge),
+        }
     }
 
     /// Main entry point: preprocess an event into an enriched context.
@@ -231,9 +237,7 @@ fn extract_query(event: &Event) -> Option<String> {
                 Some(content.clone())
             }
         }
-        Event::StateChange { key, new_value, .. } => {
-            Some(format!("{}: {}", key, new_value))
-        }
+        Event::StateChange { key, new_value, .. } => Some(format!("{}: {}", key, new_value)),
         // Timer and tool results don't trigger autorecall
         _ => None,
     }

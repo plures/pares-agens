@@ -18,11 +18,7 @@ pub trait PeerSearcher: Send + Sync {
     ///
     /// `embedding` is the query vector; `top_k` is the maximum results to
     /// return.
-    async fn search(
-        &self,
-        embedding: &[f32],
-        top_k: usize,
-    ) -> Result<Vec<ScoredEntry>, DmemError>;
+    async fn search(&self, embedding: &[f32], top_k: usize) -> Result<Vec<ScoredEntry>, DmemError>;
 }
 
 // ── MeshSearch ────────────────────────────────────────────────────────────────
@@ -93,10 +89,7 @@ impl<P: PeerSearcher> MeshSearch<P> {
         mut local_results: Vec<ScoredEntry>,
         top_k: usize,
     ) -> Result<Vec<ScoredEntry>, DmemError> {
-        let best_local = local_results
-            .first()
-            .map(|e| e.score)
-            .unwrap_or(0.0);
+        let best_local = local_results.first().map(|e| e.score).unwrap_or(0.0);
 
         if best_local >= self.confidence_threshold {
             local_results.truncate(top_k);
@@ -170,10 +163,7 @@ mod tests {
             id: "local-top".into(),
             score: 0.9,
         }];
-        let result = mesh
-            .search_with_fanout(&[1.0], local, 5)
-            .await
-            .unwrap();
+        let result = mesh.search_with_fanout(&[1.0], local, 5).await.unwrap();
         // Peer result should NOT appear because local confidence was sufficient
         assert!(!result.iter().any(|e| e.id == "peer-result"));
         assert_eq!(result[0].id, "local-top");
@@ -208,10 +198,7 @@ mod tests {
             id: "only-local".into(),
             score: 0.3,
         }];
-        let result = mesh
-            .search_with_fanout(&[1.0], local, 5)
-            .await
-            .unwrap();
+        let result = mesh.search_with_fanout(&[1.0], local, 5).await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, "only-local");
     }
@@ -230,10 +217,7 @@ mod tests {
             id: "shared".into(),
             score: 0.7,
         }];
-        let result = mesh
-            .search_with_fanout(&[1.0], local, 5)
-            .await
-            .unwrap();
+        let result = mesh.search_with_fanout(&[1.0], local, 5).await.unwrap();
         // Only one "shared" entry and it should have the higher score
         let shared: Vec<_> = result.iter().filter(|e| e.id == "shared").collect();
         assert_eq!(shared.len(), 1);

@@ -55,8 +55,7 @@ impl KvCacheManager {
                 available_mb: avail,
             });
         }
-        self.allocations
-            .insert(request_id.to_owned(), size_mb);
+        self.allocations.insert(request_id.to_owned(), size_mb);
         Ok(())
     }
 

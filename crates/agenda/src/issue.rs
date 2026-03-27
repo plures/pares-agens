@@ -82,10 +82,15 @@ impl Issue {
     ///
     /// Returns [`AgendaError::InvalidField`] when `title` is empty or exceeds
     /// 200 characters.
-    pub fn new(title: impl Into<String>, description: impl Into<String>) -> Result<Self, AgendaError> {
+    pub fn new(
+        title: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Result<Self, AgendaError> {
         let title = title.into();
         if title.is_empty() {
-            return Err(AgendaError::InvalidField("title must not be empty".to_string()));
+            return Err(AgendaError::InvalidField(
+                "title must not be empty".to_string(),
+            ));
         }
         if title.len() > 200 {
             return Err(AgendaError::InvalidField(

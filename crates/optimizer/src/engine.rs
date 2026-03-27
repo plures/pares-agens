@@ -20,7 +20,7 @@
 
 use crate::{
     telemetry::{ObservabilityEvent, TelemetryEmitter},
-    Constraint, Objective, OptimizerError, OptimizerInput, OptimizationResult,
+    Constraint, Objective, OptimizationResult, OptimizerError, OptimizerInput,
 };
 
 // ── Policy trait ──────────────────────────────────────────────────────────────
@@ -91,10 +91,7 @@ impl Policy for DefaultPolicy {
         current_scores: &[f64],
         _constraints: &[Constraint],
     ) -> Result<Vec<f64>, OptimizerError> {
-        let min_score = current_scores
-            .iter()
-            .cloned()
-            .fold(f64::INFINITY, f64::min);
+        let min_score = current_scores.iter().cloned().fold(f64::INFINITY, f64::min);
 
         let new_scores = current_scores
             .iter()
@@ -405,10 +402,7 @@ mod tests {
     fn optimizer_improves_unequal_scores() {
         let initial_scores = vec![0.9, 0.1, 0.7];
         let input = simple_input("run-unequal", initial_scores.clone());
-        let initial_min = initial_scores
-            .iter()
-            .cloned()
-            .fold(f64::INFINITY, f64::min);
+        let initial_min = initial_scores.iter().cloned().fold(f64::INFINITY, f64::min);
         let emitter = TelemetryEmitter::noop();
         let optimizer = MaxMinOptimizer::new(emitter);
         let result = optimizer.run(input).unwrap();

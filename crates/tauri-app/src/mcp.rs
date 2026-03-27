@@ -1,13 +1,12 @@
 //! MCP server management — spawn, initialize, tool discovery, tool execution.
 
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{error, info};
 
-use mcp_client::McpClient;
 use mcp_client::protocol::{Tool as McpTool, ToolContent};
 use mcp_client::transport::stdio::StdioTransport;
+use mcp_client::McpClient;
 
 use crate::state::{AppState, McpServerConfig};
 
@@ -35,7 +34,12 @@ pub struct DiscoveredTool {
 pub async fn start_mcp_servers(state: &AppState) {
     let configs: Vec<McpServerConfig> = {
         let settings = state.settings.lock().await;
-        settings.mcp_servers.iter().filter(|s| s.enabled).cloned().collect()
+        settings
+            .mcp_servers
+            .iter()
+            .filter(|s| s.enabled)
+            .cloned()
+            .collect()
     };
 
     if configs.is_empty() {

@@ -27,15 +27,17 @@ use crate::rule::{Rule, RuleCategory, RuleContext, RuleResult};
 
 /// Agent lifecycle states.
 const VALID_TRANSITIONS: &[(&str, &str)] = &[
-    ("new",       "active"),
-    ("active",    "suspended"),
-    ("active",    "retired"),
+    ("new", "active"),
+    ("active", "suspended"),
+    ("active", "retired"),
     ("suspended", "active"),
     ("suspended", "retired"),
 ];
 
 fn transition_allowed(from: &str, to: &str) -> bool {
-    VALID_TRANSITIONS.iter().any(|(f, t)| *f == from && *t == to)
+    VALID_TRANSITIONS
+        .iter()
+        .any(|(f, t)| *f == from && *t == to)
 }
 
 // ---------------------------------------------------------------------------
@@ -44,16 +46,20 @@ fn transition_allowed(from: &str, to: &str) -> bool {
 
 struct AgentIdFormat;
 impl Rule for AgentIdFormat {
-    fn name(&self) -> &str { "agent_id_format" }
-    fn category(&self) -> RuleCategory { RuleCategory::Input }
+    fn name(&self) -> &str {
+        "agent_id_format"
+    }
+    fn category(&self) -> RuleCategory {
+        RuleCategory::Input
+    }
     fn evaluate(&self, ctx: &RuleContext) -> RuleResult {
         match ctx.payload_str("agent_id") {
-            None | Some("") => RuleResult::Fail { reason: "agent_id is required and must not be empty".into() },
-            Some(id) if id.len() > 128 => {
-                RuleResult::Fail {
-                    reason: format!("agent_id exceeds 128 chars (got {})", id.len()),
-                }
-            }
+            None | Some("") => RuleResult::Fail {
+                reason: "agent_id is required and must not be empty".into(),
+            },
+            Some(id) if id.len() > 128 => RuleResult::Fail {
+                reason: format!("agent_id exceeds 128 chars (got {})", id.len()),
+            },
             _ => RuleResult::Pass,
         }
     }
@@ -61,8 +67,12 @@ impl Rule for AgentIdFormat {
 
 struct CapabilityListNonEmpty;
 impl Rule for CapabilityListNonEmpty {
-    fn name(&self) -> &str { "capability_list_non_empty" }
-    fn category(&self) -> RuleCategory { RuleCategory::Input }
+    fn name(&self) -> &str {
+        "capability_list_non_empty"
+    }
+    fn category(&self) -> RuleCategory {
+        RuleCategory::Input
+    }
     fn evaluate(&self, ctx: &RuleContext) -> RuleResult {
         match ctx.payload_array_len("capabilities") {
             None => RuleResult::Fail {
@@ -75,8 +85,12 @@ impl Rule for CapabilityListNonEmpty {
 
 struct VersionPresent;
 impl Rule for VersionPresent {
-    fn name(&self) -> &str { "version_present" }
-    fn category(&self) -> RuleCategory { RuleCategory::Input }
+    fn name(&self) -> &str {
+        "version_present"
+    }
+    fn category(&self) -> RuleCategory {
+        RuleCategory::Input
+    }
     fn evaluate(&self, ctx: &RuleContext) -> RuleResult {
         match ctx.payload_str("version") {
             None | Some("") => RuleResult::Fail {
@@ -93,11 +107,15 @@ impl Rule for VersionPresent {
 
 struct LifecycleTransitionValid;
 impl Rule for LifecycleTransitionValid {
-    fn name(&self) -> &str { "lifecycle_transition_valid" }
-    fn category(&self) -> RuleCategory { RuleCategory::State }
+    fn name(&self) -> &str {
+        "lifecycle_transition_valid"
+    }
+    fn category(&self) -> RuleCategory {
+        RuleCategory::State
+    }
     fn evaluate(&self, ctx: &RuleContext) -> RuleResult {
         let from = ctx.payload_str("from_state").unwrap_or("");
-        let to   = ctx.payload_str("to_state").unwrap_or("");
+        let to = ctx.payload_str("to_state").unwrap_or("");
         if from.is_empty() || to.is_empty() {
             return RuleResult::Fail {
                 reason: "lifecycle transition requires `from_state` and `to_state`".into(),
@@ -119,8 +137,12 @@ impl Rule for LifecycleTransitionValid {
 
 struct HealthScoreSufficient;
 impl Rule for HealthScoreSufficient {
-    fn name(&self) -> &str { "health_score_sufficient" }
-    fn category(&self) -> RuleCategory { RuleCategory::Data }
+    fn name(&self) -> &str {
+        "health_score_sufficient"
+    }
+    fn category(&self) -> RuleCategory {
+        RuleCategory::Data
+    }
     fn evaluate(&self, ctx: &RuleContext) -> RuleResult {
         match ctx.payload_f64("health_score") {
             None => RuleResult::Warning {
@@ -138,8 +160,12 @@ impl Rule for HealthScoreSufficient {
 
 struct CapabilityCountReasonable;
 impl Rule for CapabilityCountReasonable {
-    fn name(&self) -> &str { "capability_count_reasonable" }
-    fn category(&self) -> RuleCategory { RuleCategory::Data }
+    fn name(&self) -> &str {
+        "capability_count_reasonable"
+    }
+    fn category(&self) -> RuleCategory {
+        RuleCategory::Data
+    }
     fn evaluate(&self, ctx: &RuleContext) -> RuleResult {
         match ctx.payload_array_len("capabilities") {
             Some(n) if n > 50 => RuleResult::Warning {
@@ -178,7 +204,9 @@ impl Default for AgentLifecycleModule {
 }
 
 impl PraxisModule for AgentLifecycleModule {
-    fn name(&self) -> &str { "agent-lifecycle" }
+    fn name(&self) -> &str {
+        "agent-lifecycle"
+    }
 
     fn rules(&self) -> &[Box<dyn Rule>] {
         &self.rules
@@ -203,7 +231,9 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn module() -> AgentLifecycleModule { AgentLifecycleModule::default() }
+    fn module() -> AgentLifecycleModule {
+        AgentLifecycleModule::default()
+    }
 
     // ── Input: agent_id_format ───────────────────────────────────────────────
     #[test]
@@ -211,7 +241,10 @@ mod tests {
         let m = module();
         let ctx = RuleContext::new("register_agent", json!({"agent_id": "alpha-01"}));
         let results = m.evaluate_category(&ctx, RuleCategory::Input);
-        let r = results.iter().find(|(n, _)| n == "agent_id_format").unwrap();
+        let r = results
+            .iter()
+            .find(|(n, _)| n == "agent_id_format")
+            .unwrap();
         assert_eq!(r.1, RuleResult::Pass);
     }
 
@@ -220,7 +253,10 @@ mod tests {
         let m = module();
         let ctx = RuleContext::new("register_agent", json!({}));
         let results = m.evaluate_category(&ctx, RuleCategory::Input);
-        let r = results.iter().find(|(n, _)| n == "agent_id_format").unwrap();
+        let r = results
+            .iter()
+            .find(|(n, _)| n == "agent_id_format")
+            .unwrap();
         assert!(matches!(r.1, RuleResult::Fail { .. }));
     }
 
@@ -230,7 +266,10 @@ mod tests {
         let long_id = "x".repeat(129);
         let ctx = RuleContext::new("register_agent", json!({"agent_id": long_id}));
         let results = m.evaluate_category(&ctx, RuleCategory::Input);
-        let r = results.iter().find(|(n, _)| n == "agent_id_format").unwrap();
+        let r = results
+            .iter()
+            .find(|(n, _)| n == "agent_id_format")
+            .unwrap();
         assert!(matches!(r.1, RuleResult::Fail { .. }));
     }
 
@@ -240,7 +279,10 @@ mod tests {
         let m = module();
         let ctx = RuleContext::new("register_agent", json!({"capabilities": ["text", "image"]}));
         let results = m.evaluate_category(&ctx, RuleCategory::Input);
-        let r = results.iter().find(|(n, _)| n == "capability_list_non_empty").unwrap();
+        let r = results
+            .iter()
+            .find(|(n, _)| n == "capability_list_non_empty")
+            .unwrap();
         assert_eq!(r.1, RuleResult::Pass);
     }
 
@@ -249,7 +291,10 @@ mod tests {
         let m = module();
         let ctx = RuleContext::new("register_agent", json!({"capabilities": []}));
         let results = m.evaluate_category(&ctx, RuleCategory::Input);
-        let r = results.iter().find(|(n, _)| n == "capability_list_non_empty").unwrap();
+        let r = results
+            .iter()
+            .find(|(n, _)| n == "capability_list_non_empty")
+            .unwrap();
         assert!(matches!(r.1, RuleResult::Fail { .. }));
     }
 
@@ -282,7 +327,10 @@ mod tests {
         let m = module();
         let ctx = RuleContext::new("health_check", json!({"health_score": 0.9}));
         let results = m.evaluate_category(&ctx, RuleCategory::Data);
-        let r = results.iter().find(|(n, _)| n == "health_score_sufficient").unwrap();
+        let r = results
+            .iter()
+            .find(|(n, _)| n == "health_score_sufficient")
+            .unwrap();
         assert_eq!(r.1, RuleResult::Pass);
     }
 
@@ -291,7 +339,10 @@ mod tests {
         let m = module();
         let ctx = RuleContext::new("health_check", json!({"health_score": 0.3}));
         let results = m.evaluate_category(&ctx, RuleCategory::Data);
-        let r = results.iter().find(|(n, _)| n == "health_score_sufficient").unwrap();
+        let r = results
+            .iter()
+            .find(|(n, _)| n == "health_score_sufficient")
+            .unwrap();
         assert!(matches!(r.1, RuleResult::Fail { .. }));
     }
 
@@ -300,7 +351,10 @@ mod tests {
         let m = module();
         let ctx = RuleContext::new("health_check", json!({}));
         let results = m.evaluate_category(&ctx, RuleCategory::Data);
-        let r = results.iter().find(|(n, _)| n == "health_score_sufficient").unwrap();
+        let r = results
+            .iter()
+            .find(|(n, _)| n == "health_score_sufficient")
+            .unwrap();
         assert!(matches!(r.1, RuleResult::Warning { .. }));
     }
 
@@ -308,7 +362,10 @@ mod tests {
     #[test]
     fn module_audit_is_complete() {
         let report = module().audit();
-        assert!(report.is_complete(), "agent-lifecycle should cover all categories");
+        assert!(
+            report.is_complete(),
+            "agent-lifecycle should cover all categories"
+        );
         assert_eq!(report.completeness_pct, 100.0);
     }
 

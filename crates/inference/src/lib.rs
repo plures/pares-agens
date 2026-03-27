@@ -65,11 +65,11 @@ pub mod params;
 pub mod registry;
 pub mod runner;
 
-pub use cli::{ModelCommand, run_cli};
+pub use cli::{run_cli, ModelCommand};
 pub use client::{ModelClient, TokenReceiver, TokenSender};
 pub use config::{InferenceConfig, LocalModelsConfig};
 pub use downloader::ModelDownloader;
 pub use error::InferenceError;
 pub use params::GenParams;
-pub use registry::{ModelEntry, ModelRegistry, default_cache_dir};
+pub use registry::{default_cache_dir, ModelEntry, ModelRegistry};
 pub use runner::BitNetLocalRunner;

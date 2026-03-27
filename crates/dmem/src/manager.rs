@@ -90,12 +90,7 @@ where
 {
     /// Create a new manager for the given device profile.
     #[must_use]
-    pub fn new(
-        profile: DeviceCapacityProfile,
-        fetcher: F,
-        index: I,
-        mesh: MeshSearch<S>,
-    ) -> Self {
+    pub fn new(profile: DeviceCapacityProfile, fetcher: F, index: I, mesh: MeshSearch<S>) -> Self {
         let _policy = StoragePolicy::for_tier(&profile.tier);
         let cache = MemoryCache::new(profile.budget.clone());
         Self {
@@ -146,7 +141,11 @@ where
     ///
     /// Returns [`DmemError`] if the P2P fetch transport encounters an error.
     pub async fn fetch(&mut self, id: &str) -> Result<Option<Vec<u8>>, DmemError> {
-        match self.router.get(id, &mut self.cache, &mut self.metrics).await? {
+        match self
+            .router
+            .get(id, &mut self.cache, &mut self.metrics)
+            .await?
+        {
             FetchResult::LocalHit { payload } | FetchResult::RemoteFetch { payload, .. } => {
                 self.eviction.touch(id);
                 Ok(Some(payload))
@@ -269,11 +268,8 @@ mod tests {
     use crate::index::FullIndex;
     use crate::search::{MeshSearch, SimulatedPeerSearcher};
 
-    fn make_manager() -> DistributedMemoryManager<
-        SimulatedPeerFetcher,
-        SimulatedPeerSearcher,
-        FullIndex,
-    > {
+    fn make_manager(
+    ) -> DistributedMemoryManager<SimulatedPeerFetcher, SimulatedPeerSearcher, FullIndex> {
         let profile = DeviceCapacityProfile::warm("test-device", 10_000_000_000);
         let fetcher = SimulatedPeerFetcher::empty();
         let index = FullIndex::new();

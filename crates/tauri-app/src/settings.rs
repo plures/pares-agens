@@ -20,12 +20,13 @@
 //! the vault entry is left untouched.  Only a non-empty, non-sentinel value
 //! triggers a vault write.
 
-
 use tauri::State;
 
 use pares_agens_core::secrets::provider_api_key;
 
-use crate::state::{rebuild_model_router, AppState, ChannelAdapterConfig, ProviderEntry, RoutingPrefs};
+use crate::state::{
+    rebuild_model_router, AppState, ChannelAdapterConfig, ProviderEntry, RoutingPrefs,
+};
 
 // Re-export for test module (Settings is only used in tests but accessed via `super::*`).
 #[cfg(test)]
@@ -149,7 +150,10 @@ pub async fn update_provider(
     // Treat None, empty string, and MASKED_KEY all as "leave vault unchanged".
     // There is currently no explicit "delete key" signal from the frontend;
     // key deletion only happens through remove_provider.
-    let new_key = provider.api_key.as_deref().filter(|k| !k.is_empty() && *k != MASKED_KEY);
+    let new_key = provider
+        .api_key
+        .as_deref()
+        .filter(|k| !k.is_empty() && *k != MASKED_KEY);
     if let Some(k) = new_key {
         state
             .secret_store
@@ -167,7 +171,7 @@ pub async fn update_provider(
         .ok_or_else(|| format!("Provider '{name}' not found"))?;
 
     *existing = ProviderEntry {
-        name,          // preserve original name — renames are not permitted
+        name, // preserve original name — renames are not permitted
         base_url: provider.base_url,
         api_key: None, // never stored in the struct
         models: provider.models,
@@ -203,7 +207,12 @@ pub async fn remove_provider(name: String, state: State<'_, AppState>) -> Result
         .map_err(|e| e.to_string())?;
 
     // Re-acquire and remove from the settings list.
-    state.settings.lock().await.providers.retain(|p| p.name != name);
+    state
+        .settings
+        .lock()
+        .await
+        .providers
+        .retain(|p| p.name != name);
 
     // Rebuild the model router so the removed provider is no longer routed to.
     rebuild_model_router(&state).await;
@@ -282,7 +291,7 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
-    use pares_agens_core::secrets::{InMemorySecretStore, SecretStore, provider_api_key};
+    use pares_agens_core::secrets::{provider_api_key, InMemorySecretStore, SecretStore};
 
     use super::*;
 
@@ -342,11 +351,25 @@ mod tests {
         // Simulate add_provider logic directly.
         let p = provider_with_key("openai", "sk-secret");
         let vault_key = provider_api_key(&p.name);
-        store.set(&vault_key, p.api_key.as_deref().unwrap()).await.unwrap();
-        settings.lock().await.providers.push(ProviderEntry { api_key: None, ..p });
+        store
+            .set(&vault_key, p.api_key.as_deref().unwrap())
+            .await
+            .unwrap();
+        settings
+            .lock()
+            .await
+            .providers
+            .push(ProviderEntry { api_key: None, ..p });
 
         // Vault holds the key.
-        assert_eq!(store.get(&provider_api_key("openai")).await.unwrap().as_deref(), Some("sk-secret"));
+        assert_eq!(
+            store
+                .get(&provider_api_key("openai"))
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("sk-secret")
+        );
         // Settings struct does NOT hold the key.
         let lock = settings.lock().await;
         assert!(lock.providers[0].api_key.is_none());
@@ -376,52 +399,92 @@ mod tests {
     #[tokio::test]
     async fn update_provider_none_preserves_vault_key() {
         let store: Arc<dyn SecretStore> = make_store();
-        store.set(&provider_api_key("openai"), "sk-existing").await.unwrap();
+        store
+            .set(&provider_api_key("openai"), "sk-existing")
+            .await
+            .unwrap();
 
         // None → preserve: no vault write.
         if let Some(k) = resolve_key_update(None) {
             store.set(&provider_api_key("openai"), k).await.unwrap();
         }
 
-        assert_eq!(store.get(&provider_api_key("openai")).await.unwrap().as_deref(), Some("sk-existing"));
+        assert_eq!(
+            store
+                .get(&provider_api_key("openai"))
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("sk-existing")
+        );
     }
 
     #[tokio::test]
     async fn update_provider_masked_sentinel_preserves_vault_key() {
         let store: Arc<dyn SecretStore> = make_store();
-        store.set(&provider_api_key("openai"), "sk-existing").await.unwrap();
+        store
+            .set(&provider_api_key("openai"), "sk-existing")
+            .await
+            .unwrap();
 
         // MASKED_KEY → preserve.
         if let Some(k) = resolve_key_update(Some(MASKED_KEY)) {
             store.set(&provider_api_key("openai"), k).await.unwrap();
         }
 
-        assert_eq!(store.get(&provider_api_key("openai")).await.unwrap().as_deref(), Some("sk-existing"));
+        assert_eq!(
+            store
+                .get(&provider_api_key("openai"))
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("sk-existing")
+        );
     }
 
     #[tokio::test]
     async fn update_provider_empty_string_preserves_vault_key() {
         let store: Arc<dyn SecretStore> = make_store();
-        store.set(&provider_api_key("openai"), "sk-existing").await.unwrap();
+        store
+            .set(&provider_api_key("openai"), "sk-existing")
+            .await
+            .unwrap();
 
         // Empty string → preserve (frontend clears the field without intent to delete).
         if let Some(k) = resolve_key_update(Some("")) {
             store.set(&provider_api_key("openai"), k).await.unwrap();
         }
 
-        assert_eq!(store.get(&provider_api_key("openai")).await.unwrap().as_deref(), Some("sk-existing"));
+        assert_eq!(
+            store
+                .get(&provider_api_key("openai"))
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("sk-existing")
+        );
     }
 
     #[tokio::test]
     async fn update_provider_new_value_updates_vault() {
         let store: Arc<dyn SecretStore> = make_store();
-        store.set(&provider_api_key("openai"), "sk-old").await.unwrap();
+        store
+            .set(&provider_api_key("openai"), "sk-old")
+            .await
+            .unwrap();
 
         if let Some(k) = resolve_key_update(Some("sk-new")) {
             store.set(&provider_api_key("openai"), k).await.unwrap();
         }
 
-        assert_eq!(store.get(&provider_api_key("openai")).await.unwrap().as_deref(), Some("sk-new"));
+        assert_eq!(
+            store
+                .get(&provider_api_key("openai"))
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("sk-new")
+        );
     }
 
     // ── remove_provider ───────────────────────────────────────────────────
@@ -429,7 +492,10 @@ mod tests {
     #[tokio::test]
     async fn remove_provider_deletes_vault_key() {
         let store: Arc<dyn SecretStore> = make_store();
-        store.set(&provider_api_key("openai"), "sk-secret").await.unwrap();
+        store
+            .set(&provider_api_key("openai"), "sk-secret")
+            .await
+            .unwrap();
 
         // Simulate remove_provider: delete from vault, then remove from settings.
         store.delete(&provider_api_key("openai")).await.unwrap();
@@ -449,9 +515,16 @@ mod tests {
     #[tokio::test]
     async fn list_providers_masked_when_vault_has_key() {
         let store: Arc<dyn SecretStore> = make_store();
-        store.set(&provider_api_key("openai"), "sk-secret").await.unwrap();
+        store
+            .set(&provider_api_key("openai"), "sk-secret")
+            .await
+            .unwrap();
 
-        let has_key = store.get(&provider_api_key("openai")).await.unwrap().is_some();
+        let has_key = store
+            .get(&provider_api_key("openai"))
+            .await
+            .unwrap()
+            .is_some();
         let row = mask_provider_fields("openai", "http://example.com", &[], has_key);
         assert_eq!(row["apiKey"], serde_json::json!(MASKED_KEY));
     }
@@ -460,7 +533,11 @@ mod tests {
     async fn list_providers_null_when_no_vault_key() {
         let store: Arc<dyn SecretStore> = make_store();
 
-        let has_key = store.get(&provider_api_key("ollama")).await.unwrap().is_some();
+        let has_key = store
+            .get(&provider_api_key("ollama"))
+            .await
+            .unwrap()
+            .is_some();
         let row = mask_provider_fields("ollama", "http://localhost:11434/v1", &[], has_key);
         assert!(row["apiKey"].is_null());
     }

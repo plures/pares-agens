@@ -18,8 +18,8 @@
 //!   [`tokio::time::timeout`]; a timed-out call returns
 //!   [`InvokeError::Timeout`] without panicking.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use pares_agens_privacy::PrivacyFilter;
@@ -239,7 +239,9 @@ impl AgentInvoke {
 
         let completion = timeout(duration, call)
             .await
-            .map_err(|_| InvokeError::Timeout { ms: self.config.timeout_ms })?
+            .map_err(|_| InvokeError::Timeout {
+                ms: self.config.timeout_ms,
+            })?
             .map_err(InvokeError::ModelError)?;
 
         // ── Extract text response ─────────────────────────────────────────────
@@ -291,7 +293,9 @@ mod tests {
 
     impl MockModelClient {
         fn new(response: impl Into<String>) -> Self {
-            Self { response: response.into() }
+            Self {
+                response: response.into(),
+            }
         }
     }
 
@@ -409,10 +413,7 @@ mod tests {
             max_invocations: 2,
             timeout_ms: 5_000,
         };
-        let invoker = AgentInvoke::with_config(
-            Arc::new(MockModelClient::new("ok")),
-            config,
-        );
+        let invoker = AgentInvoke::with_config(Arc::new(MockModelClient::new("ok")), config);
 
         // First two calls succeed.
         invoker.invoke("sys", "msg", None).await.unwrap();
@@ -420,7 +421,10 @@ mod tests {
 
         // Third call should fail with BudgetExceeded.
         let err = invoker.invoke("sys", "msg", None).await.unwrap_err();
-        assert!(matches!(err, InvokeError::BudgetExceeded), "expected BudgetExceeded, got {err}");
+        assert!(
+            matches!(err, InvokeError::BudgetExceeded),
+            "expected BudgetExceeded, got {err}"
+        );
     }
 
     #[tokio::test]
@@ -430,10 +434,7 @@ mod tests {
             max_invocations: 1,
             timeout_ms: 5_000,
         };
-        let invoker = AgentInvoke::with_config(
-            Arc::new(MockModelClient::new("ok")),
-            config,
-        );
+        let invoker = AgentInvoke::with_config(Arc::new(MockModelClient::new("ok")), config);
 
         invoker.invoke("sys", "msg", None).await.unwrap();
         let err = invoker.invoke("sys", "msg", None).await.unwrap_err();
@@ -501,7 +502,11 @@ mod tests {
     fn agent_invoke_config_accessor() {
         let invoker = AgentInvoke::with_config(
             Arc::new(MockModelClient::new("x")),
-            InvokeConfig { max_tokens: 512, max_invocations: 5, timeout_ms: 1_000 },
+            InvokeConfig {
+                max_tokens: 512,
+                max_invocations: 5,
+                timeout_ms: 1_000,
+            },
         );
         assert_eq!(invoker.config().max_tokens, 512);
         assert_eq!(invoker.config().max_invocations, 5);
@@ -594,7 +599,10 @@ mod tests {
             InvokeError::ParseError("bad json".into()).to_string(),
             "response parsing failed: bad json"
         );
-        assert_eq!(InvokeError::BudgetExceeded.to_string(), "token budget exceeded");
+        assert_eq!(
+            InvokeError::BudgetExceeded.to_string(),
+            "token budget exceeded"
+        );
         assert_eq!(
             InvokeError::Timeout { ms: 500 }.to_string(),
             "invocation timed out after 500ms"
@@ -620,7 +628,10 @@ mod tests {
                 .rfind(|m| m.role == "user")
                 .map(|m| m.content.clone())
                 .unwrap_or_default();
-            Ok(ModelCompletion { content: Some(user_msg), tool_calls: vec![] })
+            Ok(ModelCompletion {
+                content: Some(user_msg),
+                tool_calls: vec![],
+            })
         }
     }
 
@@ -638,7 +649,10 @@ mod tests {
             _messages: &[ChatMessage],
             _tools: &[ToolDefinition],
         ) -> Result<ModelCompletion, String> {
-            Ok(ModelCompletion { content: Some(self.response.clone()), tool_calls: vec![] })
+            Ok(ModelCompletion {
+                content: Some(self.response.clone()),
+                tool_calls: vec![],
+            })
         }
     }
 
@@ -707,6 +721,9 @@ mod tests {
         let invoker = AgentInvoke::new(Arc::new(EchoModelClient)).with_redaction(filter);
         let content = "What is the weather today?";
         let result = invoker.invoke("sys", content, None).await.unwrap();
-        assert_eq!(result, content, "clean content should pass through unchanged");
+        assert_eq!(
+            result, content,
+            "clean content should pass through unchanged"
+        );
     }
 }

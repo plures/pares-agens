@@ -63,7 +63,12 @@ impl Procedure for OnTimer {
     }
 
     async fn execute(&self, event: &Event) -> Vec<Event> {
-        let Event::Timer { id, name, recurring } = event else {
+        let Event::Timer {
+            id,
+            name,
+            recurring,
+        } = event
+        else {
             return vec![];
         };
 
@@ -170,8 +175,15 @@ mod tests {
 
         let follow_ups = on_timer.execute(&timer("tick", true)).await;
 
-        assert_eq!(follow_ups.len(), 1, "recurring timer must emit one reschedule event");
-        if let Event::Timer { name, recurring, .. } = &follow_ups[0] {
+        assert_eq!(
+            follow_ups.len(),
+            1,
+            "recurring timer must emit one reschedule event"
+        );
+        if let Event::Timer {
+            name, recurring, ..
+        } = &follow_ups[0]
+        {
             assert_eq!(name, "tick");
             assert!(recurring);
         } else {

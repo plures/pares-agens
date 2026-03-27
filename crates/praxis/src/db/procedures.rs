@@ -40,9 +40,17 @@ pub struct ActionBlocked {
 
 impl std::fmt::Display for ActionBlocked {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "action blocked by {} constraint(s):", self.violations.len())?;
+        write!(
+            f,
+            "action blocked by {} constraint(s):",
+            self.violations.len()
+        )?;
         for v in &self.violations {
-            write!(f, "\n  [{}] {} — fix: {}", v.constraint.id, v.message, v.constraint.fix)?;
+            write!(
+                f,
+                "\n  [{}] {} — fix: {}",
+                v.constraint.id, v.message, v.constraint.fix
+            )?;
         }
         Ok(())
     }
@@ -120,10 +128,7 @@ pub fn evaluate(store: &PraxisStore, ctx: &AgentContext) -> Vec<Violation> {
 /// let ctx = AgentContext::new("read_file", "README.md", SessionType::Main);
 /// assert!(on_action(&store, &ctx).is_ok());
 /// ```
-pub fn on_action(
-    store: &PraxisStore,
-    ctx: &AgentContext,
-) -> Result<Vec<Violation>, ActionBlocked> {
+pub fn on_action(store: &PraxisStore, ctx: &AgentContext) -> Result<Vec<Violation>, ActionBlocked> {
     let all = evaluate(store, ctx);
     let (errors, warnings): (Vec<_>, Vec<_>) = all
         .into_iter()
@@ -165,9 +170,13 @@ pub fn compile_nl(text: &str, id: impl Into<String>) -> Constraint {
     let lower = text.to_lowercase();
 
     let when = if lower.contains("write_") {
-        Condition::ActionStartsWith { prefix: "write_".into() }
+        Condition::ActionStartsWith {
+            prefix: "write_".into(),
+        }
     } else if lower.contains("delete_") {
-        Condition::ActionStartsWith { prefix: "delete_".into() }
+        Condition::ActionStartsWith {
+            prefix: "delete_".into(),
+        }
     } else {
         Condition::Always
     };
@@ -327,7 +336,10 @@ mod tests {
         assert!(
             violations.is_empty(),
             "read_file with no metadata should not violate any constraint; got: {:?}",
-            violations.iter().map(|v| &v.constraint.id).collect::<Vec<_>>()
+            violations
+                .iter()
+                .map(|v| &v.constraint.id)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -337,7 +349,10 @@ mod tests {
         let ctx = AgentContext::new("write_file", "config.toml", SessionType::Main)
             .with_meta("resource_owner", json!(""));
         let violations = evaluate(&store, &ctx);
-        let ids: Vec<&str> = violations.iter().map(|v| v.constraint.id.as_str()).collect();
+        let ids: Vec<&str> = violations
+            .iter()
+            .map(|v| v.constraint.id.as_str())
+            .collect();
         assert!(
             ids.contains(&"C-0002"),
             "C-0002 (resource_owner_declared) should fire; got: {ids:?}"
@@ -350,7 +365,10 @@ mod tests {
         let ctx = AgentContext::new("admin_action", "system", SessionType::Main)
             .with_meta("privilege_level", json!(4));
         let violations = evaluate(&store, &ctx);
-        let ids: Vec<&str> = violations.iter().map(|v| v.constraint.id.as_str()).collect();
+        let ids: Vec<&str> = violations
+            .iter()
+            .map(|v| v.constraint.id.as_str())
+            .collect();
         assert!(
             ids.contains(&"C-0003"),
             "C-0003 (privilege escalation) should fire; got: {ids:?}"
@@ -363,7 +381,10 @@ mod tests {
         let ctx = AgentContext::new("deploy", "production", SessionType::Main)
             .with_meta("risk_score", json!(0.95));
         let violations = evaluate(&store, &ctx);
-        let ids: Vec<&str> = violations.iter().map(|v| v.constraint.id.as_str()).collect();
+        let ids: Vec<&str> = violations
+            .iter()
+            .map(|v| v.constraint.id.as_str())
+            .collect();
         assert!(
             ids.contains(&"C-0004"),
             "C-0004 (risk score) should fire; got: {ids:?}"
@@ -432,13 +453,15 @@ mod tests {
     #[test]
     fn query_gaps_returns_unknown_evidence() {
         let mut store = default_store();
-        store.insert_evidence(Evidence {
-            id: "EV-GAP".into(),
-            tested_at: Utc::now(),
-            condition: HashMap::new(),
-            result: EvidenceResult::Unknown,
-            reference: "https://github.com/plures/pares-agens/issues/999".into(),
-        }).unwrap();
+        store
+            .insert_evidence(Evidence {
+                id: "EV-GAP".into(),
+                tested_at: Utc::now(),
+                condition: HashMap::new(),
+                result: EvidenceResult::Unknown,
+                reference: "https://github.com/plures/pares-agens/issues/999".into(),
+            })
+            .unwrap();
 
         let gaps = query_gaps(&store);
         let ids: Vec<&str> = gaps.iter().map(|e| e.id.as_str()).collect();

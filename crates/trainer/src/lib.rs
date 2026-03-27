@@ -174,9 +174,8 @@ impl Trainer {
             if line.is_empty() {
                 continue;
             }
-            let _: serde_json::Value = serde_json::from_str(line).map_err(|e| {
-                TrainerError::InvalidData(format!("line {}: {e}", line_no + 1))
-            })?;
+            let _: serde_json::Value = serde_json::from_str(line)
+                .map_err(|e| TrainerError::InvalidData(format!("line {}: {e}", line_no + 1)))?;
             count += 1;
         }
 
@@ -262,49 +261,70 @@ mod tests {
     fn config_rejects_zero_lora_rank() {
         let mut cfg = TrainerConfig::default_config();
         cfg.lora_rank = 0;
-        assert!(matches!(cfg.validate(), Err(TrainerError::InvalidConfig(_))));
+        assert!(matches!(
+            cfg.validate(),
+            Err(TrainerError::InvalidConfig(_))
+        ));
     }
 
     #[test]
     fn config_rejects_non_power_of_two_lora_rank() {
         let mut cfg = TrainerConfig::default_config();
         cfg.lora_rank = 3;
-        assert!(matches!(cfg.validate(), Err(TrainerError::InvalidConfig(_))));
+        assert!(matches!(
+            cfg.validate(),
+            Err(TrainerError::InvalidConfig(_))
+        ));
     }
 
     #[test]
     fn config_rejects_lora_rank_above_256() {
         let mut cfg = TrainerConfig::default_config();
         cfg.lora_rank = 512;
-        assert!(matches!(cfg.validate(), Err(TrainerError::InvalidConfig(_))));
+        assert!(matches!(
+            cfg.validate(),
+            Err(TrainerError::InvalidConfig(_))
+        ));
     }
 
     #[test]
     fn config_rejects_non_positive_learning_rate() {
         let mut cfg = TrainerConfig::default_config();
         cfg.learning_rate = -0.001;
-        assert!(matches!(cfg.validate(), Err(TrainerError::InvalidConfig(_))));
+        assert!(matches!(
+            cfg.validate(),
+            Err(TrainerError::InvalidConfig(_))
+        ));
     }
 
     #[test]
     fn config_rejects_zero_learning_rate() {
         let mut cfg = TrainerConfig::default_config();
         cfg.learning_rate = 0.0;
-        assert!(matches!(cfg.validate(), Err(TrainerError::InvalidConfig(_))));
+        assert!(matches!(
+            cfg.validate(),
+            Err(TrainerError::InvalidConfig(_))
+        ));
     }
 
     #[test]
     fn config_rejects_zero_batch_size() {
         let mut cfg = TrainerConfig::default_config();
         cfg.batch_size = 0;
-        assert!(matches!(cfg.validate(), Err(TrainerError::InvalidConfig(_))));
+        assert!(matches!(
+            cfg.validate(),
+            Err(TrainerError::InvalidConfig(_))
+        ));
     }
 
     #[test]
     fn config_rejects_zero_max_epochs() {
         let mut cfg = TrainerConfig::default_config();
         cfg.max_epochs = 0;
-        assert!(matches!(cfg.validate(), Err(TrainerError::InvalidConfig(_))));
+        assert!(matches!(
+            cfg.validate(),
+            Err(TrainerError::InvalidConfig(_))
+        ));
     }
 
     // ── Training pipeline ────────────────────────────────────────────────────
@@ -334,7 +354,9 @@ mod tests {
             lora_rank: 16,
             epochs_trained: 3,
         };
-        let results = trainer.evaluate(&adapter).expect("evaluation should succeed");
+        let results = trainer
+            .evaluate(&adapter)
+            .expect("evaluation should succeed");
         assert!(results.perplexity > 0.0);
         assert!((0.0..=1.0).contains(&results.accuracy));
     }

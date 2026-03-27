@@ -109,7 +109,10 @@ impl PurgeReport {
         for e in &self.entries {
             *by_cat.entry(e.category.as_str().to_owned()).or_insert(0) += 1;
         }
-        let mut lines = vec![format!("Purge impact: {} entries affected", self.total_affected)];
+        let mut lines = vec![format!(
+            "Purge impact: {} entries affected",
+            self.total_affected
+        )];
         let mut cats: Vec<_> = by_cat.into_iter().collect();
         cats.sort_by_key(|(k, _)| k.clone());
         for (cat, count) in cats {
@@ -215,16 +218,14 @@ impl ForgettingEngine {
                 let cutoff = now - chrono::TimeDelta::days(max_age as i64);
                 for e in &entries {
                     if let Ok(created) = DateTime::parse_from_rfc3339(&e.created_at) {
-                        let age_days = (now - created.with_timezone(&Utc)).num_seconds() as f64
-                            / 86_400.0;
+                        let age_days =
+                            (now - created.with_timezone(&Utc)).num_seconds() as f64 / 86_400.0;
                         if created.with_timezone(&Utc) < cutoff {
                             eligible.push(ImpactEntry {
                                 memory_id: e.id.clone(),
                                 category: category.clone(),
                                 age_days,
-                                reason: format!(
-                                    "expired: age {age_days:.1}d > max {max_age}d"
-                                ),
+                                reason: format!("expired: age {age_days:.1}d > max {max_age}d"),
                             });
                         }
                     } else {
@@ -438,9 +439,7 @@ impl ForgettingEngine {
         let report = self.dry_run(policy).await?;
 
         // 3. Auto-approve and execute
-        let mut result = self
-            .execute(report, &super::gate::AutoApproveGate)
-            .await?;
+        let mut result = self.execute(report, &super::gate::AutoApproveGate).await?;
         result.hard_purged_ids.extend(hard_purged);
 
         // 4. Append a summary audit entry using the aggregate constructor
@@ -551,10 +550,8 @@ mod tests {
 
     #[tokio::test]
     async fn dry_run_keep_forever_policy_returns_empty_report() {
-        let engine = engine_with_entries(vec![
-            old_entry("a", 100, MemoryCategory::Conversation),
-        ])
-        .await;
+        let engine =
+            engine_with_entries(vec![old_entry("a", 100, MemoryCategory::Conversation)]).await;
         let report = engine.dry_run(&RetentionPolicy::new()).await.unwrap();
         assert!(report.is_empty());
     }
@@ -613,10 +610,8 @@ mod tests {
 
     #[tokio::test]
     async fn execute_denied_by_gate_returns_empty_result() {
-        let engine = engine_with_entries(vec![
-            old_entry("a", 60, MemoryCategory::Conversation),
-        ])
-        .await;
+        let engine =
+            engine_with_entries(vec![old_entry("a", 60, MemoryCategory::Conversation)]).await;
         let mut policy = RetentionPolicy::new();
         policy.set_rule(
             MemoryCategory::Conversation,
@@ -649,10 +644,8 @@ mod tests {
 
     #[tokio::test]
     async fn execute_appends_audit_entries() {
-        let engine = engine_with_entries(vec![
-            old_entry("a", 60, MemoryCategory::Conversation),
-        ])
-        .await;
+        let engine =
+            engine_with_entries(vec![old_entry("a", 60, MemoryCategory::Conversation)]).await;
         let mut policy = RetentionPolicy::new();
         policy.set_rule(
             MemoryCategory::Conversation,
@@ -670,10 +663,8 @@ mod tests {
 
     #[tokio::test]
     async fn restore_recovers_soft_deleted_entry() {
-        let engine = engine_with_entries(vec![
-            old_entry("a", 60, MemoryCategory::Conversation),
-        ])
-        .await;
+        let engine =
+            engine_with_entries(vec![old_entry("a", 60, MemoryCategory::Conversation)]).await;
         let mut policy = RetentionPolicy::new();
         policy.set_rule(
             MemoryCategory::Conversation,

@@ -283,27 +283,57 @@ impl PrivacyFilter {
 
         if self.config.email.enabled {
             detect_emails(text, &mut matches);
-            detect_extra_patterns(text, &self.config.email.extra_patterns, PIIType::Email, &mut matches);
+            detect_extra_patterns(
+                text,
+                &self.config.email.extra_patterns,
+                PIIType::Email,
+                &mut matches,
+            );
         }
         if self.config.phone.enabled {
             detect_phones(text, &mut matches);
-            detect_extra_patterns(text, &self.config.phone.extra_patterns, PIIType::Phone, &mut matches);
+            detect_extra_patterns(
+                text,
+                &self.config.phone.extra_patterns,
+                PIIType::Phone,
+                &mut matches,
+            );
         }
         if self.config.ssn.enabled {
             detect_ssns(text, &mut matches);
-            detect_extra_patterns(text, &self.config.ssn.extra_patterns, PIIType::SSN, &mut matches);
+            detect_extra_patterns(
+                text,
+                &self.config.ssn.extra_patterns,
+                PIIType::SSN,
+                &mut matches,
+            );
         }
         if self.config.credit_card.enabled {
             detect_credit_cards(text, &mut matches);
-            detect_extra_patterns(text, &self.config.credit_card.extra_patterns, PIIType::CreditCard, &mut matches);
+            detect_extra_patterns(
+                text,
+                &self.config.credit_card.extra_patterns,
+                PIIType::CreditCard,
+                &mut matches,
+            );
         }
         if self.config.name.enabled {
             detect_names(text, &mut matches);
-            detect_extra_patterns(text, &self.config.name.extra_patterns, PIIType::Name, &mut matches);
+            detect_extra_patterns(
+                text,
+                &self.config.name.extra_patterns,
+                PIIType::Name,
+                &mut matches,
+            );
         }
         if self.config.address.enabled {
             detect_addresses(text, &mut matches);
-            detect_extra_patterns(text, &self.config.address.extra_patterns, PIIType::Address, &mut matches);
+            detect_extra_patterns(
+                text,
+                &self.config.address.extra_patterns,
+                PIIType::Address,
+                &mut matches,
+            );
         }
 
         // Sort by start position so callers can iterate in document order.
@@ -324,8 +354,8 @@ impl PrivacyFilter {
     /// Returns [`PrivacyError::Io`] when the file cannot be read.
     /// Returns [`PrivacyError::Json`] when any line is not valid JSON.
     pub fn scrub_training_data(&self, jsonl_path: &str) -> Result<String, PrivacyError> {
-        let content = std::fs::read_to_string(jsonl_path)
-            .map_err(|e| PrivacyError::Io(e.to_string()))?;
+        let content =
+            std::fs::read_to_string(jsonl_path).map_err(|e| PrivacyError::Io(e.to_string()))?;
 
         let mut output_lines: Vec<String> = Vec::new();
 
@@ -508,11 +538,7 @@ fn detect_phones(text: &str, out: &mut Vec<PIIMatch>) {
 
         // Valid phone numbers have 10–15 digits.
         if (10..=15).contains(&digits) {
-            let end_byte = if j < n {
-                indexed[j].1
-            } else {
-                text.len()
-            };
+            let end_byte = if j < n { indexed[j].1 } else { text.len() };
             out.push(PIIMatch {
                 pii_type: PIIType::Phone,
                 start: start_byte,
@@ -665,10 +691,36 @@ fn word_run_offsets(
 /// Detect street addresses: a digit run followed by common street suffix words.
 fn detect_addresses(text: &str, out: &mut Vec<PIIMatch>) {
     const STREET_SUFFIXES: &[&str] = &[
-        "Street", "St", "Avenue", "Ave", "Boulevard", "Blvd", "Road", "Rd",
-        "Lane", "Ln", "Drive", "Dr", "Court", "Ct", "Place", "Pl", "Way",
-        "Loop", "Terrace", "Ter", "Circle", "Cir", "Highway", "Hwy",
-        "Parkway", "Pkwy", "Trail", "Trl", "Square", "Sq",
+        "Street",
+        "St",
+        "Avenue",
+        "Ave",
+        "Boulevard",
+        "Blvd",
+        "Road",
+        "Rd",
+        "Lane",
+        "Ln",
+        "Drive",
+        "Dr",
+        "Court",
+        "Ct",
+        "Place",
+        "Pl",
+        "Way",
+        "Loop",
+        "Terrace",
+        "Ter",
+        "Circle",
+        "Cir",
+        "Highway",
+        "Hwy",
+        "Parkway",
+        "Pkwy",
+        "Trail",
+        "Trl",
+        "Square",
+        "Sq",
     ];
 
     let words: Vec<&str> = text.split_whitespace().collect();
@@ -686,9 +738,7 @@ fn detect_addresses(text: &str, out: &mut Vec<PIIMatch>) {
         });
 
         if let Some(end_offset) = suffix_pos {
-            if let Some((start, end)) =
-                word_run_offsets(text, i, i + end_offset + 1, &words)
-            {
+            if let Some((start, end)) = word_run_offsets(text, i, i + end_offset + 1, &words) {
                 out.push(PIIMatch {
                     pii_type: PIIType::Address,
                     start,
@@ -952,7 +1002,10 @@ impl PrivacyFilter {
             return (
                 text.to_string(),
                 RedactionMap::default(),
-                RedactionAudit { entries: vec![], total_redacted: 0 },
+                RedactionAudit {
+                    entries: vec![],
+                    total_redacted: 0,
+                },
             );
         }
 
@@ -1019,7 +1072,10 @@ impl PrivacyFilter {
             .collect();
 
         let total_redacted = map.len();
-        let audit = RedactionAudit { entries, total_redacted };
+        let audit = RedactionAudit {
+            entries,
+            total_redacted,
+        };
 
         (result, map, audit)
     }
@@ -1114,9 +1170,10 @@ mod tests {
         let matches = filter.detect_pii("The quick brown fox jumps over the lazy dog.");
         // No PII expected in a plain sentence.
         assert!(
-            matches
-                .iter()
-                .all(|m| !matches!(m.pii_type, PIIType::Email | PIIType::SSN | PIIType::CreditCard)),
+            matches.iter().all(|m| !matches!(
+                m.pii_type,
+                PIIType::Email | PIIType::SSN | PIIType::CreditCard
+            )),
             "unexpected PII in clean text: {matches:?}"
         );
     }
@@ -1250,7 +1307,10 @@ mod tests {
             epochs_trained: 2,
         };
         let results = filter.red_team_test(&adapter).unwrap();
-        assert!(results.is_clean(), "clean adapter should pass red-team tests");
+        assert!(
+            results.is_clean(),
+            "clean adapter should pass red-team tests"
+        );
     }
 
     #[test]
@@ -1401,9 +1461,7 @@ mod tests {
     fn extra_pattern_detects_custom_ssn_format() {
         let mut cfg = PrivacyConfig::default();
         // Alternative SSN format without dashes (9 consecutive digits).
-        cfg.ssn
-            .extra_patterns
-            .push(r"\b\d{9}\b".to_string());
+        cfg.ssn.extra_patterns.push(r"\b\d{9}\b".to_string());
         let filter = PrivacyFilter::with_config(cfg);
         let spans = filter.detect_pii("ID number: 123456789");
         assert!(
@@ -1461,66 +1519,186 @@ mod tests {
 
     fn email_samples() -> Vec<LabelledSample> {
         vec![
-            LabelledSample { text: "user@example.com", expected_type: PIIType::Email },
-            LabelledSample { text: "first.last+tag@sub.domain.org", expected_type: PIIType::Email },
-            LabelledSample { text: "ADMIN@COMPANY.CO.UK", expected_type: PIIType::Email },
-            LabelledSample { text: "john_doe-123@mail.example.io", expected_type: PIIType::Email },
-            LabelledSample { text: "reach me at support@helpdesk.example.com today", expected_type: PIIType::Email },
-            LabelledSample { text: "my address is me@place.net", expected_type: PIIType::Email },
-            LabelledSample { text: "no-reply@notifications.service.io", expected_type: PIIType::Email },
-            LabelledSample { text: "info@start-up.co", expected_type: PIIType::Email },
-            LabelledSample { text: "x@y.z", expected_type: PIIType::Email },
-            LabelledSample { text: "alice.bob.carol@deep.subdomain.example.com", expected_type: PIIType::Email },
+            LabelledSample {
+                text: "user@example.com",
+                expected_type: PIIType::Email,
+            },
+            LabelledSample {
+                text: "first.last+tag@sub.domain.org",
+                expected_type: PIIType::Email,
+            },
+            LabelledSample {
+                text: "ADMIN@COMPANY.CO.UK",
+                expected_type: PIIType::Email,
+            },
+            LabelledSample {
+                text: "john_doe-123@mail.example.io",
+                expected_type: PIIType::Email,
+            },
+            LabelledSample {
+                text: "reach me at support@helpdesk.example.com today",
+                expected_type: PIIType::Email,
+            },
+            LabelledSample {
+                text: "my address is me@place.net",
+                expected_type: PIIType::Email,
+            },
+            LabelledSample {
+                text: "no-reply@notifications.service.io",
+                expected_type: PIIType::Email,
+            },
+            LabelledSample {
+                text: "info@start-up.co",
+                expected_type: PIIType::Email,
+            },
+            LabelledSample {
+                text: "x@y.z",
+                expected_type: PIIType::Email,
+            },
+            LabelledSample {
+                text: "alice.bob.carol@deep.subdomain.example.com",
+                expected_type: PIIType::Email,
+            },
         ]
     }
 
     fn phone_samples() -> Vec<LabelledSample> {
         vec![
-            LabelledSample { text: "800-555-1234", expected_type: PIIType::Phone },
-            LabelledSample { text: "+1-800-555-0100", expected_type: PIIType::Phone },
-            LabelledSample { text: "(800) 555-1234", expected_type: PIIType::Phone },
-            LabelledSample { text: "800.555.1234", expected_type: PIIType::Phone },
-            LabelledSample { text: "+447911123456", expected_type: PIIType::Phone },
-            LabelledSample { text: "call 8005551234 now", expected_type: PIIType::Phone },
-            LabelledSample { text: "+1 (555) 867-5309", expected_type: PIIType::Phone },
-            LabelledSample { text: "tel: 0044 20 7946 0958", expected_type: PIIType::Phone },
-            LabelledSample { text: "555-867-5309", expected_type: PIIType::Phone },
-            LabelledSample { text: "+49 30 12345678", expected_type: PIIType::Phone },
+            LabelledSample {
+                text: "800-555-1234",
+                expected_type: PIIType::Phone,
+            },
+            LabelledSample {
+                text: "+1-800-555-0100",
+                expected_type: PIIType::Phone,
+            },
+            LabelledSample {
+                text: "(800) 555-1234",
+                expected_type: PIIType::Phone,
+            },
+            LabelledSample {
+                text: "800.555.1234",
+                expected_type: PIIType::Phone,
+            },
+            LabelledSample {
+                text: "+447911123456",
+                expected_type: PIIType::Phone,
+            },
+            LabelledSample {
+                text: "call 8005551234 now",
+                expected_type: PIIType::Phone,
+            },
+            LabelledSample {
+                text: "+1 (555) 867-5309",
+                expected_type: PIIType::Phone,
+            },
+            LabelledSample {
+                text: "tel: 0044 20 7946 0958",
+                expected_type: PIIType::Phone,
+            },
+            LabelledSample {
+                text: "555-867-5309",
+                expected_type: PIIType::Phone,
+            },
+            LabelledSample {
+                text: "+49 30 12345678",
+                expected_type: PIIType::Phone,
+            },
         ]
     }
 
     fn ssn_samples() -> Vec<LabelledSample> {
         vec![
-            LabelledSample { text: "123-45-6789", expected_type: PIIType::SSN },
-            LabelledSample { text: "SSN: 987-65-4321", expected_type: PIIType::SSN },
-            LabelledSample { text: "social security 001-01-0001", expected_type: PIIType::SSN },
-            LabelledSample { text: "number is 555-55-5555", expected_type: PIIType::SSN },
-            LabelledSample { text: "my ssn: 000-00-0000 end", expected_type: PIIType::SSN },
-            LabelledSample { text: "taxpayer id 111-22-3333.", expected_type: PIIType::SSN },
+            LabelledSample {
+                text: "123-45-6789",
+                expected_type: PIIType::SSN,
+            },
+            LabelledSample {
+                text: "SSN: 987-65-4321",
+                expected_type: PIIType::SSN,
+            },
+            LabelledSample {
+                text: "social security 001-01-0001",
+                expected_type: PIIType::SSN,
+            },
+            LabelledSample {
+                text: "number is 555-55-5555",
+                expected_type: PIIType::SSN,
+            },
+            LabelledSample {
+                text: "my ssn: 000-00-0000 end",
+                expected_type: PIIType::SSN,
+            },
+            LabelledSample {
+                text: "taxpayer id 111-22-3333.",
+                expected_type: PIIType::SSN,
+            },
         ]
     }
 
     fn credit_card_samples() -> Vec<LabelledSample> {
         vec![
-            LabelledSample { text: "4111111111111111", expected_type: PIIType::CreditCard },
-            LabelledSample { text: "4111 1111 1111 1111", expected_type: PIIType::CreditCard },
-            LabelledSample { text: "4111-1111-1111-1111", expected_type: PIIType::CreditCard },
-            LabelledSample { text: "card: 5500005555555559", expected_type: PIIType::CreditCard },
-            LabelledSample { text: "charge to 3714 496353 98431", expected_type: PIIType::CreditCard },
-            LabelledSample { text: "visa 4012888888881881", expected_type: PIIType::CreditCard },
+            LabelledSample {
+                text: "4111111111111111",
+                expected_type: PIIType::CreditCard,
+            },
+            LabelledSample {
+                text: "4111 1111 1111 1111",
+                expected_type: PIIType::CreditCard,
+            },
+            LabelledSample {
+                text: "4111-1111-1111-1111",
+                expected_type: PIIType::CreditCard,
+            },
+            LabelledSample {
+                text: "card: 5500005555555559",
+                expected_type: PIIType::CreditCard,
+            },
+            LabelledSample {
+                text: "charge to 3714 496353 98431",
+                expected_type: PIIType::CreditCard,
+            },
+            LabelledSample {
+                text: "visa 4012888888881881",
+                expected_type: PIIType::CreditCard,
+            },
         ]
     }
 
     fn address_samples() -> Vec<LabelledSample> {
         vec![
-            LabelledSample { text: "123 Main Street", expected_type: PIIType::Address },
-            LabelledSample { text: "456 Oak Avenue", expected_type: PIIType::Address },
-            LabelledSample { text: "789 Pine Boulevard", expected_type: PIIType::Address },
-            LabelledSample { text: "10 Downing Street", expected_type: PIIType::Address },
-            LabelledSample { text: "1 Infinite Loop", expected_type: PIIType::Address },
-            LabelledSample { text: "she lives at 42 Elm Drive", expected_type: PIIType::Address },
-            LabelledSample { text: "office at 100 Park Place", expected_type: PIIType::Address },
-            LabelledSample { text: "deliver to 300 Industrial Road", expected_type: PIIType::Address },
+            LabelledSample {
+                text: "123 Main Street",
+                expected_type: PIIType::Address,
+            },
+            LabelledSample {
+                text: "456 Oak Avenue",
+                expected_type: PIIType::Address,
+            },
+            LabelledSample {
+                text: "789 Pine Boulevard",
+                expected_type: PIIType::Address,
+            },
+            LabelledSample {
+                text: "10 Downing Street",
+                expected_type: PIIType::Address,
+            },
+            LabelledSample {
+                text: "1 Infinite Loop",
+                expected_type: PIIType::Address,
+            },
+            LabelledSample {
+                text: "she lives at 42 Elm Drive",
+                expected_type: PIIType::Address,
+            },
+            LabelledSample {
+                text: "office at 100 Park Place",
+                expected_type: PIIType::Address,
+            },
+            LabelledSample {
+                text: "deliver to 300 Industrial Road",
+                expected_type: PIIType::Address,
+            },
         ]
     }
 
@@ -1599,10 +1777,19 @@ mod tests {
     fn redact_email_produces_placeholder() {
         let filter = PrivacyFilter::new();
         let (redacted, map, audit) = filter.redact("Contact bob@example.com for details.");
-        assert!(!redacted.contains("bob@example.com"), "email should be redacted");
-        assert!(redacted.contains("[EMAIL_1]"), "expected [EMAIL_1] placeholder, got: {redacted}");
+        assert!(
+            !redacted.contains("bob@example.com"),
+            "email should be redacted"
+        );
+        assert!(
+            redacted.contains("[EMAIL_1]"),
+            "expected [EMAIL_1] placeholder, got: {redacted}"
+        );
         let restored = map.restore(&redacted);
-        assert!(restored.contains("bob@example.com"), "email should be restored");
+        assert!(
+            restored.contains("bob@example.com"),
+            "email should be restored"
+        );
         assert!(audit.total_redacted >= 1);
         assert!(audit.entries.iter().any(|e| e.pii_type == PIIType::Email));
     }
@@ -1611,10 +1798,19 @@ mod tests {
     fn redact_phone_produces_placeholder() {
         let filter = PrivacyFilter::new();
         let (redacted, map, audit) = filter.redact("Call 800-555-1234 now.");
-        assert!(!redacted.contains("800-555-1234"), "phone should be redacted");
-        assert!(redacted.contains("[PHONE_1]"), "expected [PHONE_1] placeholder, got: {redacted}");
+        assert!(
+            !redacted.contains("800-555-1234"),
+            "phone should be redacted"
+        );
+        assert!(
+            redacted.contains("[PHONE_1]"),
+            "expected [PHONE_1] placeholder, got: {redacted}"
+        );
         let restored = map.restore(&redacted);
-        assert!(restored.contains("800-555-1234"), "phone should be restored");
+        assert!(
+            restored.contains("800-555-1234"),
+            "phone should be restored"
+        );
         assert!(audit.entries.iter().any(|e| e.pii_type == PIIType::Phone));
     }
 
@@ -1637,8 +1833,15 @@ mod tests {
         let text = "Email bob@example.com or bob@example.com again";
         let (redacted, map, _audit) = filter.redact(text);
         // Both occurrences should use [EMAIL_1], not [EMAIL_1] and [EMAIL_2].
-        assert_eq!(redacted.matches("[EMAIL_1]").count(), 2, "same email should reuse placeholder");
-        assert!(!redacted.contains("[EMAIL_2]"), "no second placeholder expected");
+        assert_eq!(
+            redacted.matches("[EMAIL_1]").count(),
+            2,
+            "same email should reuse placeholder"
+        );
+        assert!(
+            !redacted.contains("[EMAIL_2]"),
+            "no second placeholder expected"
+        );
         // Restore must recover both.
         let restored = map.restore(&redacted);
         assert_eq!(restored.matches("bob@example.com").count(), 2);
@@ -1649,8 +1852,14 @@ mod tests {
         let filter = PrivacyFilter::new();
         let text = "alice@example.com and bob@example.com";
         let (redacted, map, audit) = filter.redact(text);
-        assert!(redacted.contains("[EMAIL_1]"), "first email placeholder missing");
-        assert!(redacted.contains("[EMAIL_2]"), "second email placeholder missing");
+        assert!(
+            redacted.contains("[EMAIL_1]"),
+            "first email placeholder missing"
+        );
+        assert!(
+            redacted.contains("[EMAIL_2]"),
+            "second email placeholder missing"
+        );
         let restored = map.restore(&redacted);
         assert!(restored.contains("alice@example.com"));
         assert!(restored.contains("bob@example.com"));
@@ -1667,13 +1876,19 @@ mod tests {
             && !redacted.contains("[PHONE")
             && !redacted.contains("[SSN")
             && !redacted.contains("[CREDIT_CARD");
-        assert!(no_sensitive_pii, "clean text should not be redacted: {redacted}");
-        assert!(map.is_empty() || audit.total_redacted == 0 || {
-            // Any matches must be Name/Address (heuristic), not high-confidence types.
-            audit.entries.iter().all(|e| {
-                matches!(e.pii_type, PIIType::Name | PIIType::Address)
-            })
-        });
+        assert!(
+            no_sensitive_pii,
+            "clean text should not be redacted: {redacted}"
+        );
+        assert!(
+            map.is_empty() || audit.total_redacted == 0 || {
+                // Any matches must be Name/Address (heuristic), not high-confidence types.
+                audit
+                    .entries
+                    .iter()
+                    .all(|e| matches!(e.pii_type, PIIType::Name | PIIType::Address))
+            }
+        );
     }
 
     #[test]
@@ -1681,7 +1896,10 @@ mod tests {
         let filter = PrivacyFilter::new();
         let (redacted, map, audit) = filter.redact("SSN: 123-45-6789");
         assert!(!redacted.contains("123-45-6789"));
-        assert!(redacted.contains("[SSN_1]"), "expected [SSN_1], got: {redacted}");
+        assert!(
+            redacted.contains("[SSN_1]"),
+            "expected [SSN_1], got: {redacted}"
+        );
         let restored = map.restore(&redacted);
         assert!(restored.contains("123-45-6789"));
         assert!(audit.entries.iter().any(|e| e.pii_type == PIIType::SSN));

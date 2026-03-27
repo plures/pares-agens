@@ -72,7 +72,9 @@ impl PullRequest {
         let target_branch = target_branch.into();
 
         if title.is_empty() {
-            return Err(AgendaError::InvalidField("PR title must not be empty".to_string()));
+            return Err(AgendaError::InvalidField(
+                "PR title must not be empty".to_string(),
+            ));
         }
         if source_branch.is_empty() {
             return Err(AgendaError::InvalidField(
@@ -193,17 +195,16 @@ impl AgendaManager {
     /// # Errors
     ///
     /// Propagates [`AgendaError::NotFound`] or [`AgendaError::InvalidTransition`].
-    pub fn transition_issue(
-        &mut self,
-        id: &str,
-        status: IssueStatus,
-    ) -> Result<(), AgendaError> {
+    pub fn transition_issue(&mut self, id: &str, status: IssueStatus) -> Result<(), AgendaError> {
         self.get_issue_mut(id)?.transition(status)
     }
 
     /// Return all issues matching `status`, in insertion order (best-effort).
     pub fn list_issues_by_status(&self, status: &IssueStatus) -> Vec<&Issue> {
-        self.issues.values().filter(|i| &i.status == status).collect()
+        self.issues
+            .values()
+            .filter(|i| &i.status == status)
+            .collect()
     }
 
     /// Delete an issue by ID.  Returns `true` if the issue existed.
@@ -303,7 +304,10 @@ mod tests {
     #[test]
     fn get_missing_issue_returns_not_found() {
         let mgr = AgendaManager::new();
-        assert!(matches!(mgr.get_issue("no-such-id"), Err(AgendaError::NotFound(_))));
+        assert!(matches!(
+            mgr.get_issue("no-such-id"),
+            Err(AgendaError::NotFound(_))
+        ));
     }
 
     #[test]
@@ -318,8 +322,12 @@ mod tests {
     fn set_issue_priority_updates_priority() {
         let mut mgr = AgendaManager::new();
         let id = mgr.create_issue("t", "d").unwrap();
-        mgr.set_issue_priority(&id, IssuePriority::Critical).unwrap();
-        assert_eq!(mgr.get_issue(&id).unwrap().priority, IssuePriority::Critical);
+        mgr.set_issue_priority(&id, IssuePriority::Critical)
+            .unwrap();
+        assert_eq!(
+            mgr.get_issue(&id).unwrap().priority,
+            IssuePriority::Critical
+        );
     }
 
     #[test]

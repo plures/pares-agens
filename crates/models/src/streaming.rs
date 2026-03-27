@@ -17,36 +17,33 @@ pub fn parse_sse_stream(
     // Buffer incomplete lines across chunk boundaries.
     let buffer = String::new();
 
-    futures_util::stream::unfold(
-        (byte_stream, buffer),
-        |(mut stream, mut buf)| async move {
-            loop {
-                // Try to yield from whatever is already in the buffer.
-                if let Some(result) = consume_line(&mut buf) {
-                    return Some((result, (stream, buf)));
-                }
+    futures_util::stream::unfold((byte_stream, buffer), |(mut stream, mut buf)| async move {
+        loop {
+            // Try to yield from whatever is already in the buffer.
+            if let Some(result) = consume_line(&mut buf) {
+                return Some((result, (stream, buf)));
+            }
 
-                // Need more bytes.
-                match stream.next().await {
-                    None => {
-                        // Stream ended; flush any remaining buffered content.
-                        if buf.is_empty() {
-                            return None;
-                        }
-                        // Treat the remaining buffer as a final (incomplete) line.
-                        let result = parse_data_line(buf.trim());
-                        buf.clear();
-                        return result.map(|r| (r, (stream, buf)));
+            // Need more bytes.
+            match stream.next().await {
+                None => {
+                    // Stream ended; flush any remaining buffered content.
+                    if buf.is_empty() {
+                        return None;
                     }
-                    Some(Err(e)) => return Some((Err(Error::Http(e)), (stream, buf))),
-                    Some(Ok(bytes)) => {
-                        buf.push_str(&String::from_utf8_lossy(&bytes));
-                        continue;
-                    }
+                    // Treat the remaining buffer as a final (incomplete) line.
+                    let result = parse_data_line(buf.trim());
+                    buf.clear();
+                    return result.map(|r| (r, (stream, buf)));
+                }
+                Some(Err(e)) => return Some((Err(Error::Http(e)), (stream, buf))),
+                Some(Ok(bytes)) => {
+                    buf.push_str(&String::from_utf8_lossy(&bytes));
+                    continue;
                 }
             }
-        },
-    )
+        }
+    })
 }
 
 /// Try to consume a complete SSE `data:` line from `buf`.

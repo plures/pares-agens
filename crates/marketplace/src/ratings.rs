@@ -243,9 +243,15 @@ mod tests {
     #[test]
     fn reviews_for_returns_matching_entries() {
         let mut store = RatingStore::new();
-        store.submit(make_review("pares/rust-helper", "alice", 5)).unwrap();
-        store.submit(make_review("pares/rust-helper", "bob", 3)).unwrap();
-        store.submit(make_review("pares/essay-writer", "carol", 4)).unwrap();
+        store
+            .submit(make_review("pares/rust-helper", "alice", 5))
+            .unwrap();
+        store
+            .submit(make_review("pares/rust-helper", "bob", 3))
+            .unwrap();
+        store
+            .submit(make_review("pares/essay-writer", "carol", 4))
+            .unwrap();
         let reviews = store.reviews_for("pares/rust-helper");
         assert_eq!(reviews.len(), 2);
     }
@@ -269,8 +275,12 @@ mod tests {
     #[test]
     fn aggregate_computes_correct_mean() {
         let mut store = RatingStore::new();
-        store.submit(make_review("pares/rust-helper", "alice", 4)).unwrap();
-        store.submit(make_review("pares/rust-helper", "bob", 2)).unwrap();
+        store
+            .submit(make_review("pares/rust-helper", "alice", 4))
+            .unwrap();
+        store
+            .submit(make_review("pares/rust-helper", "bob", 2))
+            .unwrap();
         let agg = store.aggregate("pares/rust-helper");
         assert!((agg.mean_score - 3.0).abs() < f64::EPSILON);
         assert_eq!(agg.review_count, 2);
@@ -279,8 +289,12 @@ mod tests {
     #[test]
     fn aggregate_only_counts_reviews_for_that_procedure() {
         let mut store = RatingStore::new();
-        store.submit(make_review("pares/rust-helper", "alice", 5)).unwrap();
-        store.submit(make_review("pares/essay-writer", "bob", 1)).unwrap();
+        store
+            .submit(make_review("pares/rust-helper", "alice", 5))
+            .unwrap();
+        store
+            .submit(make_review("pares/essay-writer", "bob", 1))
+            .unwrap();
         let agg = store.aggregate("pares/rust-helper");
         assert_eq!(agg.review_count, 1);
         assert!((agg.mean_score - 5.0).abs() < f64::EPSILON);

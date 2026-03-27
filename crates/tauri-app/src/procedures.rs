@@ -38,8 +38,12 @@ pub struct ProcedureLogEntry {
 // ── Built-in templates ────────────────────────────────────────────────────
 
 /// Names of the four built-in procedure templates.
-const TEMPLATE_NAMES: [&str; 4] =
-    ["greeting", "scheduled_task", "approval_gate", "memory_pattern"];
+const TEMPLATE_NAMES: [&str; 4] = [
+    "greeting",
+    "scheduled_task",
+    "approval_gate",
+    "memory_pattern",
+];
 
 /// Return the body and event type for a named built-in template.
 fn template_body(template: &str) -> Option<(&'static str, &'static str)> {
@@ -83,9 +87,7 @@ fn template_body(template: &str) -> Option<(&'static str, &'static str)> {
 
 /// Return all registered procedures.
 #[tauri::command]
-pub async fn list_procedures(
-    state: State<'_, AppState>,
-) -> Result<Vec<ProcedureRecord>, String> {
+pub async fn list_procedures(state: State<'_, AppState>) -> Result<Vec<ProcedureRecord>, String> {
     Ok(state.procedures.lock().await.clone())
 }
 
@@ -162,13 +164,12 @@ pub async fn create_from_template(
     template: String,
     state: State<'_, AppState>,
 ) -> Result<ProcedureRecord, String> {
-    let (body, event_type) = template_body(&template)
-        .ok_or_else(|| {
-            format!(
-                "unknown template \"{template}\"; valid options: {}",
-                TEMPLATE_NAMES.join(", ")
-            )
-        })?;
+    let (body, event_type) = template_body(&template).ok_or_else(|| {
+        format!(
+            "unknown template \"{template}\"; valid options: {}",
+            TEMPLATE_NAMES.join(", ")
+        )
+    })?;
 
     // Choose a unique name derived from the template.
     let procedures = state.procedures.lock().await;
@@ -209,8 +210,14 @@ mod tests {
             let result = template_body(name);
             assert!(result.is_some(), "template '{name}' should exist");
             let (body, event_type) = result.unwrap();
-            assert!(!body.is_empty(), "template '{name}' body should not be empty");
-            assert!(!event_type.is_empty(), "template '{name}' event_type should not be empty");
+            assert!(
+                !body.is_empty(),
+                "template '{name}' body should not be empty"
+            );
+            assert!(
+                !event_type.is_empty(),
+                "template '{name}' event_type should not be empty"
+            );
         }
     }
 

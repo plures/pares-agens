@@ -72,7 +72,10 @@ impl EncryptedBlob {
         let ciphertext = cipher
             .encrypt(nonce, plaintext)
             .map_err(|e| ArcaError::CryptoError(e.to_string()))?;
-        Ok(Self { nonce: nonce_bytes, ciphertext })
+        Ok(Self {
+            nonce: nonce_bytes,
+            ciphertext,
+        })
     }
 
     fn decrypt(&self, key_bytes: &[u8; KEY_BYTES]) -> Result<Vec<u8>, ArcaError> {
@@ -335,7 +338,12 @@ impl CredentialVault {
             blob,
         };
         // Update state while preserving the in-memory DEK.
-        if let VaultState::Unlocked { wrapped_dek, last_activity, .. } = &mut self.state {
+        if let VaultState::Unlocked {
+            wrapped_dek,
+            last_activity,
+            ..
+        } = &mut self.state
+        {
             *wrapped_dek = new_wrapped;
             *last_activity = Instant::now();
         }
@@ -361,7 +369,8 @@ impl CredentialVault {
     ) -> Result<(), ArcaError> {
         let dek = self.require_dek()?;
         let blob = EncryptedBlob::encrypt(&dek.0, value.as_bytes())?;
-        self.entries.insert(name.to_string(), EncryptedEntry { blob, description });
+        self.entries
+            .insert(name.to_string(), EncryptedEntry { blob, description });
         self.touch();
         Ok(())
     }
@@ -451,7 +460,13 @@ impl CredentialVault {
         let kek = derive_kek(master_password, salt.as_str())?;
         // Wrap DEK under KEK.
         let blob = EncryptedBlob::encrypt(&kek, &dek)?;
-        Ok((WrappedDek { kek_salt: salt.as_str().to_string(), blob }, dek))
+        Ok((
+            WrappedDek {
+                kek_salt: salt.as_str().to_string(),
+                blob,
+            },
+            dek,
+        ))
     }
 }
 
@@ -587,7 +602,10 @@ mod tests {
     #[test]
     fn retrieve_missing_key_returns_not_found() {
         let vault = Vault::new();
-        assert!(matches!(vault.retrieve("missing"), Err(ArcaError::NotFound(_))));
+        assert!(matches!(
+            vault.retrieve("missing"),
+            Err(ArcaError::NotFound(_))
+        ));
     }
 
     #[test]
@@ -695,7 +713,9 @@ mod tests {
     #[test]
     fn credential_vault_key_rotation_no_data_loss() {
         let mut vault = unlocked_vault();
-        vault.store_credential("api_key", "tok-super-secret", None).unwrap();
+        vault
+            .store_credential("api_key", "tok-super-secret", None)
+            .unwrap();
         // Rotate to new password.
         vault.rotate_key("new-master-pw").unwrap();
         // Data still accessible while unlocked.
@@ -759,7 +779,10 @@ mod tests {
     fn credential_vault_double_init_returns_error() {
         let mut vault = CredentialVault::new(None);
         vault.initialise("pw").unwrap();
-        assert!(matches!(vault.initialise("pw2"), Err(ArcaError::AlreadyInitialised)));
+        assert!(matches!(
+            vault.initialise("pw2"),
+            Err(ArcaError::AlreadyInitialised)
+        ));
     }
 
     #[test]

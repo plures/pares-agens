@@ -201,8 +201,8 @@ mod tests {
 
     #[test]
     fn no_updates_when_versions_are_equal() {
-        let checker = UpdateChecker::new()
-            .with_catalogue(vec![make_skill("pares/rust-helper", "1.0.0")]);
+        let checker =
+            UpdateChecker::new().with_catalogue(vec![make_skill("pares/rust-helper", "1.0.0")]);
         let installed = vec![make_installed("pares/rust-helper", "1.0.0")];
         let updates = checker.check_updates(&installed).unwrap();
         assert!(updates.is_empty());
@@ -210,8 +210,8 @@ mod tests {
 
     #[test]
     fn detects_patch_update() {
-        let checker = UpdateChecker::new()
-            .with_catalogue(vec![make_skill("pares/rust-helper", "1.0.1")]);
+        let checker =
+            UpdateChecker::new().with_catalogue(vec![make_skill("pares/rust-helper", "1.0.1")]);
         let installed = vec![make_installed("pares/rust-helper", "1.0.0")];
         let updates = checker.check_updates(&installed).unwrap();
         assert_eq!(updates.len(), 1);
@@ -222,8 +222,8 @@ mod tests {
 
     #[test]
     fn detects_minor_update() {
-        let checker = UpdateChecker::new()
-            .with_catalogue(vec![make_skill("pares/rust-helper", "1.1.0")]);
+        let checker =
+            UpdateChecker::new().with_catalogue(vec![make_skill("pares/rust-helper", "1.1.0")]);
         let installed = vec![make_installed("pares/rust-helper", "1.0.0")];
         let updates = checker.check_updates(&installed).unwrap();
         assert_eq!(updates.len(), 1);
@@ -231,8 +231,8 @@ mod tests {
 
     #[test]
     fn detects_major_update() {
-        let checker = UpdateChecker::new()
-            .with_catalogue(vec![make_skill("pares/rust-helper", "2.0.0")]);
+        let checker =
+            UpdateChecker::new().with_catalogue(vec![make_skill("pares/rust-helper", "2.0.0")]);
         let installed = vec![make_installed("pares/rust-helper", "1.9.9")];
         let updates = checker.check_updates(&installed).unwrap();
         assert_eq!(updates.len(), 1);
@@ -240,8 +240,8 @@ mod tests {
 
     #[test]
     fn no_update_when_local_is_newer() {
-        let checker = UpdateChecker::new()
-            .with_catalogue(vec![make_skill("pares/rust-helper", "1.0.0")]);
+        let checker =
+            UpdateChecker::new().with_catalogue(vec![make_skill("pares/rust-helper", "1.0.0")]);
         let installed = vec![make_installed("pares/rust-helper", "2.0.0")];
         let updates = checker.check_updates(&installed).unwrap();
         assert!(updates.is_empty());
@@ -249,8 +249,8 @@ mod tests {
 
     #[test]
     fn skill_not_in_catalogue_is_skipped() {
-        let checker = UpdateChecker::new()
-            .with_catalogue(vec![make_skill("pares/other-skill", "2.0.0")]);
+        let checker =
+            UpdateChecker::new().with_catalogue(vec![make_skill("pares/other-skill", "2.0.0")]);
         let installed = vec![make_installed("pares/rust-helper", "1.0.0")];
         let updates = checker.check_updates(&installed).unwrap();
         assert!(updates.is_empty());
@@ -282,8 +282,8 @@ mod tests {
 
     #[test]
     fn remote_metadata_returns_correct_entry() {
-        let checker = UpdateChecker::new()
-            .with_catalogue(vec![make_skill("pares/rust-helper", "1.0.1")]);
+        let checker =
+            UpdateChecker::new().with_catalogue(vec![make_skill("pares/rust-helper", "1.0.1")]);
         let meta = checker.remote_metadata("pares/rust-helper");
         assert!(meta.is_some());
         assert_eq!(meta.unwrap().version, "1.0.1");

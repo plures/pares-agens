@@ -11,10 +11,7 @@
 //! ```
 
 use crate::{
-    discovery::MarketplaceClient,
-    installer::Installer,
-    update::UpdateChecker,
-    MarketplaceError,
+    discovery::MarketplaceClient, installer::Installer, update::UpdateChecker, MarketplaceError,
 };
 use std::str::FromStr;
 
@@ -74,16 +71,22 @@ impl MarketplaceCommand {
     pub fn parse_with_args(verb: &str, args: &[&str]) -> Result<Self, UnknownCommand> {
         match verb.to_ascii_lowercase().as_str() {
             "search" => {
-                let query = args.first().ok_or_else(|| UnknownCommand("search requires a query argument".to_string()))?;
+                let query = args.first().ok_or_else(|| {
+                    UnknownCommand("search requires a query argument".to_string())
+                })?;
                 Ok(Self::Search((*query).to_string()))
             }
             "install" => {
-                let id = args.first().ok_or_else(|| UnknownCommand("install requires a procedure id argument".to_string()))?;
+                let id = args.first().ok_or_else(|| {
+                    UnknownCommand("install requires a procedure id argument".to_string())
+                })?;
                 Ok(Self::Install((*id).to_string()))
             }
             "update" => Ok(Self::Update(args.first().map(|s| (*s).to_string()))),
             "remove" => {
-                let id = args.first().ok_or_else(|| UnknownCommand("remove requires a procedure id argument".to_string()))?;
+                let id = args.first().ok_or_else(|| {
+                    UnknownCommand("remove requires a procedure id argument".to_string())
+                })?;
                 Ok(Self::Remove((*id).to_string()))
             }
             "list" => Ok(Self::List),
@@ -185,16 +188,10 @@ pub fn run_cli(
             } else {
                 println!("{} procedure(s) installed:", installed.len());
                 for skill in installed {
-                    let last_used = skill
-                        .last_used
-                        .as_deref()
-                        .unwrap_or("never");
+                    let last_used = skill.last_used.as_deref().unwrap_or("never");
                     println!(
                         "  {} ({}) — installed {} — last used {}",
-                        skill.metadata.id,
-                        skill.metadata.version,
-                        skill.installed_at,
-                        last_used,
+                        skill.metadata.id, skill.metadata.version, skill.installed_at, last_used,
                     );
                 }
             }
@@ -265,7 +262,10 @@ mod tests {
     #[test]
     fn parse_install_with_id() {
         let cmd = MarketplaceCommand::parse_with_args("install", &["pares/rust-helper"]).unwrap();
-        assert_eq!(cmd, MarketplaceCommand::Install("pares/rust-helper".to_string()));
+        assert_eq!(
+            cmd,
+            MarketplaceCommand::Install("pares/rust-helper".to_string())
+        );
     }
 
     #[test]
@@ -281,8 +281,7 @@ mod tests {
 
     #[test]
     fn parse_update_with_id() {
-        let cmd =
-            MarketplaceCommand::parse_with_args("update", &["pares/rust-helper"]).unwrap();
+        let cmd = MarketplaceCommand::parse_with_args("update", &["pares/rust-helper"]).unwrap();
         assert_eq!(
             cmd,
             MarketplaceCommand::Update(Some("pares/rust-helper".to_string()))
@@ -292,7 +291,10 @@ mod tests {
     #[test]
     fn parse_remove_with_id() {
         let cmd = MarketplaceCommand::parse_with_args("remove", &["pares/rust-helper"]).unwrap();
-        assert_eq!(cmd, MarketplaceCommand::Remove("pares/rust-helper".to_string()));
+        assert_eq!(
+            cmd,
+            MarketplaceCommand::Remove("pares/rust-helper".to_string())
+        );
     }
 
     #[test]
@@ -427,8 +429,8 @@ mod tests {
     fn run_cli_update_reports_all_up_to_date() {
         let client = make_client();
         let mut installer = make_installer();
-        let checker = UpdateChecker::new()
-            .with_catalogue(vec![make_skill("pares/rust-helper", "1.0.0")]);
+        let checker =
+            UpdateChecker::new().with_catalogue(vec![make_skill("pares/rust-helper", "1.0.0")]);
         installer
             .install(make_skill("pares/rust-helper", "1.0.0"))
             .unwrap();
@@ -440,8 +442,8 @@ mod tests {
     fn run_cli_update_applies_available_update() {
         let client = make_client();
         let mut installer = make_installer();
-        let checker = UpdateChecker::new()
-            .with_catalogue(vec![make_skill("pares/rust-helper", "1.0.1")]);
+        let checker =
+            UpdateChecker::new().with_catalogue(vec![make_skill("pares/rust-helper", "1.0.1")]);
         installer
             .install(make_skill("pares/rust-helper", "1.0.0"))
             .unwrap();

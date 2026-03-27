@@ -246,15 +246,27 @@ mod tests {
     async fn bridge_with_entries() -> PluresDbBridge {
         let store = Arc::new(InMemoryStore::new());
         store
-            .insert(make_entry("d1", "Use tokio for async", MemoryCategory::Decision))
+            .insert(make_entry(
+                "d1",
+                "Use tokio for async",
+                MemoryCategory::Decision,
+            ))
             .await
             .unwrap();
         store
-            .insert(make_entry("d2", "Avoid blocking calls", MemoryCategory::Decision))
+            .insert(make_entry(
+                "d2",
+                "Avoid blocking calls",
+                MemoryCategory::Decision,
+            ))
             .await
             .unwrap();
         store
-            .insert(make_entry("c1", "fn main() {}", MemoryCategory::CodePattern))
+            .insert(make_entry(
+                "c1",
+                "fn main() {}",
+                MemoryCategory::CodePattern,
+            ))
             .await
             .unwrap();
         PluresDbBridge::new(store).await.unwrap()
@@ -379,7 +391,11 @@ mod tests {
     async fn reload_reflects_new_entries() {
         let store = Arc::new(InMemoryStore::new());
         store
-            .insert(make_entry("r1", "initial entry", MemoryCategory::Conversation))
+            .insert(make_entry(
+                "r1",
+                "initial entry",
+                MemoryCategory::Conversation,
+            ))
             .await
             .unwrap();
 

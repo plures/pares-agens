@@ -303,7 +303,10 @@ mod tests {
             scores: vec![],
             weights: None,
         };
-        assert!(matches!(obj.evaluate(), Err(OptimizerError::ObjectiveError(_))));
+        assert!(matches!(
+            obj.evaluate(),
+            Err(OptimizerError::ObjectiveError(_))
+        ));
     }
 
     #[test]
@@ -312,7 +315,10 @@ mod tests {
             scores: vec![1.0, 2.0],
             weights: Some(vec![1.0]),
         };
-        assert!(matches!(obj.evaluate(), Err(OptimizerError::ObjectiveError(_))));
+        assert!(matches!(
+            obj.evaluate(),
+            Err(OptimizerError::ObjectiveError(_))
+        ));
     }
 
     #[test]
@@ -321,7 +327,10 @@ mod tests {
             scores: vec![1.0, f64::NAN],
             weights: None,
         };
-        assert!(matches!(obj.evaluate(), Err(OptimizerError::ObjectiveError(_))));
+        assert!(matches!(
+            obj.evaluate(),
+            Err(OptimizerError::ObjectiveError(_))
+        ));
     }
 
     // ── OptimizerInput validation tests ──────────────────────────────────
@@ -331,13 +340,19 @@ mod tests {
         let input = OptimizerInput {
             run_id: "".into(),
             policy_id: "p".into(),
-            objective: Objective { scores: vec![1.0], weights: None },
+            objective: Objective {
+                scores: vec![1.0],
+                weights: None,
+            },
             constraints: vec![],
             max_iterations: 10,
             convergence_tolerance: 1e-4,
             context: std::collections::HashMap::new(),
         };
-        assert!(matches!(input.validate(), Err(OptimizerError::InvalidConfig(_))));
+        assert!(matches!(
+            input.validate(),
+            Err(OptimizerError::InvalidConfig(_))
+        ));
     }
 
     #[test]
@@ -345,13 +360,19 @@ mod tests {
         let input = OptimizerInput {
             run_id: "r".into(),
             policy_id: "p".into(),
-            objective: Objective { scores: vec![1.0], weights: None },
+            objective: Objective {
+                scores: vec![1.0],
+                weights: None,
+            },
             constraints: vec![],
             max_iterations: 0,
             convergence_tolerance: 1e-4,
             context: std::collections::HashMap::new(),
         };
-        assert!(matches!(input.validate(), Err(OptimizerError::InvalidConfig(_))));
+        assert!(matches!(
+            input.validate(),
+            Err(OptimizerError::InvalidConfig(_))
+        ));
     }
 
     #[test]
@@ -359,12 +380,18 @@ mod tests {
         let input = OptimizerInput {
             run_id: "r".into(),
             policy_id: "p".into(),
-            objective: Objective { scores: vec![1.0], weights: None },
+            objective: Objective {
+                scores: vec![1.0],
+                weights: None,
+            },
             constraints: vec![],
             max_iterations: 10,
             convergence_tolerance: -0.1,
             context: std::collections::HashMap::new(),
         };
-        assert!(matches!(input.validate(), Err(OptimizerError::InvalidConfig(_))));
+        assert!(matches!(
+            input.validate(),
+            Err(OptimizerError::InvalidConfig(_))
+        ));
     }
 }

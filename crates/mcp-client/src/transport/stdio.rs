@@ -37,12 +37,14 @@ impl StdioTransport {
             .stderr(std::process::Stdio::inherit())
             .spawn()?;
 
-        let stdin = child.stdin.take().ok_or_else(|| {
-            McpError::Transport("failed to open stdin for child process".into())
-        })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            McpError::Transport("failed to open stdout for child process".into())
-        })?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| McpError::Transport("failed to open stdin for child process".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| McpError::Transport("failed to open stdout for child process".into()))?;
 
         Ok(Self {
             child,

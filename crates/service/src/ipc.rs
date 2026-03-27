@@ -60,15 +60,15 @@ impl UnixSocketTransport {
     pub fn new() -> Self {
         let dir = unix_runtime_dir();
         let path = dir.join("pares-agens.sock");
-        let socket_path = path.to_str()
-            .unwrap_or("/tmp/pares-agens.sock")
-            .to_owned();
+        let socket_path = path.to_str().unwrap_or("/tmp/pares-agens.sock").to_owned();
         Self { socket_path }
     }
 
     /// Create a transport using an explicit socket path.
     pub fn with_path(path: impl Into<String>) -> Self {
-        Self { socket_path: path.into() }
+        Self {
+            socket_path: path.into(),
+        }
     }
 }
 
@@ -169,8 +169,7 @@ mod tests {
         let req = IpcRequest::Ping;
         let encoded = encode_request(&req).expect("encode failed");
         // Decode as an IpcRequest to verify round-trip
-        let decoded: IpcRequest =
-            serde_json::from_slice(&encoded).expect("decode failed");
+        let decoded: IpcRequest = serde_json::from_slice(&encoded).expect("decode failed");
         assert!(matches!(decoded, IpcRequest::Ping));
     }
 
@@ -216,4 +215,5 @@ mod tests {
     fn unix_socket_with_explicit_path() {
         let transport = UnixSocketTransport::with_path("/tmp/test.sock");
         assert_eq!(transport.path(), "/tmp/test.sock");
-    }}
+    }
+}

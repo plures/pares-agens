@@ -125,11 +125,7 @@ fn cron_to_procedure(cron: &OpenClawCronJob) -> TimerProcedure {
 /// reflects what *would* have been written.
 ///
 /// Progress is printed to stdout as each phase completes.
-pub fn run(
-    source: &Path,
-    output: &Path,
-    dry_run: bool,
-) -> Result<MigrationReport, MigrateError> {
+pub fn run(source: &Path, output: &Path, dry_run: bool) -> Result<MigrationReport, MigrateError> {
     // ── Phase 1: Load ──────────────────────────────────────────────────────
     println!("Loading OpenClaw installation from: {}", source.display());
     let inst = OpenClawInstallation::load(source)?;
@@ -173,7 +169,10 @@ pub fn run(
         if !tg.token.is_empty() {
             let mut settings = serde_json::Map::new();
             settings.insert("token".into(), serde_json::Value::String(tg.token.clone()));
-            channels.push(ChannelConfig { channel: "telegram".into(), settings });
+            channels.push(ChannelConfig {
+                channel: "telegram".into(),
+                settings,
+            });
         }
     }
     // Preserve any extra top-level config fields as a generic "extra" channel entry.
@@ -190,14 +189,16 @@ pub fn run(
     let state: Vec<StateEntry> = inst
         .personality_files
         .iter()
-        .map(|p| StateEntry { key: p.key.clone(), value: p.content.clone() })
+        .map(|p| StateEntry {
+            key: p.key.clone(),
+            value: p.content.clone(),
+        })
         .collect();
     println!("  {} personality files converted", state.len());
 
     // ── Phase 5: Convert cron jobs → timer procedures ──────────────────────
     println!("Converting cron jobs…");
-    let procedures: Vec<TimerProcedure> =
-        inst.crons.iter().map(cron_to_procedure).collect();
+    let procedures: Vec<TimerProcedure> = inst.crons.iter().map(cron_to_procedure).collect();
     println!("  {} timer procedures converted", procedures.len());
 
     let report = MigrationReport {
@@ -218,13 +219,12 @@ pub fn run(
     Ok(report)
 }
 
-fn write_json_file(
-    path: &Path,
-    json: &str,
-) -> Result<(), MigrateError> {
+fn write_json_file(path: &Path, json: &str) -> Result<(), MigrateError> {
     println!("Writing {}…", path.display());
-    std::fs::write(path, json)
-        .map_err(|e| MigrateError::Write { path: path.to_path_buf(), source: e })
+    std::fs::write(path, json).map_err(|e| MigrateError::Write {
+        path: path.to_path_buf(),
+        source: e,
+    })
 }
 
 fn write_output(
@@ -234,8 +234,10 @@ fn write_output(
     state: &[StateEntry],
     procedures: &[TimerProcedure],
 ) -> Result<(), MigrateError> {
-    std::fs::create_dir_all(output)
-        .map_err(|e| MigrateError::Write { path: output.to_path_buf(), source: e })?;
+    std::fs::create_dir_all(output).map_err(|e| MigrateError::Write {
+        path: output.to_path_buf(),
+        source: e,
+    })?;
 
     write_json_file(
         &output.join("memories.json"),
@@ -321,7 +323,9 @@ mod tests {
                 },
             ],
             config: OpenClawConfig {
-                telegram: Some(OpenClawTelegramConfig { token: "123:ABC".into() }),
+                telegram: Some(OpenClawTelegramConfig {
+                    token: "123:ABC".into(),
+                }),
                 extra: serde_json::Map::new(),
             },
             crons: vec![OpenClawCronJob {
@@ -331,8 +335,14 @@ mod tests {
                 recurring: true,
             }],
             personality_files: vec![
-                PersonalityFile { key: "soul".into(), content: "# Soul\nI am helpful.".into() },
-                PersonalityFile { key: "identity".into(), content: "# Identity\nPares Agens.".into() },
+                PersonalityFile {
+                    key: "soul".into(),
+                    content: "# Soul\nI am helpful.".into(),
+                },
+                PersonalityFile {
+                    key: "identity".into(),
+                    content: "# Identity\nPares Agens.".into(),
+                },
             ],
         }
     }
@@ -406,7 +416,12 @@ mod tests {
         assert_eq!(report.procedures, 1);
 
         // All four output files must exist
-        for name in &["memories.json", "channels.json", "state.json", "procedures.json"] {
+        for name in &[
+            "memories.json",
+            "channels.json",
+            "state.json",
+            "procedures.json",
+        ] {
             assert!(
                 out_dir.path().join(name).exists(),
                 "{name} should have been written"
@@ -456,7 +471,10 @@ mod tests {
 
         let mem_raw = std::fs::read_to_string(out_dir.path().join("memories.json")).unwrap();
         let mems: Vec<MemoryEntry> = serde_json::from_str(&mem_raw).unwrap();
-        assert!(!mems[0].id.is_empty(), "empty id must be replaced with a UUID");
+        assert!(
+            !mems[0].id.is_empty(),
+            "empty id must be replaced with a UUID"
+        );
     }
 
     #[test]
@@ -470,6 +488,9 @@ mod tests {
 
         let out_dir = tempfile::tempdir().unwrap();
         let report = run(src_dir.path(), out_dir.path(), false).unwrap();
-        assert_eq!(report.channels, 0, "empty token should not produce a channel config");
+        assert_eq!(
+            report.channels, 0,
+            "empty token should not produce a channel config"
+        );
     }
 }

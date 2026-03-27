@@ -27,11 +27,18 @@ impl OpenAiClient {
     ///   or `http://localhost:12434`.
     /// * `api_key` — bearer token; pass `None` for unauthenticated local servers.
     pub fn new(base_url: impl Into<String>, api_key: Option<String>) -> Self {
-        Self { client: Client::new(), base_url: base_url.into(), api_key }
+        Self {
+            client: Client::new(),
+            base_url: base_url.into(),
+            api_key,
+        }
     }
 
     fn completions_url(&self) -> String {
-        format!("{}/v1/chat/completions", self.base_url.trim_end_matches('/'))
+        format!(
+            "{}/v1/chat/completions",
+            self.base_url.trim_end_matches('/')
+        )
     }
 
     fn apply_auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
@@ -48,9 +55,7 @@ impl OpenAiClient {
     ) -> Result<ChatCompletionResponse, Error> {
         debug!(model = %request.model, "sending chat completion request");
 
-        let req = self.apply_auth(
-            self.client.post(self.completions_url()).json(request),
-        );
+        let req = self.apply_auth(self.client.post(self.completions_url()).json(request));
         let response = req.send().await?;
 
         if !response.status().is_success() {
@@ -76,9 +81,7 @@ impl OpenAiClient {
         let mut req_body = request.clone();
         req_body.stream = Some(true);
 
-        let req = self.apply_auth(
-            self.client.post(self.completions_url()).json(&req_body),
-        );
+        let req = self.apply_auth(self.client.post(self.completions_url()).json(&req_body));
         let response = req.send().await?;
 
         if !response.status().is_success() {
@@ -98,13 +101,19 @@ mod tests {
     #[test]
     fn completions_url_appends_path() {
         let c = OpenAiClient::new("https://api.openai.com", None);
-        assert_eq!(c.completions_url(), "https://api.openai.com/v1/chat/completions");
+        assert_eq!(
+            c.completions_url(),
+            "https://api.openai.com/v1/chat/completions"
+        );
     }
 
     #[test]
     fn completions_url_trims_trailing_slash() {
         let c = OpenAiClient::new("http://localhost:12434/", None);
-        assert_eq!(c.completions_url(), "http://localhost:12434/v1/chat/completions");
+        assert_eq!(
+            c.completions_url(),
+            "http://localhost:12434/v1/chat/completions"
+        );
     }
 
     #[test]

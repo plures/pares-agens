@@ -6,6 +6,8 @@
 //! - [`PluresLm::capture`] — quality-gated extraction and storage from a conversation exchange
 //! - [`PluresLm::inject_context`] — format memories for model prompt with budget enforcement
 
+/// Correction detection and learning engine.
+pub mod correction;
 /// Embedding provider trait and mock implementation.
 pub mod embed;
 /// Memory entry data structures and category taxonomy.
@@ -16,8 +18,6 @@ pub mod forgetting;
 pub mod quality;
 /// Memory store trait and backend implementations.
 pub mod store;
-/// Correction detection and learning engine.
-pub mod correction;
 
 use std::sync::Arc;
 
@@ -278,7 +278,11 @@ fn detect_category(text: &str) -> MemoryCategory {
         return MemoryCategory::Correction;
     }
 
-    if lower.contains("error") || lower.contains("fix") || lower.contains("bug") || lower.contains("panic") {
+    if lower.contains("error")
+        || lower.contains("fix")
+        || lower.contains("bug")
+        || lower.contains("panic")
+    {
         MemoryCategory::ErrorFix
     } else if lower.contains("fn ")
         || lower.contains("impl ")
@@ -358,7 +362,8 @@ mod tests {
         let ids = lm
             .capture(&Exchange {
                 user: "How do I write async Rust?".into(),
-                assistant: "Use `async fn` and `.await` on futures. Add tokio to Cargo.toml.".into(),
+                assistant: "Use `async fn` and `.await` on futures. Add tokio to Cargo.toml."
+                    .into(),
             })
             .await
             .unwrap();
@@ -370,7 +375,8 @@ mod tests {
         let lm = lm();
         let exchange = Exchange {
             user: "Explain ownership in Rust with examples and borrowing rules.".into(),
-            assistant: "Ownership ensures memory safety without a GC. Each value has one owner.".into(),
+            assistant: "Ownership ensures memory safety without a GC. Each value has one owner."
+                .into(),
         };
         // First capture succeeds
         let first = lm.capture(&exchange).await.unwrap();
@@ -392,19 +398,27 @@ mod tests {
         let lm = lm();
         lm.capture(&Exchange {
             user: "I prefer using snake_case convention for all variable names always.".into(),
-            assistant: "Noted — snake_case is the Rust convention for variables and functions.".into(),
+            assistant: "Noted — snake_case is the Rust convention for variables and functions."
+                .into(),
         })
         .await
         .unwrap();
 
-        let all = lm.recall("snake_case naming convention", 5, &[]).await.unwrap();
+        let all = lm
+            .recall("snake_case naming convention", 5, &[])
+            .await
+            .unwrap();
         assert!(!all.is_empty());
 
         let excluded = lm
             .recall(
                 "snake_case naming convention",
                 5,
-                &[MemoryCategory::Preference, MemoryCategory::Conversation, MemoryCategory::Correction],
+                &[
+                    MemoryCategory::Preference,
+                    MemoryCategory::Conversation,
+                    MemoryCategory::Correction,
+                ],
             )
             .await
             .unwrap();

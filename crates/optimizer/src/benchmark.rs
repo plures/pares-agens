@@ -133,10 +133,7 @@ impl BenchmarkHarness {
     ///
     /// Returns the first hard [`OptimizerError`] (e.g. invalid config or
     /// non-finite objective) encountered in either arm.
-    pub fn run(
-        &self,
-        episodes: Vec<OptimizerInput>,
-    ) -> Result<BenchmarkReport, OptimizerError> {
+    pub fn run(&self, episodes: Vec<OptimizerInput>) -> Result<BenchmarkReport, OptimizerError> {
         let optimized_policy: Box<dyn Policy> =
             Box::new(DefaultPolicy::new(self.config.optimized_step_size));
 

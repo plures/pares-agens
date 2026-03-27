@@ -5,7 +5,7 @@ use pares_agens_core::license::{
     FixedKeyValidator, LicenseStatus, LicenseValidator, PolarValidator,
 };
 use pares_agens_core::optimization::{EvidenceRequest, OptimizationSafety, OptimizationTelemetry};
-use pares_agens_core::praxis::{GuidanceCategory, GuidanceEntry, SourceSpan, AnalysisEvent};
+use pares_agens_core::praxis::{AnalysisEvent, GuidanceCategory, GuidanceEntry, SourceSpan};
 
 use crate::state::{rebuild_model_router, AppState, Settings};
 
@@ -14,16 +14,16 @@ use crate::state::{rebuild_model_router, AppState, Settings};
 /// The frontend calls this via `invoke("send_message", { content })`.
 /// The adapter's run-loop processes the event and returns a `ModelResponse`.
 #[tauri::command]
-pub async fn send_message(
-    content: String,
-    state: State<'_, AppState>,
-) -> Result<String, String> {
+pub async fn send_message(content: String, state: State<'_, AppState>) -> Result<String, String> {
     let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
     state
         .ipc_handle
         .input_tx
-        .send(TauriIpcMessage { content, response_tx })
+        .send(TauriIpcMessage {
+            content,
+            response_tx,
+        })
         .await
         .map_err(|e| format!("IPC send failed: {e}"))?;
 
@@ -42,14 +42,8 @@ pub async fn send_message(
 /// Memories are returned newest-first as plain JSON objects so the frontend
 /// can render them without depending on the internal `MemoryEntry` type.
 #[tauri::command]
-pub async fn get_memories(
-    state: State<'_, AppState>,
-) -> Result<Vec<serde_json::Value>, String> {
-    let entries = state
-        .memory_store
-        .all()
-        .await
-        .map_err(|e| e.to_string())?;
+pub async fn get_memories(state: State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
+    let entries = state.memory_store.all().await.map_err(|e| e.to_string())?;
 
     let recent = entries
         .into_iter()
@@ -181,18 +175,15 @@ pub async fn get_analysis_events(
 /// and update guidance entries. Useful for testing or when the user
 /// wants to refresh guidance after significant memory updates.
 #[tauri::command]
-pub async fn trigger_praxis_analysis(
-    state: State<'_, AppState>,
-) -> Result<u32, String> {
-    let memories = state
-        .memory_store
-        .all()
-        .await
-        .map_err(|e| e.to_string())?;
+pub async fn trigger_praxis_analysis(state: State<'_, AppState>) -> Result<u32, String> {
+    let memories = state.memory_store.all().await.map_err(|e| e.to_string())?;
 
     let mut analysis_count = 0;
-    for memory in memories.iter().take(10) { // Limit to 10 recent memories
-        state.guidance_service.generate_guidance_from_memory(&memory.content, &memory.id);
+    for memory in memories.iter().take(10) {
+        // Limit to 10 recent memories
+        state
+            .guidance_service
+            .generate_guidance_from_memory(&memory.content, &memory.id);
         analysis_count += 1;
     }
 
@@ -207,7 +198,9 @@ pub async fn check_optimization_safety(
     action: String,
     state: State<'_, AppState>,
 ) -> Result<OptimizationSafety, String> {
-    Ok(state.optimization_safety_gate.check_optimization_safety(&action))
+    Ok(state
+        .optimization_safety_gate
+        .check_optimization_safety(&action))
 }
 
 /// Get all pending evidence requests.
@@ -218,7 +211,9 @@ pub async fn check_optimization_safety(
 pub async fn get_pending_evidence_requests(
     state: State<'_, AppState>,
 ) -> Result<Vec<EvidenceRequest>, String> {
-    Ok(state.optimization_safety_gate.get_pending_evidence_requests())
+    Ok(state
+        .optimization_safety_gate
+        .get_pending_evidence_requests())
 }
 
 /// Get optimization telemetry records.
@@ -241,7 +236,9 @@ pub async fn update_optimization_outcome(
     outcome: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    state.optimization_safety_gate.update_telemetry_outcome(&telemetry_id, outcome)
+    state
+        .optimization_safety_gate
+        .update_telemetry_outcome(&telemetry_id, outcome)
 }
 
 /// Execute an action with optimization safety enforcement.
@@ -253,10 +250,12 @@ pub async fn execute_with_safety(
     action: String,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    state.optimization_safety_gate.execute_with_safety_check(
-        &action,
-        || Ok::<String, String>(format!("Executed: {}", action))
-    ).await
+    state
+        .optimization_safety_gate
+        .execute_with_safety_check(&action, || {
+            Ok::<String, String>(format!("Executed: {}", action))
+        })
+        .await
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -312,9 +311,7 @@ pub async fn call_mcp_tool(
 
 /// Restart all MCP servers (re-reads settings, respawns enabled servers).
 #[tauri::command]
-pub async fn restart_mcp_servers(
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn restart_mcp_servers(state: State<'_, AppState>) -> Result<(), String> {
     crate::mcp::restart_mcp_servers(&state).await;
     Ok(())
 }
@@ -336,9 +333,7 @@ pub async fn get_mcp_openai_tools(
 /// The frontend calls this via `invoke("get_license_status")` to show the
 /// current tier (Free / Pro) and whether the license is still valid.
 #[tauri::command]
-pub async fn get_license_status(
-    state: State<'_, AppState>,
-) -> Result<LicenseStatus, String> {
+pub async fn get_license_status(state: State<'_, AppState>) -> Result<LicenseStatus, String> {
     Ok(state.license.lock().await.status())
 }
 

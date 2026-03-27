@@ -1,8 +1,8 @@
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
-use chrono::Utc;
 
 /// Categories of Praxis coprocessor guidance displayed in the sidebar.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -27,10 +27,10 @@ impl GuidanceCategory {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Facts => "facts",
-            Self::Rules => "rules", 
+            Self::Rules => "rules",
             Self::Constraints => "constraints",
             Self::Decisions => "decisions",
-            Self::Risks => "risks", 
+            Self::Risks => "risks",
             Self::Guidance => "guidance",
         }
     }
@@ -138,11 +138,14 @@ impl GuidanceService {
             .filter(|e| &e.category == category)
             .cloned()
             .collect();
-        
+
         // Sort by priority (1=highest), then confidence (highest first)
         entries.sort_by(|a, b| {
-            a.priority.cmp(&b.priority)
-                .then_with(|| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal))
+            a.priority.cmp(&b.priority).then_with(|| {
+                b.confidence
+                    .partial_cmp(&a.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
         });
         entries
     }
@@ -186,7 +189,7 @@ impl GuidanceService {
     }
 
     /// Simulate generating guidance from memory content.
-    /// 
+    ///
     /// This is a placeholder implementation. In production, this would:
     /// 1. Connect to PluresLM for memory analysis
     /// 2. Run AI analysis to extract facts, decisions, risks, etc.
@@ -258,11 +261,7 @@ impl GuidanceService {
     /// traceability.
     ///
     /// Returns the guidance entry ID.
-    pub fn inject_correction_guidance(
-        &self,
-        rule_summary: &str,
-        correction_id: &str,
-    ) -> String {
+    pub fn inject_correction_guidance(&self, rule_summary: &str, correction_id: &str) -> String {
         let entry = GuidanceEntry {
             id: String::new(), // auto-generated
             category: GuidanceCategory::Rules,
@@ -288,11 +287,7 @@ impl GuidanceService {
 
     /// Remove a guidance entry by ID.  Returns `true` if the entry existed.
     pub fn remove_guidance(&self, guidance_id: &str) -> bool {
-        self.entries
-            .lock()
-            .unwrap()
-            .remove(guidance_id)
-            .is_some()
+        self.entries.lock().unwrap().remove(guidance_id).is_some()
     }
 }
 
@@ -303,7 +298,7 @@ mod tests {
     #[test]
     fn guidance_service_basic_operations() {
         let service = GuidanceService::new();
-        
+
         let entry = GuidanceEntry {
             id: "test-1".to_string(),
             category: GuidanceCategory::Facts,
@@ -328,7 +323,7 @@ mod tests {
     #[test]
     fn guidance_sorting_by_priority_and_confidence() {
         let service = GuidanceService::new();
-        
+
         // Add entries with different priorities and confidence
         service.add_guidance(GuidanceEntry {
             id: "low-pri".to_string(),
@@ -358,9 +353,12 @@ mod tests {
     #[test]
     fn generate_guidance_from_memory_detects_patterns() {
         let service = GuidanceService::new();
-        
-        service.generate_guidance_from_memory("We decided to use Rust because it's memory safe", "mem-1");
-        
+
+        service.generate_guidance_from_memory(
+            "We decided to use Rust because it's memory safe",
+            "mem-1",
+        );
+
         let decisions = service.get_guidance(&GuidanceCategory::Decisions);
         assert_eq!(decisions.len(), 1);
         assert!(decisions[0].content.contains("decision"));
@@ -374,10 +372,8 @@ mod tests {
     fn inject_correction_guidance_creates_rule() {
         let service = GuidanceService::new();
 
-        let id = service.inject_correction_guidance(
-            "avoid: use unwrap in production",
-            "correction-123",
-        );
+        let id =
+            service.inject_correction_guidance("avoid: use unwrap in production", "correction-123");
 
         let rules = service.get_guidance(&GuidanceCategory::Rules);
         assert_eq!(rules.len(), 1);

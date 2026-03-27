@@ -1,7 +1,7 @@
 //! Core rule primitives: [`Rule`], [`RuleResult`], [`RuleContext`], [`RuleCategory`].
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // RuleResult
@@ -85,7 +85,7 @@ impl RuleCategory {
         match self {
             Self::Input => "inputRules",
             Self::State => "stateRules",
-            Self::Data  => "dataRules",
+            Self::Data => "dataRules",
         }
     }
 }
@@ -157,7 +157,11 @@ impl RuleContext {
     #[must_use]
     pub fn payload_array_len(&self, key: &str) -> Option<usize> {
         let len = self.payload.get(key)?.as_array()?.len();
-        if len == 0 { None } else { Some(len) }
+        if len == 0 {
+            None
+        } else {
+            Some(len)
+        }
     }
 }
 
@@ -198,14 +202,18 @@ mod tests {
 
     #[test]
     fn fail_is_blocking_not_permitted() {
-        let r = RuleResult::Fail { reason: "bad".into() };
+        let r = RuleResult::Fail {
+            reason: "bad".into(),
+        };
         assert!(r.is_blocking());
         assert!(!r.is_permitted());
     }
 
     #[test]
     fn warning_is_permitted_not_blocking() {
-        let r = RuleResult::Warning { message: "watch out".into() };
+        let r = RuleResult::Warning {
+            message: "watch out".into(),
+        };
         assert!(r.is_permitted());
         assert!(!r.is_blocking());
     }
@@ -256,9 +264,16 @@ mod tests {
     fn rule_result_serde_roundtrip() {
         let cases = vec![
             RuleResult::Pass,
-            RuleResult::Fail { reason: "oops".into() },
-            RuleResult::Warning { message: "heads up".into() },
-            RuleResult::Gate { action: "delete".into(), rationale: "irreversible".into() },
+            RuleResult::Fail {
+                reason: "oops".into(),
+            },
+            RuleResult::Warning {
+                message: "heads up".into(),
+            },
+            RuleResult::Gate {
+                action: "delete".into(),
+                rationale: "irreversible".into(),
+            },
         ];
         for r in cases {
             let json = serde_json::to_string(&r).unwrap();

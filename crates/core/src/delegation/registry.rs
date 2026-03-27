@@ -204,8 +204,7 @@ mod tests {
     fn filter_tools_restricts_to_allowed() {
         use serde_json::json;
 
-        let def = AgentDefinition::new("t", "d", "p")
-            .with_tools(["search", "read_file"]);
+        let def = AgentDefinition::new("t", "d", "p").with_tools(["search", "read_file"]);
 
         let all_tools = vec![
             ToolDefinition {

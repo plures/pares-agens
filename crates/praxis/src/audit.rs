@@ -33,8 +33,7 @@ impl CompletenessAudit {
 
     /// Run the audit and return per-module reports.
     pub fn run(&self) -> AuditSummary {
-        let reports: Vec<CompletenessReport> =
-            self.modules.iter().map(|m| m.audit()).collect();
+        let reports: Vec<CompletenessReport> = self.modules.iter().map(|m| m.audit()).collect();
 
         let total_rules: usize = reports.iter().map(|r| r.total_rules).sum();
         let complete_modules = reports.iter().filter(|r| r.is_complete()).count();
@@ -87,35 +86,67 @@ mod tests {
     use super::*;
     use crate::rule::{Rule, RuleCategory, RuleContext, RuleResult};
 
-    struct AlwaysPassRule { name: &'static str, cat: RuleCategory }
+    struct AlwaysPassRule {
+        name: &'static str,
+        cat: RuleCategory,
+    }
     impl Rule for AlwaysPassRule {
-        fn name(&self) -> &str { self.name }
-        fn category(&self) -> RuleCategory { self.cat.clone() }
-        fn evaluate(&self, _ctx: &RuleContext) -> RuleResult { RuleResult::Pass }
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn category(&self) -> RuleCategory {
+            self.cat.clone()
+        }
+        fn evaluate(&self, _ctx: &RuleContext) -> RuleResult {
+            RuleResult::Pass
+        }
     }
 
-    struct FullModule { rules: Vec<Box<dyn Rule>> }
+    struct FullModule {
+        rules: Vec<Box<dyn Rule>>,
+    }
     impl PraxisModule for FullModule {
-        fn name(&self) -> &str { "full" }
-        fn rules(&self) -> &[Box<dyn Rule>] { &self.rules }
-        fn expectations(&self) -> Vec<String> { vec![] }
+        fn name(&self) -> &str {
+            "full"
+        }
+        fn rules(&self) -> &[Box<dyn Rule>] {
+            &self.rules
+        }
+        fn expectations(&self) -> Vec<String> {
+            vec![]
+        }
     }
 
     fn full_module() -> Box<dyn PraxisModule> {
         Box::new(FullModule {
             rules: vec![
-                Box::new(AlwaysPassRule { name: "i1", cat: RuleCategory::Input }),
-                Box::new(AlwaysPassRule { name: "s1", cat: RuleCategory::State }),
-                Box::new(AlwaysPassRule { name: "d1", cat: RuleCategory::Data }),
+                Box::new(AlwaysPassRule {
+                    name: "i1",
+                    cat: RuleCategory::Input,
+                }),
+                Box::new(AlwaysPassRule {
+                    name: "s1",
+                    cat: RuleCategory::State,
+                }),
+                Box::new(AlwaysPassRule {
+                    name: "d1",
+                    cat: RuleCategory::Data,
+                }),
             ],
         })
     }
 
     struct PartialModule;
     impl PraxisModule for PartialModule {
-        fn name(&self) -> &str { "partial" }
-        fn rules(&self) -> &[Box<dyn Rule>] { &[] }
-        fn expectations(&self) -> Vec<String> { vec![] }
+        fn name(&self) -> &str {
+            "partial"
+        }
+        fn rules(&self) -> &[Box<dyn Rule>] {
+            &[]
+        }
+        fn expectations(&self) -> Vec<String> {
+            vec![]
+        }
     }
 
     #[test]

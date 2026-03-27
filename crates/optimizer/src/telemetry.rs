@@ -126,7 +126,10 @@ impl TelemetryEmitter {
     /// Returns the emitter and an [`std::sync::Arc`]`<`[`std::sync::Mutex`]`<Vec<ObservabilityEvent>>>`
     /// that the caller can inspect after the optimizer finishes.
     #[must_use]
-    pub fn collecting() -> (Self, std::sync::Arc<std::sync::Mutex<Vec<ObservabilityEvent>>>) {
+    pub fn collecting() -> (
+        Self,
+        std::sync::Arc<std::sync::Mutex<Vec<ObservabilityEvent>>>,
+    ) {
         let store: std::sync::Arc<std::sync::Mutex<Vec<ObservabilityEvent>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let store_clone = store.clone();

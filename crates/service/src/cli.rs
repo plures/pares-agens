@@ -126,13 +126,19 @@ mod tests {
 
     impl MockManager {
         fn running() -> Self {
-            Self { status: ServiceStatus::Running }
+            Self {
+                status: ServiceStatus::Running,
+            }
         }
         fn stopped() -> Self {
-            Self { status: ServiceStatus::Stopped }
+            Self {
+                status: ServiceStatus::Stopped,
+            }
         }
         fn not_installed() -> Self {
-            Self { status: ServiceStatus::NotInstalled }
+            Self {
+                status: ServiceStatus::NotInstalled,
+            }
         }
     }
 
@@ -163,7 +169,11 @@ mod tests {
         fn status(&self) -> Result<ServiceInfo, ServiceError> {
             Ok(ServiceInfo {
                 status: self.status.clone(),
-                pid: if self.status == ServiceStatus::Running { Some(1234) } else { None },
+                pid: if self.status == ServiceStatus::Running {
+                    Some(1234)
+                } else {
+                    None
+                },
                 description: format!("{:?}", self.status),
             })
         }
@@ -178,17 +188,38 @@ mod tests {
 
     #[test]
     fn from_str_parses_all_commands() {
-        assert!(matches!("install".parse::<ServiceCommand>(), Ok(ServiceCommand::Install)));
-        assert!(matches!("start".parse::<ServiceCommand>(), Ok(ServiceCommand::Start)));
-        assert!(matches!("stop".parse::<ServiceCommand>(), Ok(ServiceCommand::Stop)));
-        assert!(matches!("status".parse::<ServiceCommand>(), Ok(ServiceCommand::Status)));
-        assert!(matches!("uninstall".parse::<ServiceCommand>(), Ok(ServiceCommand::Uninstall)));
+        assert!(matches!(
+            "install".parse::<ServiceCommand>(),
+            Ok(ServiceCommand::Install)
+        ));
+        assert!(matches!(
+            "start".parse::<ServiceCommand>(),
+            Ok(ServiceCommand::Start)
+        ));
+        assert!(matches!(
+            "stop".parse::<ServiceCommand>(),
+            Ok(ServiceCommand::Stop)
+        ));
+        assert!(matches!(
+            "status".parse::<ServiceCommand>(),
+            Ok(ServiceCommand::Status)
+        ));
+        assert!(matches!(
+            "uninstall".parse::<ServiceCommand>(),
+            Ok(ServiceCommand::Uninstall)
+        ));
     }
 
     #[test]
     fn from_str_case_insensitive() {
-        assert!(matches!("INSTALL".parse::<ServiceCommand>(), Ok(ServiceCommand::Install)));
-        assert!(matches!("Status".parse::<ServiceCommand>(), Ok(ServiceCommand::Status)));
+        assert!(matches!(
+            "INSTALL".parse::<ServiceCommand>(),
+            Ok(ServiceCommand::Install)
+        ));
+        assert!(matches!(
+            "Status".parse::<ServiceCommand>(),
+            Ok(ServiceCommand::Status)
+        ));
     }
 
     #[test]

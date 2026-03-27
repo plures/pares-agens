@@ -71,11 +71,7 @@ pub trait ModelClient: Send + Sync {
     /// Returns `Err` if `generate` cannot begin at all (e.g. the native
     /// feature is not enabled).  Mid-generation errors arrive through the
     /// returned receiver.
-    async fn stream(
-        &self,
-        prompt: &str,
-        params: GenParams,
-    ) -> Result<TokenReceiver, InferenceError>
+    async fn stream(&self, prompt: &str, params: GenParams) -> Result<TokenReceiver, InferenceError>
     where
         Self: 'static,
     {
@@ -92,11 +88,7 @@ pub trait ModelClient: Send + Sync {
     /// # Errors
     ///
     /// Returns `Err` on any error produced during generation.
-    async fn complete(
-        &self,
-        prompt: &str,
-        params: GenParams,
-    ) -> Result<String, InferenceError>
+    async fn complete(&self, prompt: &str, params: GenParams) -> Result<String, InferenceError>
     where
         Self: 'static,
     {

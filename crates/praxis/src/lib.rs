@@ -57,7 +57,7 @@ pub mod module;
 pub mod modules;
 pub mod rule;
 
-pub use rule::{Rule, RuleCategory, RuleContext, RuleResult};
+pub use audit::CompletenessAudit;
 pub use factory::RulesFactory;
 pub use module::{CompletenessReport, PraxisModule};
-pub use audit::CompletenessAudit;
+pub use rule::{Rule, RuleCategory, RuleContext, RuleResult};

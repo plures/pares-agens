@@ -5,11 +5,7 @@
 //! It aggregates the [`ExperimentLedger`] into human-readable statistics and
 //! actionable recommendations.
 
-use crate::{
-    ledger::ExperimentLedger,
-    schedule::StopCondition,
-    LedgerEntry, Verdict,
-};
+use crate::{ledger::ExperimentLedger, schedule::StopCondition, LedgerEntry, Verdict};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -173,7 +169,11 @@ impl ResearchReport {
             .map(|e| e.mutation_description.clone())
             .unwrap_or_default();
 
-        let experiments = ledger.entries().iter().map(ExperimentSummary::from).collect();
+        let experiments = ledger
+            .entries()
+            .iter()
+            .map(ExperimentSummary::from)
+            .collect();
 
         let recommendations = build_recommendations(ledger, higher_is_better, &best_mutation);
 
@@ -260,7 +260,8 @@ fn build_recommendations(
 
     if !higher_is_better {
         recs.push(
-            "This run minimises the metric. Verify that the metric floor has not been reached.".into(),
+            "This run minimises the metric. Verify that the metric floor has not been reached."
+                .into(),
         );
     }
 
@@ -330,8 +331,7 @@ mod tests {
     #[test]
     fn report_best_metric() {
         let ledger = build_ledger();
-        let report =
-            ResearchReport::from_ledger(default_params(StopCondition::Converged), &ledger);
+        let report = ResearchReport::from_ledger(default_params(StopCondition::Converged), &ledger);
         assert!((report.best_metric - 0.6).abs() < 1e-9);
         assert!(report.improved());
     }
@@ -339,8 +339,7 @@ mod tests {
     #[test]
     fn report_total_improvement_higher_is_better() {
         let ledger = build_ledger();
-        let report =
-            ResearchReport::from_ledger(default_params(StopCondition::Converged), &ledger);
+        let report = ResearchReport::from_ledger(default_params(StopCondition::Converged), &ledger);
         // best = 0.6, baseline = 0.5, improvement = 0.1
         assert!((report.total_improvement - 0.1).abs() < 1e-9);
     }
@@ -348,16 +347,14 @@ mod tests {
     #[test]
     fn report_has_recommendations() {
         let ledger = build_ledger();
-        let report =
-            ResearchReport::from_ledger(default_params(StopCondition::Converged), &ledger);
+        let report = ResearchReport::from_ledger(default_params(StopCondition::Converged), &ledger);
         assert!(!report.recommendations.is_empty());
     }
 
     #[test]
     fn report_serialises_to_json() {
         let ledger = build_ledger();
-        let report =
-            ResearchReport::from_ledger(default_params(StopCondition::Converged), &ledger);
+        let report = ResearchReport::from_ledger(default_params(StopCondition::Converged), &ledger);
         let json = report.to_json().unwrap();
         assert!(json.contains("\"run_id\""));
         assert!(json.contains("\"experiments\""));

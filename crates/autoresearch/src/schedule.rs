@@ -156,7 +156,10 @@ mod tests {
             experiment_timeout_secs: 0.0,
             ..Default::default()
         };
-        assert!(matches!(s.validate(), Err(AutoresearchError::InvalidConfig(_))));
+        assert!(matches!(
+            s.validate(),
+            Err(AutoresearchError::InvalidConfig(_))
+        ));
     }
 
     #[test]
@@ -165,7 +168,10 @@ mod tests {
             convergence_threshold: -0.1,
             ..Default::default()
         };
-        assert!(matches!(s.validate(), Err(AutoresearchError::InvalidConfig(_))));
+        assert!(matches!(
+            s.validate(),
+            Err(AutoresearchError::InvalidConfig(_))
+        ));
     }
 
     #[test]
@@ -175,7 +181,10 @@ mod tests {
             convergence_window: 0,
             ..Default::default()
         };
-        assert!(matches!(s.validate(), Err(AutoresearchError::InvalidConfig(_))));
+        assert!(matches!(
+            s.validate(),
+            Err(AutoresearchError::InvalidConfig(_))
+        ));
     }
 
     #[test]
@@ -196,10 +205,7 @@ mod tests {
 
     #[test]
     fn stop_condition_display() {
-        assert_eq!(
-            StopCondition::Converged.to_string(),
-            "converged"
-        );
+        assert_eq!(StopCondition::Converged.to_string(), "converged");
         assert_eq!(
             StopCondition::TimeBudgetExhausted.to_string(),
             "time budget exhausted"

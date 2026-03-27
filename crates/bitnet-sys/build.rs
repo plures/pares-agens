@@ -13,8 +13,8 @@ fn main() {
         return;
     }
 
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR is always set by Cargo");
+    let manifest_dir =
+        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is always set by Cargo");
 
     // The bitnet.cpp source lives two levels up from this crate's manifest
     // (workspace-root/third_party/bitnet).
@@ -96,6 +96,9 @@ fn build_bitnet(src_dir: &std::path::Path) {
     }
 
     // Invalidate the build script if the submodule source changes.
-    println!("cargo:rerun-if-changed={}", src_dir.join("CMakeLists.txt").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        src_dir.join("CMakeLists.txt").display()
+    );
     println!("cargo:rerun-if-changed={}", src_dir.join("src").display());
 }

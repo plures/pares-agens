@@ -19,11 +19,7 @@ use std::sync::Arc;
 use tokio::task::JoinSet;
 use tracing::{debug, instrument, warn};
 
-use crate::delegation::{
-    context::AgentContext,
-    registry::AgentRegistry,
-    DelegationError,
-};
+use crate::delegation::{context::AgentContext, registry::AgentRegistry, DelegationError};
 use crate::model::{ModelClient, ToolDefinition, ToolDispatcher};
 
 // ── SubTask ──────────────────────────────────────────────────────────────────
@@ -85,7 +81,11 @@ impl DelegationBroker {
         model: Arc<dyn ModelClient>,
         tools: Arc<dyn ToolDispatcher>,
     ) -> Self {
-        Self { registry, model, tools }
+        Self {
+            registry,
+            model,
+            tools,
+        }
     }
 
     /// Fan out `tasks` to their respective agents and run them concurrently.
@@ -109,9 +109,7 @@ impl DelegationBroker {
             let model = Arc::clone(&self.model);
             let tools = Arc::clone(&self.tools);
 
-            join_set.spawn(async move {
-                run_sub_task(task, registry, model, tools).await
-            });
+            join_set.spawn(async move { run_sub_task(task, registry, model, tools).await });
         }
 
         // Collect results as they complete.  We want to preserve a
@@ -153,9 +151,7 @@ async fn run_sub_task(
         None => {
             return SubTaskResult {
                 agent_name,
-                output: Err(
-                    DelegationError::UnknownAgent(task.agent_name).to_string()
-                ),
+                output: Err(DelegationError::UnknownAgent(task.agent_name).to_string()),
             };
         }
     };
@@ -164,11 +160,9 @@ async fn run_sub_task(
 
     // 2. Build isolated context.
     let mut context = match task.parent_context {
-        Some(ref summary) => AgentContext::with_parent_context(
-            &agent_name,
-            &definition.system_prompt,
-            summary,
-        ),
+        Some(ref summary) => {
+            AgentContext::with_parent_context(&agent_name, &definition.system_prompt, summary)
+        }
         None => AgentContext::new(&agent_name, &definition.system_prompt),
     };
 
@@ -190,13 +184,11 @@ async fn run_sub_task(
             Err(e) => {
                 return SubTaskResult {
                     agent_name: agent_name.clone(),
-                    output: Err(
-                        DelegationError::ModelError {
-                            agent: agent_name.clone(),
-                            message: e,
-                        }
-                        .to_string(),
-                    ),
+                    output: Err(DelegationError::ModelError {
+                        agent: agent_name.clone(),
+                        message: e,
+                    }
+                    .to_string()),
                 };
             }
         };
@@ -220,10 +212,9 @@ async fn run_sub_task(
 
             for call in &completion.tool_calls {
                 let result = tools.call_tool(&call.name, call.arguments.clone()).await;
-                context.messages.push(ChatMessage::tool_result(
-                    call.id.clone(),
-                    result,
-                ));
+                context
+                    .messages
+                    .push(ChatMessage::tool_result(call.id.clone(), result));
             }
             // Continue to the next turn so the model can process tool results.
             continue;
@@ -397,12 +388,13 @@ mod tests {
             Arc::new(EchoModel),
             Arc::new(NoopDispatcher),
         );
-        let results = broker
-            .delegate(vec![SubTask::new("echo", "hello")])
-            .await;
+        let results = broker.delegate(vec![SubTask::new("echo", "hello")]).await;
         assert_eq!(results.len(), 1);
         let output = results[0].output.as_ref().unwrap();
-        assert!(output.contains("hello"), "expected echo of 'hello', got: {output}");
+        assert!(
+            output.contains("hello"),
+            "expected echo of 'hello', got: {output}"
+        );
     }
 
     #[tokio::test]
@@ -412,9 +404,7 @@ mod tests {
             Arc::new(EchoModel),
             Arc::new(NoopDispatcher),
         );
-        let results = broker
-            .delegate(vec![SubTask::new("ghost", "task")])
-            .await;
+        let results = broker.delegate(vec![SubTask::new("ghost", "task")]).await;
         assert_eq!(results.len(), 1);
         assert!(results[0].output.is_err());
         let err = results[0].output.as_ref().unwrap_err();
@@ -428,9 +418,7 @@ mod tests {
             Arc::new(ErrorModel),
             Arc::new(NoopDispatcher),
         );
-        let results = broker
-            .delegate(vec![SubTask::new("echo", "hello")])
-            .await;
+        let results = broker.delegate(vec![SubTask::new("echo", "hello")]).await;
         assert_eq!(results.len(), 1);
         assert!(results[0].output.is_err());
     }
@@ -457,7 +445,9 @@ mod tests {
         use crate::delegation::registry::AgentDefinition;
 
         let calls = Arc::new(AtomicUsize::new(0));
-        let model = Arc::new(OnceToolModel { calls: Arc::clone(&calls) });
+        let model = Arc::new(OnceToolModel {
+            calls: Arc::clone(&calls),
+        });
 
         let mut reg = AgentRegistry::new();
         reg.register(
@@ -466,11 +456,7 @@ mod tests {
                 .with_max_turns(5),
         );
 
-        let broker = DelegationBroker::new(
-            Arc::new(reg),
-            model,
-            Arc::new(ReturnToolDispatcher),
-        );
+        let broker = DelegationBroker::new(Arc::new(reg), model, Arc::new(ReturnToolDispatcher));
 
         let results = broker
             .delegate(vec![SubTask::new("tooled", "use read_file")])
@@ -518,8 +504,8 @@ mod tests {
             Arc::new(NoopDispatcher),
         );
 
-        let task = SubTask::new("a", "query")
-            .with_parent_context("user is debugging a memory leak");
+        let task =
+            SubTask::new("a", "query").with_parent_context("user is debugging a memory leak");
 
         let results = broker.delegate(vec![task]).await;
         let output = results[0].output.as_ref().unwrap();

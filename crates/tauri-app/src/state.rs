@@ -4,6 +4,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 
+use mcp_client::protocol::Tool as McpTool;
+use mcp_client::McpClient;
 use pares_agens_channels::tauri_ipc::TauriIpcHandle;
 use pares_agens_core::license::License;
 use pares_agens_core::memory::store::MemoryStore;
@@ -12,8 +14,6 @@ use pares_agens_core::praxis::GuidanceService;
 use pares_agens_core::secrets::{provider_api_key, SecretStore};
 use pares_models::config::{ProviderConfig, RouterConfig};
 use pares_models::ModelRouter;
-use mcp_client::McpClient;
-use mcp_client::protocol::Tool as McpTool;
 
 use crate::procedures::{ProcedureLogEntry, ProcedureRecord};
 
@@ -363,11 +363,7 @@ pub async fn rebuild_model_router(state: &AppState) {
 
     let mut providers = HashMap::new();
     for entry in &provider_entries {
-        let api_key = match state
-            .secret_store
-            .get(&provider_api_key(&entry.name))
-            .await
-        {
+        let api_key = match state.secret_store.get(&provider_api_key(&entry.name)).await {
             Ok(api_key) => api_key,
             Err(err) => {
                 eprintln!(
@@ -400,11 +396,7 @@ pub async fn rebuild_model_router(state: &AppState) {
     // ModelRouter::new. If multiple providers are configured, restrict the
     // router config to only the default provider.
     if config.providers.len() > 1 {
-        if let Some(default_cfg) = config
-            .providers
-            .get(&config.default_provider)
-            .cloned()
-        {
+        if let Some(default_cfg) = config.providers.get(&config.default_provider).cloned() {
             config.providers.clear();
             config
                 .providers
@@ -498,17 +490,13 @@ mod tests {
 
         let state = AppState {
             ipc_handle: test_ipc_handle(),
-            memory_store: Arc::new(
-                pares_agens_core::memory::store::InMemoryStore::new(),
-            ),
+            memory_store: Arc::new(pares_agens_core::memory::store::InMemoryStore::new()),
             secret_store: secret_store as Arc<dyn SecretStore>,
             settings: Arc::new(Mutex::new(settings)),
-            model_router: Arc::new(RwLock::new(ModelRouter::new(
-                RouterConfig::single(
-                    "ollama",
-                    ProviderConfig::new("http://localhost:11434/v1", None),
-                ),
-            ))),
+            model_router: Arc::new(RwLock::new(ModelRouter::new(RouterConfig::single(
+                "ollama",
+                ProviderConfig::new("http://localhost:11434/v1", None),
+            )))),
             wizard_completed: Mutex::new(false),
             procedures: Mutex::new(Vec::new()),
             procedure_log: Mutex::new(Vec::new()),

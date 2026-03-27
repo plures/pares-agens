@@ -70,7 +70,11 @@ mod tests {
 
     #[test]
     fn converts_tool_with_required_fields() {
-        let tool = make_tool("web_search", Some("Search the web"), Some(vec!["query".into()]));
+        let tool = make_tool(
+            "web_search",
+            Some("Search the web"),
+            Some(vec!["query".into()]),
+        );
         let result = to_openai_function(&tool);
 
         assert_eq!(result["type"], "function");

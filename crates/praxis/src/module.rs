@@ -109,8 +109,7 @@ pub trait PraxisModule: Send + Sync {
             .cloned()
             .collect();
 
-        let completeness_pct =
-            (covered.len() as f32 / all_categories.len() as f32) * 100.0;
+        let completeness_pct = (covered.len() as f32 / all_categories.len() as f32) * 100.0;
 
         CompletenessReport {
             module: self.name().to_string(),
@@ -138,29 +137,48 @@ mod tests {
         cat: RuleCategory,
     }
     impl Rule for PassRule {
-        fn name(&self) -> &str { self.name }
-        fn category(&self) -> RuleCategory { self.cat.clone() }
-        fn evaluate(&self, _ctx: &RuleContext) -> RuleResult { RuleResult::Pass }
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn category(&self) -> RuleCategory {
+            self.cat.clone()
+        }
+        fn evaluate(&self, _ctx: &RuleContext) -> RuleResult {
+            RuleResult::Pass
+        }
     }
 
     struct MinimalModule {
         rules: Vec<Box<dyn Rule>>,
     }
     impl PraxisModule for MinimalModule {
-        fn name(&self) -> &str { "minimal" }
+        fn name(&self) -> &str {
+            "minimal"
+        }
         fn rules(&self) -> &[Box<dyn Rule>] {
             &self.rules
         }
-        fn expectations(&self) -> Vec<String> { vec![] }
+        fn expectations(&self) -> Vec<String> {
+            vec![]
+        }
     }
 
     #[test]
     fn audit_complete_when_all_categories_covered() {
         let module = MinimalModule {
             rules: vec![
-                Box::new(PassRule { name: "r1", cat: RuleCategory::Input }),
-                Box::new(PassRule { name: "r2", cat: RuleCategory::State }),
-                Box::new(PassRule { name: "r3", cat: RuleCategory::Data }),
+                Box::new(PassRule {
+                    name: "r1",
+                    cat: RuleCategory::Input,
+                }),
+                Box::new(PassRule {
+                    name: "r2",
+                    cat: RuleCategory::State,
+                }),
+                Box::new(PassRule {
+                    name: "r3",
+                    cat: RuleCategory::Data,
+                }),
             ],
         };
         let report = module.audit();
@@ -174,8 +192,14 @@ mod tests {
     fn audit_incomplete_when_category_missing() {
         let module = MinimalModule {
             rules: vec![
-                Box::new(PassRule { name: "r1", cat: RuleCategory::Input }),
-                Box::new(PassRule { name: "r2", cat: RuleCategory::State }),
+                Box::new(PassRule {
+                    name: "r1",
+                    cat: RuleCategory::Input,
+                }),
+                Box::new(PassRule {
+                    name: "r2",
+                    cat: RuleCategory::State,
+                }),
                 // No Data rule
             ],
         };
@@ -189,8 +213,14 @@ mod tests {
     fn evaluate_all_returns_result_per_rule() {
         let module = MinimalModule {
             rules: vec![
-                Box::new(PassRule { name: "r1", cat: RuleCategory::Input }),
-                Box::new(PassRule { name: "r2", cat: RuleCategory::State }),
+                Box::new(PassRule {
+                    name: "r1",
+                    cat: RuleCategory::Input,
+                }),
+                Box::new(PassRule {
+                    name: "r2",
+                    cat: RuleCategory::State,
+                }),
             ],
         };
         let ctx = RuleContext::new("test", json!({}));
@@ -203,8 +233,14 @@ mod tests {
     fn evaluate_category_filters_correctly() {
         let module = MinimalModule {
             rules: vec![
-                Box::new(PassRule { name: "r_input", cat: RuleCategory::Input }),
-                Box::new(PassRule { name: "r_state", cat: RuleCategory::State }),
+                Box::new(PassRule {
+                    name: "r_input",
+                    cat: RuleCategory::Input,
+                }),
+                Box::new(PassRule {
+                    name: "r_state",
+                    cat: RuleCategory::State,
+                }),
             ],
         };
         let ctx = RuleContext::new("test", json!({}));

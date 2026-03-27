@@ -24,7 +24,10 @@ pub struct ProviderConfig {
 impl ProviderConfig {
     /// Constructs a new [`ProviderConfig`].
     pub fn new(base_url: impl Into<String>, api_key: Option<String>) -> Self {
-        Self { base_url: base_url.into(), api_key }
+        Self {
+            base_url: base_url.into(),
+            api_key,
+        }
     }
 }
 
@@ -140,7 +143,10 @@ mod tests {
 
     #[test]
     fn routing_rule_without_prefix_serde() {
-        let rule = RoutingRule { model_prefix: None, provider: "fallback".into() };
+        let rule = RoutingRule {
+            model_prefix: None,
+            provider: "fallback".into(),
+        };
         let json = serde_json::to_string(&rule).unwrap();
         assert!(!json.contains("model_prefix"));
         let decoded: RoutingRule = serde_json::from_str(&json).unwrap();

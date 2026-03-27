@@ -232,7 +232,10 @@ mod tests {
         assert_eq!(AuditAction::HardPurged.as_str(), "hard-purged");
         assert_eq!(AuditAction::Restored.as_str(), "restored");
         assert_eq!(AuditAction::SimulatedLoss.as_str(), "simulated-loss");
-        assert_eq!(AuditAction::ScheduledPurgeRan.as_str(), "scheduled-purge-ran");
+        assert_eq!(
+            AuditAction::ScheduledPurgeRan.as_str(),
+            "scheduled-purge-ran"
+        );
     }
 
     #[test]

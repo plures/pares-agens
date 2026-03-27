@@ -12,8 +12,7 @@ use serde_json::json;
 use std::collections::HashMap;
 
 use crate::db::schema::{
-    Adr, AdrStatus, Condition, Constraint, Evidence, EvidenceResult, Severity,
-    SessionType,
+    Adr, AdrStatus, Condition, Constraint, Evidence, EvidenceResult, SessionType, Severity,
 };
 use crate::db::store::PraxisStore;
 
@@ -37,7 +36,8 @@ pub fn seed_constraints(store: &mut PraxisStore) {
                 value: json!(""),
             }),
         },
-        fix: "Ensure the orchestration layer sets a non-empty action_type before dispatching.".into(),
+        fix: "Ensure the orchestration layer sets a non-empty action_type before dispatching."
+            .into(),
         evidence: vec!["ADR-0004".into()],
         severity: Severity::Error,
     });
@@ -49,13 +49,27 @@ pub fn seed_constraints(store: &mut PraxisStore) {
             .into(),
         when: Condition::Any {
             conditions: vec![
-                Condition::ActionStartsWith { prefix: "write_".into() },
-                Condition::ActionStartsWith { prefix: "delete_".into() },
-                Condition::ActionStartsWith { prefix: "update_".into() },
-                Condition::ActionStartsWith { prefix: "create_".into() },
-                Condition::ActionStartsWith { prefix: "publish_".into() },
-                Condition::ActionStartsWith { prefix: "send_".into() },
-                Condition::ActionStartsWith { prefix: "post_".into() },
+                Condition::ActionStartsWith {
+                    prefix: "write_".into(),
+                },
+                Condition::ActionStartsWith {
+                    prefix: "delete_".into(),
+                },
+                Condition::ActionStartsWith {
+                    prefix: "update_".into(),
+                },
+                Condition::ActionStartsWith {
+                    prefix: "create_".into(),
+                },
+                Condition::ActionStartsWith {
+                    prefix: "publish_".into(),
+                },
+                Condition::ActionStartsWith {
+                    prefix: "send_".into(),
+                },
+                Condition::ActionStartsWith {
+                    prefix: "post_".into(),
+                },
             ],
         },
         require: Condition::Not {
@@ -164,8 +178,13 @@ pub fn seed_constraints(store: &mut PraxisStore) {
         description: "Sub-agent sessions must not self-assign privilege_level ≥ 3.".into(),
         when: Condition::All {
             conditions: vec![
-                Condition::SessionIs { session_type: SessionType::SubAgent },
-                Condition::FieldGt { field: "privilege_level".into(), threshold: 2.0 },
+                Condition::SessionIs {
+                    session_type: SessionType::SubAgent,
+                },
+                Condition::FieldGt {
+                    field: "privilege_level".into(),
+                    threshold: 2.0,
+                },
             ],
         },
         require: Condition::FieldLt {
@@ -190,10 +209,7 @@ pub fn seed_adrs(store: &mut PraxisStore) {
         id: "ADR-0001".into(),
         title: "Rust as primary implementation language".into(),
         status: AdrStatus::Accepted,
-        evidence: vec![
-            "EV-ADR0001-CARGO".into(),
-            "EV-ADR0001-CLIPPY".into(),
-        ],
+        evidence: vec!["EV-ADR0001-CARGO".into(), "EV-ADR0001-CLIPPY".into()],
     });
 
     // ADR-0002 — PluresDB as the sole database
@@ -236,7 +252,9 @@ pub fn seed_evidence(store: &mut PraxisStore) {
     store.upsert_evidence(Evidence {
         id: "EV-ADR0001-CARGO".into(),
         tested_at: Utc::now(),
-        condition: [("workspace_crates".into(), json!(true))].into_iter().collect(),
+        condition: [("workspace_crates".into(), json!(true))]
+            .into_iter()
+            .collect(),
         result: EvidenceResult::Passed,
         reference: "https://github.com/plures/pares-agens/blob/main/Cargo.toml".into(),
     });
@@ -244,9 +262,12 @@ pub fn seed_evidence(store: &mut PraxisStore) {
     store.upsert_evidence(Evidence {
         id: "EV-ADR0001-CLIPPY".into(),
         tested_at: Utc::now(),
-        condition: [("ci_clippy_clean".into(), json!(true))].into_iter().collect(),
+        condition: [("ci_clippy_clean".into(), json!(true))]
+            .into_iter()
+            .collect(),
         result: EvidenceResult::Passed,
-        reference: "https://github.com/plures/pares-agens/blob/main/.github/workflows/ci.yml".into(),
+        reference: "https://github.com/plures/pares-agens/blob/main/.github/workflows/ci.yml"
+            .into(),
     });
 
     // ── ADR-0002 evidence ────────────────────────────────────────────────────
@@ -254,9 +275,12 @@ pub fn seed_evidence(store: &mut PraxisStore) {
     store.upsert_evidence(Evidence {
         id: "EV-ADR0002-INTEGRATION".into(),
         tested_at: Utc::now(),
-        condition: [("no_sqlite_dep".into(), json!(true)), ("no_postgres_dep".into(), json!(true))]
-            .into_iter()
-            .collect(),
+        condition: [
+            ("no_sqlite_dep".into(), json!(true)),
+            ("no_postgres_dep".into(), json!(true)),
+        ]
+        .into_iter()
+        .collect(),
         result: EvidenceResult::Passed,
         reference: "https://github.com/plures/pares-agens/blob/main/Cargo.toml".into(),
     });
@@ -266,7 +290,9 @@ pub fn seed_evidence(store: &mut PraxisStore) {
     store.upsert_evidence(Evidence {
         id: "EV-ADR0003-SYNC".into(),
         tested_at: Utc::now(),
-        condition: [("crates_sync_exists".into(), json!(true))].into_iter().collect(),
+        condition: [("crates_sync_exists".into(), json!(true))]
+            .into_iter()
+            .collect(),
         result: EvidenceResult::Passed,
         reference: "https://github.com/plures/pares-agens/tree/main/crates/sync".into(),
     });
@@ -347,20 +373,29 @@ mod tests {
     #[test]
     fn default_store_has_constraints() {
         let store = default_store();
-        assert!(store.constraint_count() >= 8, "expected at least 8 seeded constraints");
+        assert!(
+            store.constraint_count() >= 8,
+            "expected at least 8 seeded constraints"
+        );
     }
 
     #[test]
     fn default_store_has_adrs() {
         let store = default_store();
         assert!(store.adr_count() >= 4, "expected at least 4 seeded ADRs");
-        assert!(store.get_adr("ADR-0004").is_some(), "ADR-0004 must be present");
+        assert!(
+            store.get_adr("ADR-0004").is_some(),
+            "ADR-0004 must be present"
+        );
     }
 
     #[test]
     fn default_store_has_evidence() {
         let store = default_store();
-        assert!(store.evidence_count() >= 7, "expected at least 7 evidence records");
+        assert!(
+            store.evidence_count() >= 7,
+            "expected at least 7 evidence records"
+        );
     }
 
     #[test]
@@ -376,7 +411,10 @@ mod tests {
         let ev = store.adr_evidence("ADR-0004");
         let has_passed = ev.iter().any(|e| e.result == EvidenceResult::Passed);
         let has_unknown = ev.iter().any(|e| e.result == EvidenceResult::Unknown);
-        assert!(has_passed, "should have at least one passed evidence record");
+        assert!(
+            has_passed,
+            "should have at least one passed evidence record"
+        );
         assert!(has_unknown, "CI validation should be Unknown until run");
     }
 
@@ -386,7 +424,10 @@ mod tests {
         let store = default_store();
         let ctx = AgentContext::new("anything", "anywhere", SessionType::Main);
         let violations = evaluate(&store, &ctx);
-        let ids: Vec<&str> = violations.iter().map(|v| v.constraint.id.as_str()).collect();
+        let ids: Vec<&str> = violations
+            .iter()
+            .map(|v| v.constraint.id.as_str())
+            .collect();
         assert!(
             !ids.contains(&"C-0007"),
             "C-0007 require=Always must never fire"
@@ -399,10 +440,19 @@ mod tests {
         let ctx = AgentContext::new("admin", "system", SessionType::SubAgent)
             .with_meta("privilege_level", json!(4));
         let violations = evaluate(&store, &ctx);
-        let ids: Vec<&str> = violations.iter().map(|v| v.constraint.id.as_str()).collect();
+        let ids: Vec<&str> = violations
+            .iter()
+            .map(|v| v.constraint.id.as_str())
+            .collect();
         // Both C-0003 and C-0008 should fire
-        assert!(ids.contains(&"C-0003"), "C-0003 should fire for privilege_level=4");
-        assert!(ids.contains(&"C-0008"), "C-0008 should fire for sub-agent privilege_level=4");
+        assert!(
+            ids.contains(&"C-0003"),
+            "C-0003 should fire for privilege_level=4"
+        );
+        assert!(
+            ids.contains(&"C-0008"),
+            "C-0008 should fire for sub-agent privilege_level=4"
+        );
     }
 
     #[test]

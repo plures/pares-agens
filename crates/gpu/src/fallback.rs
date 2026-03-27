@@ -219,8 +219,7 @@ mod tests {
             }
         }
 
-        let runner =
-            FallbackRunner::without_cloud(Arc::new(AlwaysFails), Arc::new(AlwaysFails));
+        let runner = FallbackRunner::without_cloud(Arc::new(AlwaysFails), Arc::new(AlwaysFails));
         let err = runner
             .run("hi", InferenceParams::default())
             .await

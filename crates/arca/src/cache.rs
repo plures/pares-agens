@@ -27,9 +27,7 @@ impl CacheEntry {
     /// Return `true` when the entry has passed its expiry time.
     #[must_use]
     pub fn is_expired(&self) -> bool {
-        self.expires_at
-            .map(|exp| Utc::now() > exp)
-            .unwrap_or(false)
+        self.expires_at.map(|exp| Utc::now() > exp).unwrap_or(false)
     }
 }
 

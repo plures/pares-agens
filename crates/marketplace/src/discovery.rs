@@ -140,7 +140,10 @@ fn category_matches(candidate: &SkillCategory, filter: &SkillCategory) -> bool {
         (SkillCategory::Coding(_), SkillCategory::Coding(_))
             | (SkillCategory::Writing(_), SkillCategory::Writing(_))
             | (SkillCategory::Analysis(_), SkillCategory::Analysis(_))
-            | (SkillCategory::DomainSpecific(_), SkillCategory::DomainSpecific(_))
+            | (
+                SkillCategory::DomainSpecific(_),
+                SkillCategory::DomainSpecific(_)
+            )
     )
 }
 

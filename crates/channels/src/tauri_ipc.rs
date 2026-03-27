@@ -16,8 +16,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tokio::sync::{oneshot, Mutex};
 use tokio::sync::mpsc;
+use tokio::sync::{oneshot, Mutex};
 use uuid::Uuid;
 
 use pares_agens_core::Event;
@@ -76,7 +76,11 @@ impl ChannelAdapter for TauriIpcAdapter {
             + 'static,
     ) -> Result<(), ChannelError> {
         let mut rx = self.input_rx.lock().await;
-        while let Some(TauriIpcMessage { content, response_tx }) = rx.recv().await {
+        while let Some(TauriIpcMessage {
+            content,
+            response_tx,
+        }) = rx.recv().await
+        {
             let event = Event::Message {
                 id: Uuid::new_v4().to_string(),
                 channel: "tauri".to_string(),

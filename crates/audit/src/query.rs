@@ -140,15 +140,33 @@ mod tests {
     #[test]
     fn unfiltered_query_matches_everything() {
         let q = AuditQuery::new();
-        let e = ev(EventKind::ModelCall, "a", "d", false, "2024-01-01T00:00:00+00:00");
+        let e = ev(
+            EventKind::ModelCall,
+            "a",
+            "d",
+            false,
+            "2024-01-01T00:00:00+00:00",
+        );
         assert!(q.matches(&e));
     }
 
     #[test]
     fn kind_filter() {
         let q = AuditQuery::new().with_kind(EventKind::ToolExec);
-        let match_ev = ev(EventKind::ToolExec, "a", "d", false, "2024-01-01T00:00:00+00:00");
-        let no_match = ev(EventKind::ModelCall, "a", "d", false, "2024-01-01T00:00:00+00:00");
+        let match_ev = ev(
+            EventKind::ToolExec,
+            "a",
+            "d",
+            false,
+            "2024-01-01T00:00:00+00:00",
+        );
+        let no_match = ev(
+            EventKind::ModelCall,
+            "a",
+            "d",
+            false,
+            "2024-01-01T00:00:00+00:00",
+        );
         assert!(q.matches(&match_ev));
         assert!(!q.matches(&no_match));
     }
@@ -156,9 +174,27 @@ mod tests {
     #[test]
     fn since_filter_inclusive() {
         let q = AuditQuery::new().with_since("2024-06-01T00:00:00+00:00");
-        let before = ev(EventKind::MemoryRead, "a", "d", false, "2024-01-01T00:00:00+00:00");
-        let exact  = ev(EventKind::MemoryRead, "a", "d", false, "2024-06-01T00:00:00+00:00");
-        let after  = ev(EventKind::MemoryRead, "a", "d", false, "2025-01-01T00:00:00+00:00");
+        let before = ev(
+            EventKind::MemoryRead,
+            "a",
+            "d",
+            false,
+            "2024-01-01T00:00:00+00:00",
+        );
+        let exact = ev(
+            EventKind::MemoryRead,
+            "a",
+            "d",
+            false,
+            "2024-06-01T00:00:00+00:00",
+        );
+        let after = ev(
+            EventKind::MemoryRead,
+            "a",
+            "d",
+            false,
+            "2025-01-01T00:00:00+00:00",
+        );
         assert!(!q.matches(&before));
         assert!(q.matches(&exact));
         assert!(q.matches(&after));
@@ -167,9 +203,27 @@ mod tests {
     #[test]
     fn until_filter_inclusive() {
         let q = AuditQuery::new().with_until("2024-06-01T00:00:00+00:00");
-        let before = ev(EventKind::ChannelSend, "a", "d", false, "2024-01-01T00:00:00+00:00");
-        let exact  = ev(EventKind::ChannelSend, "a", "d", false, "2024-06-01T00:00:00+00:00");
-        let after  = ev(EventKind::ChannelSend, "a", "d", false, "2025-01-01T00:00:00+00:00");
+        let before = ev(
+            EventKind::ChannelSend,
+            "a",
+            "d",
+            false,
+            "2024-01-01T00:00:00+00:00",
+        );
+        let exact = ev(
+            EventKind::ChannelSend,
+            "a",
+            "d",
+            false,
+            "2024-06-01T00:00:00+00:00",
+        );
+        let after = ev(
+            EventKind::ChannelSend,
+            "a",
+            "d",
+            false,
+            "2025-01-01T00:00:00+00:00",
+        );
         assert!(q.matches(&before));
         assert!(q.matches(&exact));
         assert!(!q.matches(&after));
@@ -178,8 +232,20 @@ mod tests {
     #[test]
     fn destination_filter() {
         let q = AuditQuery::new().with_destination("gpt-4o");
-        let yes = ev(EventKind::ModelCall, "a", "gpt-4o", false, "2024-01-01T00:00:00+00:00");
-        let no  = ev(EventKind::ModelCall, "a", "claude", false, "2024-01-01T00:00:00+00:00");
+        let yes = ev(
+            EventKind::ModelCall,
+            "a",
+            "gpt-4o",
+            false,
+            "2024-01-01T00:00:00+00:00",
+        );
+        let no = ev(
+            EventKind::ModelCall,
+            "a",
+            "claude",
+            false,
+            "2024-01-01T00:00:00+00:00",
+        );
         assert!(q.matches(&yes));
         assert!(!q.matches(&no));
     }
@@ -187,8 +253,20 @@ mod tests {
     #[test]
     fn actor_filter() {
         let q = AuditQuery::new().with_actor("agent-1");
-        let yes = ev(EventKind::ToolExec, "agent-1", "d", false, "2024-01-01T00:00:00+00:00");
-        let no  = ev(EventKind::ToolExec, "agent-2", "d", false, "2024-01-01T00:00:00+00:00");
+        let yes = ev(
+            EventKind::ToolExec,
+            "agent-1",
+            "d",
+            false,
+            "2024-01-01T00:00:00+00:00",
+        );
+        let no = ev(
+            EventKind::ToolExec,
+            "agent-2",
+            "d",
+            false,
+            "2024-01-01T00:00:00+00:00",
+        );
         assert!(q.matches(&yes));
         assert!(!q.matches(&no));
     }
@@ -196,8 +274,20 @@ mod tests {
     #[test]
     fn pii_only_true_filter() {
         let q = AuditQuery::new().with_pii_only(true);
-        let pii    = ev(EventKind::MemoryWrite, "a", "d", true,  "2024-01-01T00:00:00+00:00");
-        let no_pii = ev(EventKind::MemoryWrite, "a", "d", false, "2024-01-01T00:00:00+00:00");
+        let pii = ev(
+            EventKind::MemoryWrite,
+            "a",
+            "d",
+            true,
+            "2024-01-01T00:00:00+00:00",
+        );
+        let no_pii = ev(
+            EventKind::MemoryWrite,
+            "a",
+            "d",
+            false,
+            "2024-01-01T00:00:00+00:00",
+        );
         assert!(q.matches(&pii));
         assert!(!q.matches(&no_pii));
     }
@@ -205,8 +295,20 @@ mod tests {
     #[test]
     fn pii_only_false_filter() {
         let q = AuditQuery::new().with_pii_only(false);
-        let pii    = ev(EventKind::MemoryWrite, "a", "d", true,  "2024-01-01T00:00:00+00:00");
-        let no_pii = ev(EventKind::MemoryWrite, "a", "d", false, "2024-01-01T00:00:00+00:00");
+        let pii = ev(
+            EventKind::MemoryWrite,
+            "a",
+            "d",
+            true,
+            "2024-01-01T00:00:00+00:00",
+        );
+        let no_pii = ev(
+            EventKind::MemoryWrite,
+            "a",
+            "d",
+            false,
+            "2024-01-01T00:00:00+00:00",
+        );
         assert!(!q.matches(&pii));
         assert!(q.matches(&no_pii));
     }
@@ -218,10 +320,34 @@ mod tests {
             .with_actor("agent-1")
             .with_pii_only(false);
 
-        let full_match = ev(EventKind::ModelCall, "agent-1", "d", false, "2024-01-01T00:00:00+00:00");
-        let wrong_kind = ev(EventKind::ToolExec,  "agent-1", "d", false, "2024-01-01T00:00:00+00:00");
-        let wrong_actor = ev(EventKind::ModelCall, "agent-2", "d", false, "2024-01-01T00:00:00+00:00");
-        let pii_event  = ev(EventKind::ModelCall, "agent-1", "d", true,  "2024-01-01T00:00:00+00:00");
+        let full_match = ev(
+            EventKind::ModelCall,
+            "agent-1",
+            "d",
+            false,
+            "2024-01-01T00:00:00+00:00",
+        );
+        let wrong_kind = ev(
+            EventKind::ToolExec,
+            "agent-1",
+            "d",
+            false,
+            "2024-01-01T00:00:00+00:00",
+        );
+        let wrong_actor = ev(
+            EventKind::ModelCall,
+            "agent-2",
+            "d",
+            false,
+            "2024-01-01T00:00:00+00:00",
+        );
+        let pii_event = ev(
+            EventKind::ModelCall,
+            "agent-1",
+            "d",
+            true,
+            "2024-01-01T00:00:00+00:00",
+        );
 
         assert!(q.matches(&full_match));
         assert!(!q.matches(&wrong_kind));

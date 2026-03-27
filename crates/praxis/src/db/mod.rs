@@ -34,7 +34,7 @@ pub mod store;
 
 // Re-export the most commonly used types at the `db` level for ergonomic imports.
 pub use schema::{
-    Adr, AdrStatus, AgentContext, Condition, Constraint, Evidence, EvidenceResult, Severity,
-    SessionType,
+    Adr, AdrStatus, AgentContext, Condition, Constraint, Evidence, EvidenceResult, SessionType,
+    Severity,
 };
 pub use store::{PraxisStore, StoreError};

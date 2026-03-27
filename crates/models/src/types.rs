@@ -89,7 +89,11 @@ pub struct Tool {
 
 impl Tool {
     /// Convenience constructor for a function tool.
-    pub fn function(name: impl Into<String>, description: impl Into<String>, parameters: serde_json::Value) -> Self {
+    pub fn function(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        parameters: serde_json::Value,
+    ) -> Self {
         Self {
             kind: "function".into(),
             function: FunctionDefinition {
@@ -260,7 +264,10 @@ mod tests {
     #[test]
     fn role_serializes_as_lowercase() {
         assert_eq!(serde_json::to_string(&Role::User).unwrap(), "\"user\"");
-        assert_eq!(serde_json::to_string(&Role::Assistant).unwrap(), "\"assistant\"");
+        assert_eq!(
+            serde_json::to_string(&Role::Assistant).unwrap(),
+            "\"assistant\""
+        );
         assert_eq!(serde_json::to_string(&Role::System).unwrap(), "\"system\"");
         assert_eq!(serde_json::to_string(&Role::Tool).unwrap(), "\"tool\"");
     }
@@ -309,7 +316,10 @@ mod tests {
         let tool = Tool::function("get_weather", "Get weather for a city", schema.clone());
         assert_eq!(tool.kind, "function");
         assert_eq!(tool.function.name, "get_weather");
-        assert_eq!(tool.function.description.as_deref(), Some("Get weather for a city"));
+        assert_eq!(
+            tool.function.description.as_deref(),
+            Some("Get weather for a city")
+        );
         assert_eq!(tool.function.parameters.as_ref().unwrap()["type"], "object");
     }
 
@@ -329,10 +339,7 @@ mod tests {
 
     #[test]
     fn chat_completion_request_new() {
-        let req = ChatCompletionRequest::new(
-            "gpt-4o",
-            vec![ChatMessage::text(Role::User, "hi")],
-        );
+        let req = ChatCompletionRequest::new("gpt-4o", vec![ChatMessage::text(Role::User, "hi")]);
         assert_eq!(req.model, "gpt-4o");
         assert_eq!(req.messages.len(), 1);
         assert!(req.tools.is_none());
@@ -342,10 +349,7 @@ mod tests {
 
     #[test]
     fn chat_completion_request_serde_skips_none_fields() {
-        let req = ChatCompletionRequest::new(
-            "gpt-4o",
-            vec![ChatMessage::text(Role::User, "hi")],
-        );
+        let req = ChatCompletionRequest::new("gpt-4o", vec![ChatMessage::text(Role::User, "hi")]);
         let json = serde_json::to_string(&req).unwrap();
         assert!(!json.contains("\"tools\""));
         assert!(!json.contains("\"stream\""));

@@ -97,17 +97,26 @@ pub struct VaultArgs {
 impl VaultArgs {
     /// Create args for `lock` (no password needed).
     pub fn lock() -> Self {
-        Self { command: VaultCommand::Lock, password: None }
+        Self {
+            command: VaultCommand::Lock,
+            password: None,
+        }
     }
 
     /// Create args for `unlock` with the given password.
     pub fn unlock(password: impl Into<String>) -> Self {
-        Self { command: VaultCommand::Unlock, password: Some(password.into()) }
+        Self {
+            command: VaultCommand::Unlock,
+            password: Some(password.into()),
+        }
     }
 
     /// Create args for `rotate` with the given new password.
     pub fn rotate(new_password: impl Into<String>) -> Self {
-        Self { command: VaultCommand::Rotate, password: Some(new_password.into()) }
+        Self {
+            command: VaultCommand::Rotate,
+            password: Some(new_password.into()),
+        }
     }
 }
 
@@ -136,10 +145,9 @@ pub fn run_vault_cli(args: &VaultArgs, vault: &mut CredentialVault) -> Result<()
             println!("✓ Vault unlocked.");
         }
         VaultCommand::Rotate => {
-            let new_password = args
-                .password
-                .as_deref()
-                .ok_or_else(|| ArcaError::CryptoError("rotate requires a new password".to_string()))?;
+            let new_password = args.password.as_deref().ok_or_else(|| {
+                ArcaError::CryptoError("rotate requires a new password".to_string())
+            })?;
             vault.rotate_key(new_password)?;
             println!("✓ Key rotated. The vault remains unlocked.");
         }
@@ -172,16 +180,34 @@ mod tests {
 
     #[test]
     fn from_str_parses_all_commands() {
-        assert!(matches!("lock".parse::<VaultCommand>(), Ok(VaultCommand::Lock)));
-        assert!(matches!("unlock".parse::<VaultCommand>(), Ok(VaultCommand::Unlock)));
-        assert!(matches!("rotate".parse::<VaultCommand>(), Ok(VaultCommand::Rotate)));
+        assert!(matches!(
+            "lock".parse::<VaultCommand>(),
+            Ok(VaultCommand::Lock)
+        ));
+        assert!(matches!(
+            "unlock".parse::<VaultCommand>(),
+            Ok(VaultCommand::Unlock)
+        ));
+        assert!(matches!(
+            "rotate".parse::<VaultCommand>(),
+            Ok(VaultCommand::Rotate)
+        ));
     }
 
     #[test]
     fn from_str_case_insensitive() {
-        assert!(matches!("LOCK".parse::<VaultCommand>(), Ok(VaultCommand::Lock)));
-        assert!(matches!("Unlock".parse::<VaultCommand>(), Ok(VaultCommand::Unlock)));
-        assert!(matches!("ROTATE".parse::<VaultCommand>(), Ok(VaultCommand::Rotate)));
+        assert!(matches!(
+            "LOCK".parse::<VaultCommand>(),
+            Ok(VaultCommand::Lock)
+        ));
+        assert!(matches!(
+            "Unlock".parse::<VaultCommand>(),
+            Ok(VaultCommand::Unlock)
+        ));
+        assert!(matches!(
+            "ROTATE".parse::<VaultCommand>(),
+            Ok(VaultCommand::Rotate)
+        ));
     }
 
     #[test]
@@ -192,7 +218,11 @@ mod tests {
 
     #[test]
     fn name_matches_from_str_input() {
-        let commands = [VaultCommand::Lock, VaultCommand::Unlock, VaultCommand::Rotate];
+        let commands = [
+            VaultCommand::Lock,
+            VaultCommand::Unlock,
+            VaultCommand::Rotate,
+        ];
         for cmd in &commands {
             let parsed = cmd.name().parse::<VaultCommand>();
             assert!(parsed.is_ok(), "parse({}) should succeed", cmd.name());
@@ -229,7 +259,10 @@ mod tests {
     fn run_cli_unlock_no_password_fails() {
         let mut vault = init_vault("pw");
         vault.lock();
-        let args = VaultArgs { command: VaultCommand::Unlock, password: None };
+        let args = VaultArgs {
+            command: VaultCommand::Unlock,
+            password: None,
+        };
         let result = run_vault_cli(&args, &mut vault);
         assert!(matches!(result, Err(ArcaError::CryptoError(_))));
     }
@@ -237,9 +270,7 @@ mod tests {
     #[test]
     fn run_cli_rotate_succeeds_and_old_password_fails() {
         let mut vault = init_vault("old-pw");
-        vault
-            .store_credential("key", "value", None)
-            .unwrap();
+        vault.store_credential("key", "value", None).unwrap();
         let result = run_vault_cli(&VaultArgs::rotate("new-pw"), &mut vault);
         assert!(result.is_ok());
         // Data still accessible after rotation.
@@ -253,7 +284,10 @@ mod tests {
     #[test]
     fn run_cli_rotate_no_password_fails() {
         let mut vault = init_vault("pw");
-        let args = VaultArgs { command: VaultCommand::Rotate, password: None };
+        let args = VaultArgs {
+            command: VaultCommand::Rotate,
+            password: None,
+        };
         let result = run_vault_cli(&args, &mut vault);
         assert!(matches!(result, Err(ArcaError::CryptoError(_))));
     }

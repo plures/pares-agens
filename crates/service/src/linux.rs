@@ -118,12 +118,13 @@ impl ServiceManager for LinuxServiceManager {
             .args(["--user", "is-active", SERVICE_NAME])
             .output()?;
 
-        let active = String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .to_owned();
+        let active = String::from_utf8_lossy(&output.stdout).trim().to_owned();
 
         let (status, description) = match active.as_str() {
-            "active" => (ServiceStatus::Running, "Service is active and running".to_owned()),
+            "active" => (
+                ServiceStatus::Running,
+                "Service is active and running".to_owned(),
+            ),
             "inactive" | "dead" => (ServiceStatus::Stopped, "Service is inactive".to_owned()),
             "failed" => (ServiceStatus::Stopped, "Service has failed".to_owned()),
             other => (
@@ -138,7 +139,11 @@ impl ServiceManager for LinuxServiceManager {
             None
         };
 
-        Ok(ServiceInfo { status, pid, description })
+        Ok(ServiceInfo {
+            status,
+            pid,
+            description,
+        })
     }
 
     fn uninstall(&self) -> Result<(), ServiceError> {
@@ -162,7 +167,11 @@ impl LinuxServiceManager {
             .ok()?;
         let pid_str = String::from_utf8_lossy(&output.stdout);
         let pid: u32 = pid_str.trim().parse().ok()?;
-        if pid == 0 { None } else { Some(pid) }
+        if pid == 0 {
+            None
+        } else {
+            Some(pid)
+        }
     }
 }
 

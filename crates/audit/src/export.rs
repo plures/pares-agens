@@ -93,7 +93,13 @@ mod tests {
     fn sample_events() -> Vec<AuditEvent> {
         vec![
             AuditEvent::new(EventKind::ModelCall, "a1", "gpt-4o", "tokens: 100", false),
-            AuditEvent::new(EventKind::MemoryWrite, "a2", "conv-store", "entry id: x", true),
+            AuditEvent::new(
+                EventKind::MemoryWrite,
+                "a2",
+                "conv-store",
+                "entry id: x",
+                true,
+            ),
         ]
     }
 

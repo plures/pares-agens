@@ -110,7 +110,10 @@ impl SecretStore for InMemorySecretStore {
     }
 
     async fn set(&self, key: &str, value: &str) -> Result<(), SecretError> {
-        self.map.write().await.insert(key.to_owned(), value.to_owned());
+        self.map
+            .write()
+            .await
+            .insert(key.to_owned(), value.to_owned());
         Ok(())
     }
 
@@ -344,7 +347,8 @@ fn normalise_key_segment(s: &str) -> String {
     let mut encoded = String::from("hex:");
     for byte in s.as_bytes() {
         use std::fmt::Write as _;
-        write!(&mut encoded, "{:02x}", byte).expect("hex-encoding a provider name for vault key cannot fail");
+        write!(&mut encoded, "{:02x}", byte)
+            .expect("hex-encoding a provider name for vault key cannot fail");
     }
     encoded
 }
@@ -364,7 +368,10 @@ mod tests {
         let store = InMemorySecretStore::new();
 
         store.set("mykey", "myvalue").await.unwrap();
-        assert_eq!(store.get("mykey").await.unwrap(), Some("myvalue".to_string()));
+        assert_eq!(
+            store.get("mykey").await.unwrap(),
+            Some("myvalue".to_string())
+        );
 
         store.delete("mykey").await.unwrap();
         assert_eq!(store.get("mykey").await.unwrap(), None);
@@ -406,7 +413,10 @@ mod tests {
     #[tokio::test]
     async fn secrets_not_in_json_serialisation() {
         let store = InMemorySecretStore::new();
-        store.set("provider:openai:api_key", "sk-super-secret").await.unwrap();
+        store
+            .set("provider:openai:api_key", "sk-super-secret")
+            .await
+            .unwrap();
 
         // The store itself must not be serialisable — confirmed at compile time
         // because InMemorySecretStore does not derive Serialize/Deserialize.
@@ -435,12 +445,19 @@ mod tests {
         assert!(migrated.is_empty());
 
         // Second call — sentinel already present, returns empty list.
-        store.set("provider:openai:api_key", "sk-already-there").await.unwrap();
+        store
+            .set("provider:openai:api_key", "sk-already-there")
+            .await
+            .unwrap();
         let migrated2 = migrate_from_env(&store).await.unwrap();
         assert!(migrated2.is_empty());
         // Key was not overwritten.
         assert_eq!(
-            store.get("provider:openai:api_key").await.unwrap().as_deref(),
+            store
+                .get("provider:openai:api_key")
+                .await
+                .unwrap()
+                .as_deref(),
             Some("sk-already-there")
         );
     }

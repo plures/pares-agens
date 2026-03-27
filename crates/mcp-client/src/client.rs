@@ -146,7 +146,11 @@ impl McpClient {
     }
 
     /// Call a tool by name with the given arguments.
-    pub async fn call_tool(&mut self, name: &str, arguments: Option<Value>) -> Result<CallToolResult> {
+    pub async fn call_tool(
+        &mut self,
+        name: &str,
+        arguments: Option<Value>,
+    ) -> Result<CallToolResult> {
         let params = serde_json::to_value(CallToolParams {
             name: name.into(),
             arguments,

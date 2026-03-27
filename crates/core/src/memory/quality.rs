@@ -7,9 +7,28 @@ pub const ECHO_THRESHOLD: f32 = 0.95;
 
 /// Short phrases that carry no durable information.
 const NOISE_PATTERNS: &[&str] = &[
-    "ok", "okay", "sure", "yes", "no", "nope", "got it", "thanks", "thank you",
-    "great", "good", "nice", "cool", "awesome", "perfect", "alright", "right",
-    "understood", "noted", "bye", "hello", "hi",
+    "ok",
+    "okay",
+    "sure",
+    "yes",
+    "no",
+    "nope",
+    "got it",
+    "thanks",
+    "thank you",
+    "great",
+    "good",
+    "nice",
+    "cool",
+    "awesome",
+    "perfect",
+    "alright",
+    "right",
+    "understood",
+    "noted",
+    "bye",
+    "hello",
+    "hi",
 ];
 
 /// Return `true` when `text` is too short to be worth storing.
@@ -60,7 +79,9 @@ mod tests {
     fn too_short_rejects_short_strings() {
         assert!(is_too_short("hi"));
         assert!(is_too_short("ok thanks"));
-        assert!(!is_too_short("This is a longer string with enough content."));
+        assert!(!is_too_short(
+            "This is a longer string with enough content."
+        ));
     }
 
     #[test]
@@ -68,7 +89,9 @@ mod tests {
         assert!(is_noise("ok"));
         assert!(is_noise("Thanks."));
         assert!(is_noise("Got it!"));
-        assert!(!is_noise("Here is a detailed explanation of async/await in Rust."));
+        assert!(!is_noise(
+            "Here is a detailed explanation of async/await in Rust."
+        ));
     }
 
     #[test]

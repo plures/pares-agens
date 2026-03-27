@@ -4,9 +4,9 @@
 //! - [`stdio::StdioTransport`] — communicates with a spawned subprocess over stdin/stdout.
 //! - [`http::HttpTransport`] — sends requests as HTTP POST to a configured URL.
 
-use async_trait::async_trait;
 use crate::error::Result;
 use crate::protocol::{JsonRpcRequest, JsonRpcResponse};
+use async_trait::async_trait;
 
 pub mod http;
 pub mod stdio;

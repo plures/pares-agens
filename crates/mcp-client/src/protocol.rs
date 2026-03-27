@@ -311,7 +311,10 @@ mod tests {
     fn jsonrpc_notification_omits_id_field_when_serialized() {
         let notif = JsonRpcRequest::notification("ping", None);
         let json = serde_json::to_string(&notif).unwrap();
-        assert!(!json.contains("\"id\""), "id should be absent in notification JSON");
+        assert!(
+            !json.contains("\"id\""),
+            "id should be absent in notification JSON"
+        );
     }
 
     // ── JsonRpcResponse ──────────────────────────────────────────────────────
@@ -397,7 +400,10 @@ mod tests {
         let decoded: Tool = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.name, "web_search");
         assert_eq!(decoded.description.as_deref(), Some("Search the web"));
-        assert_eq!(decoded.input_schema.required.as_deref(), Some(["q".to_string()].as_slice()));
+        assert_eq!(
+            decoded.input_schema.required.as_deref(),
+            Some(["q".to_string()].as_slice())
+        );
     }
 
     #[test]
@@ -438,7 +444,9 @@ mod tests {
     #[test]
     fn call_tool_result_error_flag_roundtrip() {
         let result = CallToolResult {
-            content: vec![ToolContent::Text { text: "error detail".into() }],
+            content: vec![ToolContent::Text {
+                text: "error detail".into(),
+            }],
             is_error: true,
         };
         let json = serde_json::to_string(&result).unwrap();
@@ -465,7 +473,9 @@ mod tests {
 
     #[test]
     fn tool_content_resource_variant_roundtrip() {
-        let res = ToolContent::Resource { resource: json!({"uri": "file:///tmp/test"}) };
+        let res = ToolContent::Resource {
+            resource: json!({"uri": "file:///tmp/test"}),
+        };
         let json = serde_json::to_string(&res).unwrap();
         let decoded: ToolContent = serde_json::from_str(&json).unwrap();
         match decoded {

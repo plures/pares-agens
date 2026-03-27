@@ -21,9 +21,7 @@ use pares_agens_core::Event;
 use teloxide::{
     payloads::SendMessageSetters,
     prelude::*,
-    types::{
-        InlineKeyboardButton, InlineKeyboardMarkup, Message, MessageKind, ParseMode,
-    },
+    types::{InlineKeyboardButton, InlineKeyboardMarkup, Message, MessageKind, ParseMode},
 };
 use tracing::{debug, error, info};
 use uuid::Uuid;
@@ -43,7 +41,9 @@ pub struct TelegramConfig {
 impl TelegramConfig {
     /// Create a new [`TelegramConfig`] with the given bot token.
     pub fn new(token: impl Into<String>) -> Self {
-        Self { token: token.into() }
+        Self {
+            token: token.into(),
+        }
     }
 }
 
@@ -71,12 +71,7 @@ impl TelegramAdapter {
         let from = msg
             .from
             .as_ref()
-            .map(|u| {
-                u.username
-                    .as_deref()
-                    .unwrap_or(&u.first_name)
-                    .to_string()
-            })
+            .map(|u| u.username.as_deref().unwrap_or(&u.first_name).to_string())
             .unwrap_or_else(|| format!("chat:{}", msg.chat.id));
 
         match &msg.kind {
@@ -86,7 +81,8 @@ impl TelegramAdapter {
                     MediaKind::Text(t) => Some(Event::Message {
                         id: Uuid::new_v4().to_string().to_string(),
                         content: t.text.clone(),
-                        channel: "telegram".to_string(), sender: from,
+                        channel: "telegram".to_string(),
+                        sender: from,
                     }),
                     MediaKind::Photo(p) => {
                         // Use the highest-resolution photo
@@ -95,12 +91,7 @@ impl TelegramAdapter {
                             .last()
                             .map(|ps| ps.file.id.clone())
                             .unwrap_or_default();
-                        let caption = p
-                            .caption
-                            .as_deref()
-                            .unwrap_or("")
-                            .trim()
-                            .to_string();
+                        let caption = p.caption.as_deref().unwrap_or("").trim().to_string();
                         Some(Event::Message {
                             id: Uuid::new_v4().to_string().to_string(),
                             content: if caption.is_empty() {
@@ -108,7 +99,8 @@ impl TelegramAdapter {
                             } else {
                                 format!("[photo file_id={file_id}] {caption}")
                             },
-                            channel: "telegram".to_string(), sender: from,
+                            channel: "telegram".to_string(),
+                            sender: from,
                         })
                     }
                     MediaKind::Document(d) => {
@@ -119,12 +111,7 @@ impl TelegramAdapter {
                             .as_deref()
                             .unwrap_or("unknown")
                             .to_string();
-                        let caption = d
-                            .caption
-                            .as_deref()
-                            .unwrap_or("")
-                            .trim()
-                            .to_string();
+                        let caption = d.caption.as_deref().unwrap_or("").trim().to_string();
                         Some(Event::Message {
                             id: Uuid::new_v4().to_string().to_string(),
                             content: if caption.is_empty() {
@@ -132,7 +119,8 @@ impl TelegramAdapter {
                             } else {
                                 format!("[document file_id={file_id} name={file_name}] {caption}")
                             },
-                            channel: "telegram".to_string(), sender: from,
+                            channel: "telegram".to_string(),
+                            sender: from,
                         })
                     }
                     _ => {
@@ -153,8 +141,8 @@ impl TelegramAdapter {
     /// MarkdownV2 requires escaping of: `_ * [ ] ( ) ~ ` > # + - = | { } . !`
     pub fn escape_markdown_v2(text: &str) -> String {
         let special: &[char] = &[
-            '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{',
-            '}', '.', '!',
+            '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.',
+            '!',
         ];
         let mut out = String::with_capacity(text.len() * 2);
         for ch in text.chars() {
@@ -190,31 +178,29 @@ impl ChannelAdapter for TelegramAdapter {
             + Send
             + Sync
             + 'static,
-        ) -> Result<(), ChannelError> {
+    ) -> Result<(), ChannelError> {
         info!("Starting Telegram adapter");
         let bot = Bot::new(self.config.token.clone());
 
-        let handler = Update::filter_message().endpoint(
-            move |bot: Bot, msg: Message| {
-                let event = Self::message_to_event(&msg);
-                let response = event.map(&on_event);
-                async move {
-                    if let Some(fut) = response {
-                        if let Some(Event::ModelResponse { content, .. }) = fut.await {
-                            let escaped = TelegramAdapter::escape_markdown_v2(&content);
-                            if let Err(e) = bot
-                                .send_message(msg.chat.id, escaped)
-                                .parse_mode(ParseMode::MarkdownV2)
-                                .await
-                            {
-                                error!("Failed to send Telegram reply: {e}");
-                            }
+        let handler = Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
+            let event = Self::message_to_event(&msg);
+            let response = event.map(&on_event);
+            async move {
+                if let Some(fut) = response {
+                    if let Some(Event::ModelResponse { content, .. }) = fut.await {
+                        let escaped = TelegramAdapter::escape_markdown_v2(&content);
+                        if let Err(e) = bot
+                            .send_message(msg.chat.id, escaped)
+                            .parse_mode(ParseMode::MarkdownV2)
+                            .await
+                        {
+                            error!("Failed to send Telegram reply: {e}");
                         }
                     }
-                    respond(())
                 }
-            },
-        );
+                respond(())
+            }
+        });
 
         Dispatcher::builder(bot, handler)
             .enable_ctrlc_handler()
@@ -234,7 +220,10 @@ mod tests {
 
     #[test]
     fn escape_plain_text_unchanged() {
-        assert_eq!(TelegramAdapter::escape_markdown_v2("hello world"), "hello world");
+        assert_eq!(
+            TelegramAdapter::escape_markdown_v2("hello world"),
+            "hello world"
+        );
     }
 
     #[test]

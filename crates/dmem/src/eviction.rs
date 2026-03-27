@@ -224,7 +224,7 @@ mod tests {
         let mut ev = SmartEviction::new();
         ev.track("a", 0.9); // high relevance
         ev.track("b", 0.1); // low relevance
-        // Touch a several times so it's also more frequent and recent
+                            // Touch a several times so it's also more frequent and recent
         ev.touch("a");
         ev.touch("a");
 

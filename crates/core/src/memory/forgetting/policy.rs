@@ -145,9 +145,15 @@ impl RetentionPolicy {
             MemoryCategory::ErrorFix,
             RetentionRule::expire_and_limit(90, 200),
         )
-        .set_rule(MemoryCategory::UiInteraction, RetentionRule::expire_after(7))
+        .set_rule(
+            MemoryCategory::UiInteraction,
+            RetentionRule::expire_after(7),
+        )
         .set_rule(MemoryCategory::AppState, RetentionRule::expire_after(7))
-        .set_rule(MemoryCategory::ScreenCapture, RetentionRule::expire_after(14))
+        .set_rule(
+            MemoryCategory::ScreenCapture,
+            RetentionRule::expire_after(14),
+        )
         .set_rule(
             MemoryCategory::AutomationTrace,
             RetentionRule::expire_after(30),
@@ -210,7 +216,10 @@ mod tests {
     #[test]
     fn policy_returns_category_specific_rule() {
         let mut policy = RetentionPolicy::new();
-        policy.set_rule(MemoryCategory::Conversation, RetentionRule::expire_after(30));
+        policy.set_rule(
+            MemoryCategory::Conversation,
+            RetentionRule::expire_after(30),
+        );
         let rule = policy.rule_for(&MemoryCategory::Conversation);
         assert_eq!(rule.max_age_days, Some(30));
     }
@@ -222,7 +231,10 @@ mod tests {
             policy.rule_for(&MemoryCategory::Conversation).max_age_days,
             Some(30)
         );
-        assert!(policy.rule_for(&MemoryCategory::Preference).max_age_days.is_none());
+        assert!(policy
+            .rule_for(&MemoryCategory::Preference)
+            .max_age_days
+            .is_none());
         assert_eq!(
             policy.rule_for(&MemoryCategory::BuildResult).max_count,
             Some(100)

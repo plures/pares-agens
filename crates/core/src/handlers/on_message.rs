@@ -75,7 +75,12 @@ impl Procedure for OnMessage {
             return vec![];
         };
 
-        info!(sender, channel, content = content.as_str(), "on_message: received");
+        info!(
+            sender,
+            channel,
+            content = content.as_str(),
+            "on_message: received"
+        );
 
         // ── Step 1: PluresLM recall ───────────────────────────────────────────
         let memories = self.memory.recall(content, 10).await;
@@ -123,9 +128,8 @@ impl Procedure for OnMessage {
             );
 
             // Append the assistant turn with the tool call requests.
-            let mut assistant_msg = ChatMessage::assistant(
-                completion.content.as_deref().unwrap_or(""),
-            );
+            let mut assistant_msg =
+                ChatMessage::assistant(completion.content.as_deref().unwrap_or(""));
             assistant_msg.tool_calls = Some(completion.tool_calls.clone());
             messages.push(assistant_msg);
 
@@ -372,7 +376,10 @@ mod tests {
         let results = handler.execute(&make_message("ping")).await;
 
         assert_eq!(results.len(), 1);
-        if let Event::Message { content, sender, .. } = &results[0] {
+        if let Event::Message {
+            content, sender, ..
+        } = &results[0]
+        {
             assert_eq!(content, "Pong!");
             assert_eq!(sender, "agent");
         } else {
@@ -392,7 +399,11 @@ mod tests {
 
         handler.execute(&make_message("Hello")).await;
 
-        assert_eq!(memory.captured_count(), 2, "must capture user + assistant turns");
+        assert_eq!(
+            memory.captured_count(),
+            2,
+            "must capture user + assistant turns"
+        );
     }
 
     #[tokio::test]

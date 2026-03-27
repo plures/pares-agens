@@ -169,7 +169,10 @@ impl Agent {
                     debug!(route = ?ctx.route, context_len = ctx.learned_context.len(), "cerebellum preprocessed event");
                     // Drop events the cerebellum determined are noise.
                     if ctx.route == Route::Drop {
-                        debug!(event_kind = event.kind(), "cerebellum dropped event (Route::Drop)");
+                        debug!(
+                            event_kind = event.kind(),
+                            "cerebellum dropped event (Route::Drop)"
+                        );
                         return None;
                     }
                     ctx.learned_context
@@ -185,7 +188,11 @@ impl Agent {
 
         // ── Event dispatch ────────────────────────────────────────────────
         match event {
-            Event::Message { ref id, ref content, .. } => {
+            Event::Message {
+                ref id,
+                ref content,
+                ..
+            } => {
                 if let Err(e) = self.memory.capture(content).await {
                     error!(error = %e, "agent: failed to capture message in memory");
                 }
@@ -350,8 +357,7 @@ mod tests {
             128_000,
         ));
         let cerebellum = Cerebellum::new(CerebellumConfig::default());
-        let agent =
-            Agent::with_cerebellum(Arc::new(InMemory::new()), cerebellum, plures_lm);
+        let agent = Agent::with_cerebellum(Arc::new(InMemory::new()), cerebellum, plures_lm);
 
         let event = Event::Message {
             id: "q1".into(),
@@ -370,4 +376,3 @@ mod tests {
         }
     }
 }
-

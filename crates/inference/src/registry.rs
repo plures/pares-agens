@@ -160,7 +160,13 @@ impl ModelRegistry {
                     .unwrap_or("unknown")
                     .to_string();
                 let file_size_bytes = std::fs::metadata(&path).ok().map(|m| m.len());
-                self.register_full(model_id, path, "auto-discovered", file_size_bytes, Vec::new());
+                self.register_full(
+                    model_id,
+                    path,
+                    "auto-discovered",
+                    file_size_bytes,
+                    Vec::new(),
+                );
                 added += 1;
             }
         }

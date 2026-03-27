@@ -93,10 +93,8 @@ pub fn migration_run(
 fn resolve_source(source: Option<String>) -> Result<PathBuf, String> {
     match source.map(PathBuf::from).or_else(openclaw::auto_detect) {
         Some(p) => Ok(p),
-        None => Err(
-            "No OpenClaw installation found. \
+        None => Err("No OpenClaw installation found. \
              Pass a `source` path or install OpenClaw first."
-                .into(),
-        ),
+            .into()),
     }
 }

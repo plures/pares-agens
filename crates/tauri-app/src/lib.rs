@@ -9,8 +9,8 @@ use pares_agens_channels::tauri_ipc::tauri_ipc_channel;
 use pares_agens_core::agent::{Agent, InMemory};
 use pares_agens_core::cerebellum::{Cerebellum, CerebellumConfig};
 use pares_agens_core::memory::embed::MockEmbedder;
-use pares_agens_core::memory::store::{InMemoryStore, MemoryStore};
 use pares_agens_core::memory::store::PluresDbStore;
+use pares_agens_core::memory::store::{InMemoryStore, MemoryStore};
 use pares_agens_core::memory::PluresLm;
 use pares_agens_core::optimization::OptimizationSafetyGate;
 use pares_agens_core::praxis::GuidanceService;
@@ -23,12 +23,12 @@ use crate::state::{build_router_config, rebuild_model_router, AppState, Settings
 
 mod commands;
 mod mcp;
-mod settings;
 mod migration;
 mod procedures;
+mod settings;
 mod state;
-mod wizard;
 pub mod tray;
+mod wizard;
 
 /// Entry point called from `main.rs`.
 ///

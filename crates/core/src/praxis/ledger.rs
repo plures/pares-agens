@@ -223,10 +223,18 @@ impl Ledger {
     /// * [`ValidationStatus::GateRequired`] — must call [`Ledger::gate`] first.
     /// * [`ValidationStatus::Denied`] — action is forbidden.
     pub fn validate(&self, action: &str) -> ValidationStatus {
-        if self.denied_actions.iter().any(|d| action.starts_with(d.as_str())) {
+        if self
+            .denied_actions
+            .iter()
+            .any(|d| action.starts_with(d.as_str()))
+        {
             return ValidationStatus::Denied;
         }
-        if self.gated_actions.iter().any(|g| action.starts_with(g.as_str())) {
+        if self
+            .gated_actions
+            .iter()
+            .any(|g| action.starts_with(g.as_str()))
+        {
             return ValidationStatus::GateRequired;
         }
         ValidationStatus::Permitted
@@ -287,11 +295,7 @@ impl Ledger {
             GateStatus::Rejected
         };
 
-        tracing::info!(
-            gate_id,
-            approved,
-            "praxis::resolve_gate: gate resolved"
-        );
+        tracing::info!(gate_id, approved, "praxis::resolve_gate: gate resolved");
         Ok(())
     }
 
@@ -585,7 +589,9 @@ mod tests {
         ledger.gate("send_email:x", "reason").unwrap();
 
         let lic = crate::license::License::pro(None);
-        let json = ledger.export_json(&lic).expect("pro license should allow export");
+        let json = ledger
+            .export_json(&lic)
+            .expect("pro license should allow export");
         let arr = json.as_array().expect("export should be a JSON array");
         assert_eq!(arr.len(), 2);
     }
@@ -597,7 +603,9 @@ mod tests {
         ledger.log(&event, serde_json::json!(null));
 
         let lic = crate::license::License::pro(None);
-        let json = ledger.export_json(&lic).expect("pro license should allow export");
+        let json = ledger
+            .export_json(&lic)
+            .expect("pro license should allow export");
         let entry = &json[0];
         assert!(entry.get("id").is_some());
         assert!(entry.get("timestamp").is_some());
@@ -612,7 +620,9 @@ mod tests {
     fn export_json_empty_ledger_is_empty_array() {
         let ledger = Ledger::default();
         let lic = crate::license::License::pro(None);
-        let json = ledger.export_json(&lic).expect("pro license should allow export");
+        let json = ledger
+            .export_json(&lic)
+            .expect("pro license should allow export");
         assert_eq!(json, serde_json::json!([]));
     }
 
@@ -625,7 +635,10 @@ mod tests {
         let lic = crate::license::License::free();
         let result = ledger.export_json(&lic);
         assert!(
-            matches!(result, Err(crate::license::LicenseError::FeatureNotAvailable { .. })),
+            matches!(
+                result,
+                Err(crate::license::LicenseError::FeatureNotAvailable { .. })
+            ),
             "free tier should not be able to export the audit ledger"
         );
     }

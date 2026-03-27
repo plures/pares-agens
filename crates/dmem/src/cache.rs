@@ -19,10 +19,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    capacity::StorageBudget,
-    compress::MemoryCompressor,
-    eviction::SmartEviction,
-    error::DmemError,
+    capacity::StorageBudget, compress::MemoryCompressor, error::DmemError, eviction::SmartEviction,
 };
 
 // ── CachedEntry ───────────────────────────────────────────────────────────────
@@ -325,9 +322,8 @@ impl MemoryCache {
 
     /// Move an entry from warm to the cold tier.
     fn demote_to_cold(&mut self, entry: CachedEntry) {
-        let cold_budget = (self.budget.total_bytes
-            - self.budget.hot_bytes
-            - self.budget.warm_bytes) as usize;
+        let cold_budget =
+            (self.budget.total_bytes - self.budget.hot_bytes - self.budget.warm_bytes) as usize;
         let stored_bytes = entry.stored_bytes;
         self.cold_bytes += stored_bytes;
         let id = entry.id.clone();
@@ -380,7 +376,12 @@ mod tests {
     #[test]
     fn insert_and_get_from_hot_tier() {
         let mut c = make_cache();
-        c.insert("a".into(), b"hello".to_vec(), "2026-01-01T00:00:00Z".to_string(), 0.5);
+        c.insert(
+            "a".into(),
+            b"hello".to_vec(),
+            "2026-01-01T00:00:00Z".to_string(),
+            0.5,
+        );
         assert_eq!(c.tier_of("a"), Some(CacheTier::Hot));
         assert_eq!(c.get("a"), Some(b"hello".to_vec()));
     }
@@ -389,7 +390,12 @@ mod tests {
     fn len_and_is_empty() {
         let mut c = make_cache();
         assert!(c.is_empty());
-        c.insert("x".into(), vec![1, 2, 3], "2026-01-01T00:00:00Z".to_string(), 0.5);
+        c.insert(
+            "x".into(),
+            vec![1, 2, 3],
+            "2026-01-01T00:00:00Z".to_string(),
+            0.5,
+        );
         assert_eq!(c.len(), 1);
         assert!(!c.is_empty());
     }
@@ -408,7 +414,12 @@ mod tests {
         let budget = StorageBudget::new(200, 50, 50);
         let mut c = MemoryCache::new(budget);
         // Insert a pinned entry
-        c.insert("important".into(), vec![0u8; 10], "2026-01-01T00:00:00Z".to_string(), 0.9);
+        c.insert(
+            "important".into(),
+            vec![0u8; 10],
+            "2026-01-01T00:00:00Z".to_string(),
+            0.9,
+        );
         c.pin("important");
         // Fill up with other entries to trigger eviction
         for i in 0..20u8 {
@@ -428,7 +439,12 @@ mod tests {
         let mut c = make_cache();
         let u = c.hot_utilisation();
         assert!((0.0..=1.0).contains(&u));
-        c.insert("a".into(), vec![0u8; 50], "2026-01-01T00:00:00Z".to_string(), 0.5);
+        c.insert(
+            "a".into(),
+            vec![0u8; 50],
+            "2026-01-01T00:00:00Z".to_string(),
+            0.5,
+        );
         let u2 = c.hot_utilisation();
         assert!(u2 >= u);
     }

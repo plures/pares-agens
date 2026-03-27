@@ -1,7 +1,7 @@
 //! Routing logic — decides where an event goes after autorecall.
 
-use crate::event::Event;
 use super::{CerebellumConfig, Route};
+use crate::event::Event;
 
 /// Complexity signals extracted from an event.
 struct Signals {
@@ -55,18 +55,38 @@ fn analyze(content: &str) -> Signals {
     let token_estimate = content.split_whitespace().count();
 
     let analytical_keywords = [
-        "analyze", "explain", "compare", "design", "architect",
-        "why", "how does", "trade-off", "tradeoff", "evaluate",
-        "reason", "think through", "deep dive", "investigate",
+        "analyze",
+        "explain",
+        "compare",
+        "design",
+        "architect",
+        "why",
+        "how does",
+        "trade-off",
+        "tradeoff",
+        "evaluate",
+        "reason",
+        "think through",
+        "deep dive",
+        "investigate",
     ];
     let analytical = analytical_keywords.iter().any(|kw| lower.contains(kw));
 
     let simple_patterns = [
-        "yes", "no", "ok", "sure", "thanks", "got it",
-        "do it", "push", "run", "status", "heartbeat",
+        "yes",
+        "no",
+        "ok",
+        "sure",
+        "thanks",
+        "got it",
+        "do it",
+        "push",
+        "run",
+        "status",
+        "heartbeat",
     ];
-    let simple = simple_patterns.iter().any(|p| lower.trim() == *p)
-        || (token_estimate <= 3 && !analytical);
+    let simple =
+        simple_patterns.iter().any(|p| lower.trim() == *p) || (token_estimate <= 3 && !analytical);
 
     Signals {
         token_estimate,

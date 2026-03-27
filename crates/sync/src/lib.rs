@@ -150,10 +150,7 @@ mod tests {
             SyncTopic::MemoryEntries.as_key(),
             "pares-agens/memory-entries/v1"
         );
-        assert_eq!(
-            SyncTopic::Procedures.as_key(),
-            "pares-agens/procedures/v1"
-        );
+        assert_eq!(SyncTopic::Procedures.as_key(), "pares-agens/procedures/v1");
         assert_eq!(
             SyncTopic::AgentConfig.as_key(),
             "pares-agens/agent-config/v1"

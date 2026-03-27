@@ -5,14 +5,14 @@
 
 use async_trait::async_trait;
 use mcp_client::{
-    McpClient,
     error::Result,
     protocol::{
-        CallToolResult, InitializeResult, JsonRpcRequest, JsonRpcResponse, JsonRpcError,
+        CallToolResult, InitializeResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
         ListToolsResult, ServerCapabilities, ServerInfo, Tool, ToolContent, ToolInputSchema,
         ToolsCapability,
     },
     transport::Transport,
+    McpClient,
 };
 use serde_json::{json, Value};
 
@@ -131,7 +131,10 @@ fn make_mock_client() -> McpClient {
 #[tokio::test]
 async fn initialize_returns_server_info() {
     let mut client = make_mock_client();
-    let result = client.initialize().await.expect("initialize should succeed");
+    let result = client
+        .initialize()
+        .await
+        .expect("initialize should succeed");
     assert_eq!(result.server_info.name, "mock-server");
     assert_eq!(result.protocol_version, "2024-11-05");
     assert!(result.capabilities.tools.is_some());
@@ -142,7 +145,10 @@ async fn list_tools_returns_expected_tools() {
     let mut client = make_mock_client();
     client.initialize().await.unwrap();
 
-    let tools = client.list_tools().await.expect("list_tools should succeed");
+    let tools = client
+        .list_tools()
+        .await
+        .expect("list_tools should succeed");
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0].name, "web_search");
     assert_eq!(tools[0].description.as_deref(), Some("Search the web"));
@@ -177,7 +183,11 @@ async fn list_tools_uses_cache_on_second_call() {
 
     client.list_tools().await.unwrap();
     client.list_tools().await.unwrap(); // should use cache
-    assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 1, "tools/list should only be called once");
+    assert_eq!(
+        call_count.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "tools/list should only be called once"
+    );
 }
 
 #[tokio::test]
@@ -293,7 +303,10 @@ async fn openai_tools_produces_correct_format() {
     let mut client = make_mock_client();
     client.initialize().await.unwrap();
 
-    let tools = client.openai_tools().await.expect("openai_tools should succeed");
+    let tools = client
+        .openai_tools()
+        .await
+        .expect("openai_tools should succeed");
     let arr = tools.as_array().expect("should be array");
     assert_eq!(arr.len(), 1);
 
@@ -339,7 +352,9 @@ async fn get_cached_tool_returns_tool_after_list() {
     client.initialize().await.unwrap();
     client.list_tools().await.unwrap();
 
-    let tool = client.get_cached_tool("web_search").expect("should be cached");
+    let tool = client
+        .get_cached_tool("web_search")
+        .expect("should be cached");
     assert_eq!(tool.name, "web_search");
 }
 
@@ -371,7 +386,10 @@ async fn jsonrpc_error_propagated_correctly() {
 async fn response_id_mismatch_returns_error() {
     // Mock that always returns id=999 regardless of request id.
     let mut client = McpClient::new(MockTransport::new(|_req| {
-        ok_response(json!(999), json!({"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"x","version":"0"}}))
+        ok_response(
+            json!(999),
+            json!({"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"x","version":"0"}}),
+        )
     }));
 
     let err = client.initialize().await.unwrap_err();
@@ -395,7 +413,10 @@ fn new_guarded_free_tier_returns_feature_not_available() {
         &license,
     );
     assert!(
-        matches!(result, Err(pares_agens_core::license::LicenseError::FeatureNotAvailable { .. })),
+        matches!(
+            result,
+            Err(pares_agens_core::license::LicenseError::FeatureNotAvailable { .. })
+        ),
         "Free tier should block MCP tool orchestration"
     );
 }
@@ -407,7 +428,10 @@ fn new_guarded_pro_tier_succeeds() {
         MockTransport::new(|req| ok_response(req_id(req), json!({}))),
         &license,
     );
-    assert!(result.is_ok(), "Pro tier should allow MCP tool orchestration");
+    assert!(
+        result.is_ok(),
+        "Pro tier should allow MCP tool orchestration"
+    );
 }
 
 #[test]
@@ -419,7 +443,10 @@ fn new_guarded_expired_pro_returns_expired() {
         &license,
     );
     assert!(
-        matches!(result, Err(pares_agens_core::license::LicenseError::Expired)),
+        matches!(
+            result,
+            Err(pares_agens_core::license::LicenseError::Expired)
+        ),
         "Expired Pro license should be rejected"
     );
 }

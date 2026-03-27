@@ -7,11 +7,7 @@
 //! The built-in [`DefaultVerdictPolicy`] keeps any mutation that improved the
 //! metric above a minimum threshold, scaled by the hypothesis confidence.
 
-use crate::{
-    hypothesis::Hypothesis,
-    measurement::Measurement,
-    AutoresearchError, Verdict,
-};
+use crate::{hypothesis::Hypothesis, measurement::Measurement, AutoresearchError, Verdict};
 use serde::{Deserialize, Serialize};
 
 // ── VerdictInput ──────────────────────────────────────────────────────────────

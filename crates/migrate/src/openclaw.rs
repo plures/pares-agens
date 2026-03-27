@@ -112,8 +112,7 @@ pub struct OpenClawInstallation {
 /// The home directory is resolved from the `HOME` environment variable on
 /// Unix and `USERPROFILE` on Windows.
 pub fn auto_detect() -> Option<std::path::PathBuf> {
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))?;
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
     openclaw_dir_under(std::path::Path::new(&home))
 }
 
@@ -122,7 +121,11 @@ pub fn auto_detect() -> Option<std::path::PathBuf> {
 /// Extracted so tests can call it without modifying global environment state.
 fn openclaw_dir_under(home: &std::path::Path) -> Option<std::path::PathBuf> {
     let path = home.join(".openclaw");
-    if path.is_dir() { Some(path) } else { None }
+    if path.is_dir() {
+        Some(path)
+    } else {
+        None
+    }
 }
 
 impl OpenClawInstallation {
@@ -136,28 +139,40 @@ impl OpenClawInstallation {
         // ── memories.json ──────────────────────────────────────────────────
         let memories_path = root.join("memories.json");
         if memories_path.exists() {
-            let raw = std::fs::read_to_string(&memories_path)
-                .map_err(|e| MigrateError::Read { path: memories_path.clone(), source: e })?;
-            inst.memories = serde_json::from_str(&raw)
-                .map_err(|e| MigrateError::Parse { path: memories_path, source: e })?;
+            let raw = std::fs::read_to_string(&memories_path).map_err(|e| MigrateError::Read {
+                path: memories_path.clone(),
+                source: e,
+            })?;
+            inst.memories = serde_json::from_str(&raw).map_err(|e| MigrateError::Parse {
+                path: memories_path,
+                source: e,
+            })?;
         }
 
         // ── config.json ────────────────────────────────────────────────────
         let config_path = root.join("config.json");
         if config_path.exists() {
-            let raw = std::fs::read_to_string(&config_path)
-                .map_err(|e| MigrateError::Read { path: config_path.clone(), source: e })?;
-            inst.config = serde_json::from_str(&raw)
-                .map_err(|e| MigrateError::Parse { path: config_path, source: e })?;
+            let raw = std::fs::read_to_string(&config_path).map_err(|e| MigrateError::Read {
+                path: config_path.clone(),
+                source: e,
+            })?;
+            inst.config = serde_json::from_str(&raw).map_err(|e| MigrateError::Parse {
+                path: config_path,
+                source: e,
+            })?;
         }
 
         // ── crons.json ─────────────────────────────────────────────────────
         let crons_path = root.join("crons.json");
         if crons_path.exists() {
-            let raw = std::fs::read_to_string(&crons_path)
-                .map_err(|e| MigrateError::Read { path: crons_path.clone(), source: e })?;
-            inst.crons = serde_json::from_str(&raw)
-                .map_err(|e| MigrateError::Parse { path: crons_path, source: e })?;
+            let raw = std::fs::read_to_string(&crons_path).map_err(|e| MigrateError::Read {
+                path: crons_path.clone(),
+                source: e,
+            })?;
+            inst.crons = serde_json::from_str(&raw).map_err(|e| MigrateError::Parse {
+                path: crons_path,
+                source: e,
+            })?;
         }
 
         // ── personality files ──────────────────────────────────────────────
@@ -168,8 +183,11 @@ impl OpenClawInstallation {
         ] {
             let file_path = root.join(filename);
             if file_path.exists() {
-                let content = std::fs::read_to_string(&file_path)
-                    .map_err(|e| MigrateError::Read { path: file_path, source: e })?;
+                let content =
+                    std::fs::read_to_string(&file_path).map_err(|e| MigrateError::Read {
+                        path: file_path,
+                        source: e,
+                    })?;
                 inst.personality_files.push(PersonalityFile {
                     key: (*key).to_string(),
                     content,
@@ -221,11 +239,7 @@ mod tests {
     #[test]
     fn load_config_json_with_telegram() {
         let dir = tempfile::tempdir().unwrap();
-        write_file(
-            &dir,
-            "config.json",
-            r#"{"telegram":{"token":"123:ABC"}}"#,
-        );
+        write_file(&dir, "config.json", r#"{"telegram":{"token":"123:ABC"}}"#);
         let inst = OpenClawInstallation::load(dir.path()).unwrap();
         assert_eq!(inst.config.telegram.as_ref().unwrap().token, "123:ABC");
     }
@@ -252,7 +266,11 @@ mod tests {
         write_file(&dir, "USER.md", "# User\nName: Alice");
         let inst = OpenClawInstallation::load(dir.path()).unwrap();
         assert_eq!(inst.personality_files.len(), 2);
-        let keys: Vec<&str> = inst.personality_files.iter().map(|p| p.key.as_str()).collect();
+        let keys: Vec<&str> = inst
+            .personality_files
+            .iter()
+            .map(|p| p.key.as_str())
+            .collect();
         assert!(keys.contains(&"soul"));
         assert!(keys.contains(&"user"));
     }

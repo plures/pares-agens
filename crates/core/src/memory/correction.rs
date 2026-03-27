@@ -89,12 +89,7 @@ const CORRECTION_SIGNALS: &[&str] = &[
 /// Patterns that must appear at the **start** of the message to count as a
 /// correction signal.  These are too broad as substring matches but are strong
 /// signals when they open the sentence.
-const CORRECTION_PREFIXES: &[&str] = &[
-    "no, ",
-    "no. ",
-    "actually,",
-    "actually, ",
-];
+const CORRECTION_PREFIXES: &[&str] = &["no, ", "no. ", "actually,", "actually, "];
 
 /// Return `true` when the user message looks like a correction rather than a
 /// new request.
@@ -201,20 +196,14 @@ impl CorrectionEngine {
         let now = Utc::now().to_rfc3339();
 
         let rule_summary = derive_rule_summary(&exchange.user);
-        let confirmation = format!(
-            "Got it, I'll remember to {} going forward.",
-            rule_summary
-        );
+        let confirmation = format!("Got it, I'll remember to {} going forward.", rule_summary);
 
         let content = format!(
             "CORRECTION: {}\nContext: {}",
             exchange.user, exchange.assistant
         );
 
-        let mut tags = vec![
-            "decay_protected".to_string(),
-            "correction".to_string(),
-        ];
+        let mut tags = vec!["decay_protected".to_string(), "correction".to_string()];
         if let Some(ref cid) = constraint_id {
             tags.push(format!("{CONSTRAINT_TAG_PREFIX}{cid}"));
         }
@@ -269,10 +258,9 @@ impl CorrectionEngine {
             .iter()
             .find(|e| e.id == correction_id)
             .and_then(|e| {
-                e.tags.iter().find_map(|t| {
-                    t.strip_prefix(CONSTRAINT_TAG_PREFIX)
-                        .map(|s| s.to_string())
-                })
+                e.tags
+                    .iter()
+                    .find_map(|t| t.strip_prefix(CONSTRAINT_TAG_PREFIX).map(|s| s.to_string()))
             });
 
         let removed = self
@@ -310,7 +298,13 @@ fn derive_rule_summary(user_message: &str) -> String {
     }
 
     // "I prefer X" / "please use X" / "always use X"
-    for prefix in &["i prefer ", "please use ", "always use ", "use ", "switch to "] {
+    for prefix in &[
+        "i prefer ",
+        "please use ",
+        "always use ",
+        "use ",
+        "switch to ",
+    ] {
         if let Some(rest) = lower.strip_prefix(prefix) {
             let rest = rest.trim_end_matches(|c: char| c.is_ascii_punctuation());
             if !rest.is_empty() {
@@ -381,7 +375,9 @@ mod tests {
     fn detects_negation_corrections() {
         assert!(is_correction("No, that's wrong"));
         assert!(is_correction("Actually, it should be a Vec not a slice"));
-        assert!(is_correction("That's incorrect, the function returns Option"));
+        assert!(is_correction(
+            "That's incorrect, the function returns Option"
+        ));
     }
 
     #[test]
@@ -397,7 +393,9 @@ mod tests {
         assert!(!is_correction("I never used tokio before"));
         assert!(!is_correction("This has never been an issue until now"));
         // "wrong" as part of normal description, not a correction
-        assert!(!is_correction("wrong type inference happens when lifetimes are elided"));
+        assert!(!is_correction(
+            "wrong type inference happens when lifetimes are elided"
+        ));
         assert!(!is_correction("What went wrong with the build?"));
         // "actually" mid-sentence, not a correction opener
         assert!(!is_correction("I actually want to learn about traits"));

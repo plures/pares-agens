@@ -201,7 +201,9 @@ fn is_valid_semver(version: &str) -> bool {
     if parts.len() < 3 {
         return false;
     }
-    parts[..3].iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+    parts[..3]
+        .iter()
+        .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// Returns `true` when `s` is exactly 64 lowercase hexadecimal characters.
@@ -244,7 +246,10 @@ mod tests {
         let v = MetadataValidator::new();
         let mut m = valid_metadata();
         m.id = String::new();
-        assert!(matches!(v.validate(&m), Err(MarketplaceError::InvalidMetadata(_))));
+        assert!(matches!(
+            v.validate(&m),
+            Err(MarketplaceError::InvalidMetadata(_))
+        ));
     }
 
     #[test]
@@ -252,7 +257,10 @@ mod tests {
         let v = MetadataValidator::new();
         let mut m = valid_metadata();
         m.id = "bad id!".to_string();
-        assert!(matches!(v.validate(&m), Err(MarketplaceError::InvalidMetadata(_))));
+        assert!(matches!(
+            v.validate(&m),
+            Err(MarketplaceError::InvalidMetadata(_))
+        ));
     }
 
     #[test]
@@ -260,7 +268,10 @@ mod tests {
         let v = MetadataValidator::new();
         let mut m = valid_metadata();
         m.name = String::new();
-        assert!(matches!(v.validate(&m), Err(MarketplaceError::InvalidMetadata(_))));
+        assert!(matches!(
+            v.validate(&m),
+            Err(MarketplaceError::InvalidMetadata(_))
+        ));
     }
 
     #[test]
@@ -268,7 +279,10 @@ mod tests {
         let v = MetadataValidator::new();
         let mut m = valid_metadata();
         m.version = "not-a-version".to_string();
-        assert!(matches!(v.validate(&m), Err(MarketplaceError::InvalidMetadata(_))));
+        assert!(matches!(
+            v.validate(&m),
+            Err(MarketplaceError::InvalidMetadata(_))
+        ));
     }
 
     #[test]
@@ -276,7 +290,10 @@ mod tests {
         let v = MetadataValidator::new();
         let mut m = valid_metadata();
         m.version = "1.0".to_string();
-        assert!(matches!(v.validate(&m), Err(MarketplaceError::InvalidMetadata(_))));
+        assert!(matches!(
+            v.validate(&m),
+            Err(MarketplaceError::InvalidMetadata(_))
+        ));
     }
 
     #[test]
@@ -284,7 +301,10 @@ mod tests {
         let v = MetadataValidator::new();
         let mut m = valid_metadata();
         m.description = String::new();
-        assert!(matches!(v.validate(&m), Err(MarketplaceError::InvalidMetadata(_))));
+        assert!(matches!(
+            v.validate(&m),
+            Err(MarketplaceError::InvalidMetadata(_))
+        ));
     }
 
     #[test]
@@ -292,7 +312,10 @@ mod tests {
         let v = MetadataValidator::new();
         let mut m = valid_metadata();
         m.author = String::new();
-        assert!(matches!(v.validate(&m), Err(MarketplaceError::InvalidMetadata(_))));
+        assert!(matches!(
+            v.validate(&m),
+            Err(MarketplaceError::InvalidMetadata(_))
+        ));
     }
 
     #[test]
@@ -300,7 +323,10 @@ mod tests {
         let v = MetadataValidator::new();
         let mut m = valid_metadata();
         m.categories = vec![];
-        assert!(matches!(v.validate(&m), Err(MarketplaceError::InvalidMetadata(_))));
+        assert!(matches!(
+            v.validate(&m),
+            Err(MarketplaceError::InvalidMetadata(_))
+        ));
     }
 
     #[test]
@@ -308,7 +334,10 @@ mod tests {
         let v = MetadataValidator::new();
         let mut m = valid_metadata();
         m.checksum = "tooshort".to_string();
-        assert!(matches!(v.validate(&m), Err(MarketplaceError::InvalidMetadata(_))));
+        assert!(matches!(
+            v.validate(&m),
+            Err(MarketplaceError::InvalidMetadata(_))
+        ));
     }
 
     #[test]
@@ -316,7 +345,10 @@ mod tests {
         let v = MetadataValidator::new();
         let mut m = valid_metadata();
         m.checksum = "z".repeat(64);
-        assert!(matches!(v.validate(&m), Err(MarketplaceError::InvalidMetadata(_))));
+        assert!(matches!(
+            v.validate(&m),
+            Err(MarketplaceError::InvalidMetadata(_))
+        ));
     }
 
     #[test]
@@ -324,7 +356,10 @@ mod tests {
         let v = MetadataValidator::new();
         let mut m = valid_metadata();
         m.download_url = String::new();
-        assert!(matches!(v.validate(&m), Err(MarketplaceError::InvalidMetadata(_))));
+        assert!(matches!(
+            v.validate(&m),
+            Err(MarketplaceError::InvalidMetadata(_))
+        ));
     }
 
     #[test]
@@ -332,7 +367,10 @@ mod tests {
         let v = MetadataValidator::new();
         let mut m = valid_metadata();
         m.download_url = "http://insecure.example.com/skill.tar.gz".to_string();
-        assert!(matches!(v.validate(&m), Err(MarketplaceError::InvalidMetadata(_))));
+        assert!(matches!(
+            v.validate(&m),
+            Err(MarketplaceError::InvalidMetadata(_))
+        ));
     }
 
     #[test]

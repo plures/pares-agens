@@ -17,9 +17,9 @@
 #![warn(missing_docs)]
 #![allow(non_camel_case_types, non_snake_case)]
 
-use std::os::raw::{c_float, c_int};
 #[cfg(feature = "native")]
 use std::os::raw::c_char;
+use std::os::raw::{c_float, c_int};
 
 // ── Opaque handle types ───────────────────────────────────────────────────────
 

@@ -7,8 +7,8 @@
 use std::path::Path;
 
 use pares_agens_inference::{
-    BitNetLocalRunner, GenParams, InferenceConfig, InferenceError, LocalModelsConfig,
-    ModelDownloader, ModelRegistry, default_cache_dir,
+    default_cache_dir, BitNetLocalRunner, GenParams, InferenceConfig, InferenceError,
+    LocalModelsConfig, ModelDownloader, ModelRegistry,
 };
 
 // ── Stub path tests (always run, no native library required) ──────────────────
@@ -72,7 +72,10 @@ fn gen_params_default_values_are_sensible() {
     assert!(p.max_tokens > 0, "max_tokens must be positive");
     assert!(p.n_threads > 0, "n_threads must be positive");
     assert!(p.seed.is_none(), "default seed should be None");
-    assert!(p.stop_sequences.is_empty(), "default stop_sequences should be empty");
+    assert!(
+        p.stop_sequences.is_empty(),
+        "default stop_sequences should be empty"
+    );
 }
 
 #[test]
@@ -103,7 +106,9 @@ fn registry_register_and_get() {
         "BitNet 1.58-bit 3B",
     );
 
-    let entry = registry.get("bitnet-b1.58-3b").expect("entry should be present");
+    let entry = registry
+        .get("bitnet-b1.58-3b")
+        .expect("entry should be present");
     assert_eq!(entry.model_id, "bitnet-b1.58-3b");
     assert_eq!(entry.description, "BitNet 1.58-bit 3B");
 }
@@ -170,14 +175,22 @@ fn downloader_install_and_evict_roundtrip() {
     std::fs::write(&src, b"fake model content").unwrap();
 
     // Install it.
-    let dest = dl.install_from("my-model", &src).expect("install_from should succeed");
+    let dest = dl
+        .install_from("my-model", &src)
+        .expect("install_from should succeed");
     assert!(dest.is_file(), "installed file should exist");
-    assert!(dl.verify_local("my-model"), "verify_local should return true after install");
+    assert!(
+        dl.verify_local("my-model"),
+        "verify_local should return true after install"
+    );
 
     // Evict it.
     let removed = dl.evict("my-model").expect("evict should succeed");
     assert!(removed, "evict should return true when file existed");
-    assert!(!dl.verify_local("my-model"), "verify_local should return false after eviction");
+    assert!(
+        !dl.verify_local("my-model"),
+        "verify_local should return false after eviction"
+    );
 
     // Evicting again should return false, not an error.
     let removed_again = dl.evict("my-model").expect("second evict should not error");
@@ -222,7 +235,9 @@ fn download_error_has_non_empty_message() {
 
 #[test]
 fn model_not_found_error_has_non_empty_message() {
-    let e = InferenceError::ModelNotFound { repo: "owner/missing".to_string() };
+    let e = InferenceError::ModelNotFound {
+        repo: "owner/missing".to_string(),
+    };
     assert!(!e.to_string().is_empty());
     assert!(e.to_string().contains("owner/missing"));
 }
@@ -321,8 +336,14 @@ fn inference_config_local_models_default() {
 fn default_cache_dir_ends_with_expected_components() {
     let dir = default_cache_dir();
     let s = dir.to_string_lossy();
-    assert!(s.contains(".pares-agens"), "expected `.pares-agens` in cache dir: {s}");
-    assert!(s.ends_with("models"), "expected path to end with `models`: {s}");
+    assert!(
+        s.contains(".pares-agens"),
+        "expected `.pares-agens` in cache dir: {s}"
+    );
+    assert!(
+        s.ends_with("models"),
+        "expected path to end with `models`: {s}"
+    );
 }
 
 // ── ModelDownloader extended ──────────────────────────────────────────────────
@@ -333,7 +354,10 @@ fn downloader_verify_local_checks_gguf_variant() {
     let dl = ModelDownloader::new(&*tmp);
     let path = tmp.join("my-model.gguf");
     std::fs::write(&path, b"data").unwrap();
-    assert!(dl.verify_local("my-model"), "verify_local should find .gguf file");
+    assert!(
+        dl.verify_local("my-model"),
+        "verify_local should find .gguf file"
+    );
 }
 
 #[test]

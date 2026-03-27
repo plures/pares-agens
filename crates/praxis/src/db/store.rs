@@ -240,7 +240,9 @@ mod tests {
     fn insert_constraint_duplicate_returns_error() {
         let mut store = PraxisStore::new();
         store.insert_constraint(make_constraint("C-0001")).unwrap();
-        let err = store.insert_constraint(make_constraint("C-0001")).unwrap_err();
+        let err = store
+            .insert_constraint(make_constraint("C-0001"))
+            .unwrap_err();
         assert_eq!(err, StoreError::DuplicateId("C-0001".into()));
     }
 

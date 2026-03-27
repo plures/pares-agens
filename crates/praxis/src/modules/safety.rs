@@ -34,7 +34,9 @@ const RESOURCE_MUTATION_PREFIXES: &[&str] = &[
 ];
 
 fn is_resource_mutation(action: &str) -> bool {
-    RESOURCE_MUTATION_PREFIXES.iter().any(|p| action.starts_with(p))
+    RESOURCE_MUTATION_PREFIXES
+        .iter()
+        .any(|p| action.starts_with(p))
 }
 
 // ---------------------------------------------------------------------------
@@ -43,25 +45,37 @@ fn is_resource_mutation(action: &str) -> bool {
 
 struct ActionNamePresent;
 impl Rule for ActionNamePresent {
-    fn name(&self) -> &str { "action_name_present" }
-    fn category(&self) -> RuleCategory { RuleCategory::Input }
+    fn name(&self) -> &str {
+        "action_name_present"
+    }
+    fn category(&self) -> RuleCategory {
+        RuleCategory::Input
+    }
     fn evaluate(&self, ctx: &RuleContext) -> RuleResult {
         // Primary source: ctx.action; fallback to a payload "action" field so
         // callers that embed action in the payload are also supported.
         let has_action = !ctx.action.is_empty()
-            || ctx.payload_str("action").is_some_and(|v| !v.trim().is_empty());
+            || ctx
+                .payload_str("action")
+                .is_some_and(|v| !v.trim().is_empty());
         if has_action {
             RuleResult::Pass
         } else {
-            RuleResult::Fail { reason: "action name must not be empty".into() }
+            RuleResult::Fail {
+                reason: "action name must not be empty".into(),
+            }
         }
     }
 }
 
 struct ResourceOwnerDeclared;
 impl Rule for ResourceOwnerDeclared {
-    fn name(&self) -> &str { "resource_owner_declared" }
-    fn category(&self) -> RuleCategory { RuleCategory::Input }
+    fn name(&self) -> &str {
+        "resource_owner_declared"
+    }
+    fn category(&self) -> RuleCategory {
+        RuleCategory::Input
+    }
     fn evaluate(&self, ctx: &RuleContext) -> RuleResult {
         if !is_resource_mutation(&ctx.action) {
             return RuleResult::Pass; // non-mutation actions don't need an owner
@@ -84,15 +98,17 @@ impl Rule for ResourceOwnerDeclared {
 
 struct EscalationRequiredForHighPrivilege;
 impl Rule for EscalationRequiredForHighPrivilege {
-    fn name(&self) -> &str { "escalation_required_for_high_privilege" }
-    fn category(&self) -> RuleCategory { RuleCategory::State }
+    fn name(&self) -> &str {
+        "escalation_required_for_high_privilege"
+    }
+    fn category(&self) -> RuleCategory {
+        RuleCategory::State
+    }
     fn evaluate(&self, ctx: &RuleContext) -> RuleResult {
         match ctx.payload_u64("privilege_level") {
             Some(level) if level >= 3 => RuleResult::Gate {
                 action: ctx.action.clone(),
-                rationale: format!(
-                    "privilege_level {level} ≥ 3 requires explicit user approval"
-                ),
+                rationale: format!("privilege_level {level} ≥ 3 requires explicit user approval"),
             },
             _ => RuleResult::Pass,
         }
@@ -101,16 +117,18 @@ impl Rule for EscalationRequiredForHighPrivilege {
 
 struct ResourceLimitNotExceeded;
 impl Rule for ResourceLimitNotExceeded {
-    fn name(&self) -> &str { "resource_limit_not_exceeded" }
-    fn category(&self) -> RuleCategory { RuleCategory::State }
+    fn name(&self) -> &str {
+        "resource_limit_not_exceeded"
+    }
+    fn category(&self) -> RuleCategory {
+        RuleCategory::State
+    }
     fn evaluate(&self, ctx: &RuleContext) -> RuleResult {
         let requested = ctx.payload_u64("requested_units");
-        let limit     = ctx.payload_u64("resource_limit");
+        let limit = ctx.payload_u64("resource_limit");
         match (requested, limit) {
             (Some(req), Some(lim)) if req > lim => RuleResult::Fail {
-                reason: format!(
-                    "requested {req} units but resource_limit is {lim}"
-                ),
+                reason: format!("requested {req} units but resource_limit is {lim}"),
             },
             _ => RuleResult::Pass,
         }
@@ -123,8 +141,12 @@ impl Rule for ResourceLimitNotExceeded {
 
 struct RiskScoreWithinBounds;
 impl Rule for RiskScoreWithinBounds {
-    fn name(&self) -> &str { "risk_score_within_bounds" }
-    fn category(&self) -> RuleCategory { RuleCategory::Data }
+    fn name(&self) -> &str {
+        "risk_score_within_bounds"
+    }
+    fn category(&self) -> RuleCategory {
+        RuleCategory::Data
+    }
     fn evaluate(&self, ctx: &RuleContext) -> RuleResult {
         match ctx.payload_f64("risk_score") {
             None => RuleResult::Pass, // no risk assessment → no constraint
@@ -135,14 +157,10 @@ impl Rule for RiskScoreWithinBounds {
             },
             Some(s) if s > 0.7 => RuleResult::Gate {
                 action: ctx.action.clone(),
-                rationale: format!(
-                    "risk_score {s:.2} > 0.7 — requires explicit approval"
-                ),
+                rationale: format!("risk_score {s:.2} > 0.7 — requires explicit approval"),
             },
             Some(s) if s > 0.5 => RuleResult::Warning {
-                message: format!(
-                    "risk_score {s:.2} is elevated (> 0.5); review before proceeding"
-                ),
+                message: format!("risk_score {s:.2} is elevated (> 0.5); review before proceeding"),
             },
             _ => RuleResult::Pass,
         }
@@ -151,8 +169,12 @@ impl Rule for RiskScoreWithinBounds {
 
 struct RateLimitNotExceeded;
 impl Rule for RateLimitNotExceeded {
-    fn name(&self) -> &str { "rate_limit_not_exceeded" }
-    fn category(&self) -> RuleCategory { RuleCategory::Data }
+    fn name(&self) -> &str {
+        "rate_limit_not_exceeded"
+    }
+    fn category(&self) -> RuleCategory {
+        RuleCategory::Data
+    }
     fn evaluate(&self, ctx: &RuleContext) -> RuleResult {
         const DEFAULT_LIMIT: u64 = 60;
         match ctx.payload_u64("calls_per_minute") {
@@ -196,7 +218,9 @@ impl Default for SafetyModule {
 }
 
 impl PraxisModule for SafetyModule {
-    fn name(&self) -> &str { "safety" }
+    fn name(&self) -> &str {
+        "safety"
+    }
 
     fn rules(&self) -> &[Box<dyn Rule>] {
         &self.rules
@@ -208,7 +232,8 @@ impl PraxisModule for SafetyModule {
             "Privilege levels are assigned by the orchestration layer, not self-reported.".into(),
             "Resource limits are configured per-deployment and injected into the payload.".into(),
             "Risk scores are computed by an independent risk-assessment subsystem.".into(),
-            "Rate limit enforcement is a last-resort signal — prefer circuit breakers upstream.".into(),
+            "Rate limit enforcement is a last-resort signal — prefer circuit breakers upstream."
+                .into(),
         ]
     }
 }
@@ -222,14 +247,19 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn module() -> SafetyModule { SafetyModule::default() }
+    fn module() -> SafetyModule {
+        SafetyModule::default()
+    }
 
     // ── Input: action_name_present ───────────────────────────────────────────
     #[test]
     fn action_name_present_passes() {
         let ctx = RuleContext::new("send_email", json!({}));
         let results = module().evaluate_category(&ctx, RuleCategory::Input);
-        let r = results.iter().find(|(n, _)| n == "action_name_present").unwrap();
+        let r = results
+            .iter()
+            .find(|(n, _)| n == "action_name_present")
+            .unwrap();
         assert_eq!(r.1, RuleResult::Pass);
     }
 
@@ -237,7 +267,10 @@ mod tests {
     fn action_name_present_fails_empty_action() {
         let ctx = RuleContext::new("", json!({}));
         let results = module().evaluate_category(&ctx, RuleCategory::Input);
-        let r = results.iter().find(|(n, _)| n == "action_name_present").unwrap();
+        let r = results
+            .iter()
+            .find(|(n, _)| n == "action_name_present")
+            .unwrap();
         assert!(matches!(r.1, RuleResult::Fail { .. }));
     }
 
@@ -246,7 +279,10 @@ mod tests {
     fn resource_owner_required_for_write_action() {
         let ctx = RuleContext::new("write_file", json!({}));
         let results = module().evaluate_category(&ctx, RuleCategory::Input);
-        let r = results.iter().find(|(n, _)| n == "resource_owner_declared").unwrap();
+        let r = results
+            .iter()
+            .find(|(n, _)| n == "resource_owner_declared")
+            .unwrap();
         assert!(matches!(r.1, RuleResult::Fail { .. }));
     }
 
@@ -254,7 +290,10 @@ mod tests {
     fn resource_owner_passes_for_non_mutation_action() {
         let ctx = RuleContext::new("read_file", json!({}));
         let results = module().evaluate_category(&ctx, RuleCategory::Input);
-        let r = results.iter().find(|(n, _)| n == "resource_owner_declared").unwrap();
+        let r = results
+            .iter()
+            .find(|(n, _)| n == "resource_owner_declared")
+            .unwrap();
         assert_eq!(r.1, RuleResult::Pass);
     }
 
@@ -262,7 +301,10 @@ mod tests {
     fn resource_owner_passes_when_set_for_write_action() {
         let ctx = RuleContext::new("write_file", json!({"resource_owner": "user-123"}));
         let results = module().evaluate_category(&ctx, RuleCategory::Input);
-        let r = results.iter().find(|(n, _)| n == "resource_owner_declared").unwrap();
+        let r = results
+            .iter()
+            .find(|(n, _)| n == "resource_owner_declared")
+            .unwrap();
         assert_eq!(r.1, RuleResult::Pass);
     }
 
@@ -271,7 +313,10 @@ mod tests {
     fn high_privilege_triggers_gate() {
         let ctx = RuleContext::new("admin_action", json!({"privilege_level": 3}));
         let results = module().evaluate_category(&ctx, RuleCategory::State);
-        let r = results.iter().find(|(n, _)| n == "escalation_required_for_high_privilege").unwrap();
+        let r = results
+            .iter()
+            .find(|(n, _)| n == "escalation_required_for_high_privilege")
+            .unwrap();
         assert!(matches!(r.1, RuleResult::Gate { .. }));
     }
 
@@ -279,24 +324,39 @@ mod tests {
     fn low_privilege_passes() {
         let ctx = RuleContext::new("read_action", json!({"privilege_level": 1}));
         let results = module().evaluate_category(&ctx, RuleCategory::State);
-        let r = results.iter().find(|(n, _)| n == "escalation_required_for_high_privilege").unwrap();
+        let r = results
+            .iter()
+            .find(|(n, _)| n == "escalation_required_for_high_privilege")
+            .unwrap();
         assert_eq!(r.1, RuleResult::Pass);
     }
 
     // ── State: resource_limit_not_exceeded ───────────────────────────────────
     #[test]
     fn resource_limit_passes_under_limit() {
-        let ctx = RuleContext::new("compute", json!({"requested_units": 50, "resource_limit": 100}));
+        let ctx = RuleContext::new(
+            "compute",
+            json!({"requested_units": 50, "resource_limit": 100}),
+        );
         let results = module().evaluate_category(&ctx, RuleCategory::State);
-        let r = results.iter().find(|(n, _)| n == "resource_limit_not_exceeded").unwrap();
+        let r = results
+            .iter()
+            .find(|(n, _)| n == "resource_limit_not_exceeded")
+            .unwrap();
         assert_eq!(r.1, RuleResult::Pass);
     }
 
     #[test]
     fn resource_limit_fails_over_limit() {
-        let ctx = RuleContext::new("compute", json!({"requested_units": 150, "resource_limit": 100}));
+        let ctx = RuleContext::new(
+            "compute",
+            json!({"requested_units": 150, "resource_limit": 100}),
+        );
         let results = module().evaluate_category(&ctx, RuleCategory::State);
-        let r = results.iter().find(|(n, _)| n == "resource_limit_not_exceeded").unwrap();
+        let r = results
+            .iter()
+            .find(|(n, _)| n == "resource_limit_not_exceeded")
+            .unwrap();
         assert!(matches!(r.1, RuleResult::Fail { .. }));
     }
 
@@ -305,7 +365,10 @@ mod tests {
     fn risk_score_above_0_9_blocks() {
         let ctx = RuleContext::new("deploy", json!({"risk_score": 0.95}));
         let results = module().evaluate_category(&ctx, RuleCategory::Data);
-        let r = results.iter().find(|(n, _)| n == "risk_score_within_bounds").unwrap();
+        let r = results
+            .iter()
+            .find(|(n, _)| n == "risk_score_within_bounds")
+            .unwrap();
         assert!(matches!(r.1, RuleResult::Fail { .. }));
     }
 
@@ -313,7 +376,10 @@ mod tests {
     fn risk_score_above_0_7_gates() {
         let ctx = RuleContext::new("deploy", json!({"risk_score": 0.8}));
         let results = module().evaluate_category(&ctx, RuleCategory::Data);
-        let r = results.iter().find(|(n, _)| n == "risk_score_within_bounds").unwrap();
+        let r = results
+            .iter()
+            .find(|(n, _)| n == "risk_score_within_bounds")
+            .unwrap();
         assert!(matches!(r.1, RuleResult::Gate { .. }));
     }
 

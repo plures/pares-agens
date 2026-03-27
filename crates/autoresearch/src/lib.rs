@@ -152,7 +152,9 @@ impl ExperimentTarget {
             Self::Config { path } => format!("config:{path}"),
             Self::SourceFile { path } => format!("file:{path}"),
             Self::Hyperparameters { name } => format!("hyperparams:{name}"),
-            Self::Command { template } => format!("command:{}", &template[..template.len().min(40)]),
+            Self::Command { template } => {
+                format!("command:{}", &template[..template.len().min(40)])
+            }
         }
     }
 }

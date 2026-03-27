@@ -71,8 +71,7 @@ pub async fn detect_docker_runner() -> Result<bool, String> {
 /// - `Err(_)`    — provider error or network failure (retryable)
 #[tauri::command]
 pub async fn validate_api_key(provider: String, api_key: String) -> Result<bool, String> {
-    let url = models_endpoint(&provider)
-        .ok_or_else(|| format!("Unknown provider: {provider}"))?;
+    let url = models_endpoint(&provider).ok_or_else(|| format!("Unknown provider: {provider}"))?;
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
@@ -88,7 +87,10 @@ pub async fn validate_api_key(provider: String, api_key: String) -> Result<bool,
         client.get(url).bearer_auth(&api_key)
     };
 
-    let resp = req.send().await.map_err(|e| format!("Network error: {e}"))?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {e}"))?;
 
     match resp.status().as_u16() {
         200..=299 => Ok(true),
@@ -108,10 +110,7 @@ pub async fn is_wizard_completed(state: State<'_, AppState>) -> Result<bool, Str
 /// The frontend is responsible for writing `localStorage("wizard_completed")`
 /// so that the wizard is suppressed on the next launch without an IPC call.
 #[tauri::command]
-pub async fn complete_wizard(
-    settings: Settings,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn complete_wizard(settings: Settings, state: State<'_, AppState>) -> Result<(), String> {
     *state.settings.lock().await = settings;
     *state.wizard_completed.lock().await = true;
 

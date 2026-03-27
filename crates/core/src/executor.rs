@@ -1,10 +1,8 @@
 use tracing::{debug, info, warn};
 
 use crate::{
-    event::Event, 
-    optimization::OptimizationSafetyGate, 
-    procedure::ProcedureRegistry, 
-    source::EventSource
+    event::Event, optimization::OptimizationSafetyGate, procedure::ProcedureRegistry,
+    source::EventSource,
 };
 
 /// Drives the reactive event loop with optimization safety enforcement.
@@ -25,14 +23,17 @@ pub struct Executor {
 impl Executor {
     /// Create a new executor with the given procedure registry.
     pub fn new(registry: ProcedureRegistry) -> Self {
-        Self { 
+        Self {
             registry,
             safety_gate: OptimizationSafetyGate::new(),
         }
     }
 
     /// Create a new executor with custom safety gate.
-    pub fn with_safety_gate(registry: ProcedureRegistry, safety_gate: OptimizationSafetyGate) -> Self {
+    pub fn with_safety_gate(
+        registry: ProcedureRegistry,
+        safety_gate: OptimizationSafetyGate,
+    ) -> Self {
         Self {
             registry,
             safety_gate,
@@ -60,12 +61,15 @@ impl Executor {
 
         for handler in handlers {
             let procedure_name = handler.name();
-            info!(procedure = procedure_name, kind, "executing procedure with safety check");
-            
+            info!(
+                procedure = procedure_name,
+                kind, "executing procedure with safety check"
+            );
+
             // Apply optimization safety check
             let action = format!("execute_procedure:{}", procedure_name);
             let safety = self.safety_gate.check_optimization_safety(&action);
-            
+
             match safety {
                 crate::optimization::OptimizationSafety::Ready => {
                     info!(procedure = procedure_name, "procedure execution permitted");
@@ -84,7 +88,7 @@ impl Executor {
                         Some(evidence_req.id.clone()),
                     );
                     self.safety_gate.record_telemetry(telemetry);
-                    
+
                     warn!(
                         procedure = procedure_name,
                         evidence_request_id = %evidence_req.id,
@@ -98,7 +102,7 @@ impl Executor {
                         None,
                     );
                     self.safety_gate.record_telemetry(telemetry);
-                    
+
                     warn!(
                         procedure = procedure_name,
                         "procedure execution blocked: unsafe solution"
@@ -142,10 +146,7 @@ impl Executor {
 
             iterations += 1;
             if max_iterations > 0 && iterations >= max_iterations {
-                warn!(
-                    iterations,
-                    "reached max_iterations, stopping event loop"
-                );
+                warn!(iterations, "reached max_iterations, stopping event loop");
                 break;
             }
         }

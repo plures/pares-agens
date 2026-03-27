@@ -12,10 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::{
-    backend::ModelBackend,
-    config::GpuConfig,
-    error::GpuError,
-    eviction::LruEviction,
+    backend::ModelBackend, config::GpuConfig, error::GpuError, eviction::LruEviction,
     kv_cache::KvCacheManager,
 };
 
@@ -213,13 +210,13 @@ impl GpuModelPool {
         prompt: &str,
         params: InferenceParams,
     ) -> Result<String, GpuError> {
-        let backend = self
-            .loaded
-            .get(model_id)
-            .cloned()
-            .ok_or_else(|| GpuError::ModelNotLoaded {
-                model_id: model_id.to_owned(),
-            })?;
+        let backend =
+            self.loaded
+                .get(model_id)
+                .cloned()
+                .ok_or_else(|| GpuError::ModelNotLoaded {
+                    model_id: model_id.to_owned(),
+                })?;
 
         // Update access order.
         self.eviction.touch(model_id);
@@ -267,14 +264,12 @@ impl GpuModelPool {
             }
 
             // Evict the LRU candidate.
-            let candidate = self
-                .eviction
-                .evict_candidate()
-                .map(str::to_owned)
-                .ok_or(GpuError::InsufficientVram {
+            let candidate = self.eviction.evict_candidate().map(str::to_owned).ok_or(
+                GpuError::InsufficientVram {
                     needed_mb,
                     available_mb: self.vram_available_mb(),
-                })?;
+                },
+            )?;
 
             tracing::debug!(model_id = %candidate, "evicting LRU model from GPU pool");
             self.unload(&candidate);

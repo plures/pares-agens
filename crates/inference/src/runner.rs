@@ -123,8 +123,7 @@ impl BitNetLocalRunner {
 
         #[cfg(feature = "native")]
         {
-            let runner =
-                pares_agens_bitnet::BitNetRunner::load(path).map_err(from_bitnet)?;
+            let runner = pares_agens_bitnet::BitNetRunner::load(path).map_err(from_bitnet)?;
             Ok(Self {
                 model_id,
                 model_path,
@@ -239,13 +238,12 @@ fn run_generation(
 
         if let Some(pos) = stop_pos {
             // Send only the portion before the stop sequence.
-            if pos > sent_up_to {
-                if tx
+            if pos > sent_up_to
+                && tx
                     .blocking_send(Ok(accumulated[sent_up_to..pos].to_string()))
                     .is_err()
-                {
-                    return Err(InferenceError::ChannelClosed);
-                }
+            {
+                return Err(InferenceError::ChannelClosed);
             }
             return Ok(());
         }

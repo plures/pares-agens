@@ -83,23 +83,27 @@ fn streaming_body(chunks: &[&str]) -> String {
         // Override finish_reason for last chunk
         let mut chunk_obj = chunk.as_object().unwrap().clone();
         if i == chunks.len() - 1 {
-            let choices = chunk_obj.get_mut("choices").unwrap().as_array_mut().unwrap();
-            choices[0].as_object_mut().unwrap().insert(
-                "finish_reason".to_string(),
-                json!("stop"),
-            );
+            let choices = chunk_obj
+                .get_mut("choices")
+                .unwrap()
+                .as_array_mut()
+                .unwrap();
+            choices[0]
+                .as_object_mut()
+                .unwrap()
+                .insert("finish_reason".to_string(), json!("stop"));
         }
-        body.push_str(&format!("data: {}\n\n", serde_json::to_string(&chunk_obj).unwrap()));
+        body.push_str(&format!(
+            "data: {}\n\n",
+            serde_json::to_string(&chunk_obj).unwrap()
+        ));
     }
     body.push_str("data: [DONE]\n\n");
     body
 }
 
 fn single_provider_router(server: &MockServer) -> ModelRouter {
-    let config = RouterConfig::single(
-        "mock",
-        ProviderConfig::new(server.uri(), None),
-    );
+    let config = RouterConfig::single("mock", ProviderConfig::new(server.uri(), None));
     ModelRouter::new(config)
 }
 
@@ -119,12 +123,12 @@ async fn test_chat_completion_success() {
         .await;
 
     let router = single_provider_router(&server);
-    let req = ChatCompletionRequest::new(
-        "gpt-4o",
-        vec![ChatMessage::text(Role::User, "Hi")],
-    );
+    let req = ChatCompletionRequest::new("gpt-4o", vec![ChatMessage::text(Role::User, "Hi")]);
 
-    let resp = router.chat(&req).await.expect("chat completion should succeed");
+    let resp = router
+        .chat(&req)
+        .await
+        .expect("chat completion should succeed");
     assert_eq!(resp.choices[0].message.content.as_deref(), Some("Hello!"));
     assert_eq!(resp.choices[0].finish_reason.as_deref(), Some("stop"));
 }
@@ -146,13 +150,16 @@ async fn test_api_key_forwarded() {
         ProviderConfig::new(server.uri(), Some("sk-test".into())),
     );
     let router = ModelRouter::new(config);
-    let req = ChatCompletionRequest::new(
-        "gpt-4o",
-        vec![ChatMessage::text(Role::User, "ping")],
-    );
+    let req = ChatCompletionRequest::new("gpt-4o", vec![ChatMessage::text(Role::User, "ping")]);
 
-    let resp = router.chat(&req).await.expect("should accept authenticated request");
-    assert_eq!(resp.choices[0].message.content.as_deref(), Some("Authenticated!"));
+    let resp = router
+        .chat(&req)
+        .await
+        .expect("should accept authenticated request");
+    assert_eq!(
+        resp.choices[0].message.content.as_deref(),
+        Some("Authenticated!")
+    );
 }
 
 /// The client returns an error on a 4xx API response.
@@ -167,10 +174,7 @@ async fn test_api_error_4xx() {
         .await;
 
     let router = single_provider_router(&server);
-    let req = ChatCompletionRequest::new(
-        "gpt-4o",
-        vec![ChatMessage::text(Role::User, "hello")],
-    );
+    let req = ChatCompletionRequest::new("gpt-4o", vec![ChatMessage::text(Role::User, "hello")]);
 
     let err = router.chat(&req).await.unwrap_err();
     match err {
@@ -191,10 +195,7 @@ async fn test_api_error_5xx() {
         .await;
 
     let router = single_provider_router(&server);
-    let req = ChatCompletionRequest::new(
-        "gpt-4o",
-        vec![ChatMessage::text(Role::User, "hello")],
-    );
+    let req = ChatCompletionRequest::new("gpt-4o", vec![ChatMessage::text(Role::User, "hello")]);
 
     let err = router.chat(&req).await.unwrap_err();
     match err {
@@ -217,7 +218,10 @@ async fn test_tool_calling() {
     let router = single_provider_router(&server);
     let mut req = ChatCompletionRequest::new(
         "gpt-4o",
-        vec![ChatMessage::text(Role::User, "What is the weather in London?")],
+        vec![ChatMessage::text(
+            Role::User,
+            "What is the weather in London?",
+        )],
     );
     req.tools = Some(vec![Tool::function(
         "get_weather",
@@ -228,7 +232,11 @@ async fn test_tool_calling() {
     let resp = router.chat(&req).await.expect("tool call should succeed");
     let choice = &resp.choices[0];
     assert_eq!(choice.finish_reason.as_deref(), Some("tool_calls"));
-    let tool_calls = choice.message.tool_calls.as_ref().expect("tool_calls present");
+    let tool_calls = choice
+        .message
+        .tool_calls
+        .as_ref()
+        .expect("tool_calls present");
     assert_eq!(tool_calls[0].function.name, "get_weather");
     assert_eq!(tool_calls[0].id, "call_abc123");
 }
@@ -254,23 +262,31 @@ async fn test_routing_by_model_prefix() {
 
     let config = RouterConfig {
         providers: HashMap::from([
-            ("openai".to_string(), ProviderConfig::new(openai_server.uri(), Some("sk-key".into()))),
-            ("local".to_string(), ProviderConfig::new(local_server.uri(), None)),
+            (
+                "openai".to_string(),
+                ProviderConfig::new(openai_server.uri(), Some("sk-key".into())),
+            ),
+            (
+                "local".to_string(),
+                ProviderConfig::new(local_server.uri(), None),
+            ),
         ]),
-        rules: vec![
-            RoutingRule { model_prefix: Some("gpt-".into()), provider: "openai".into() },
-        ],
+        rules: vec![RoutingRule {
+            model_prefix: Some("gpt-".into()),
+            provider: "openai".into(),
+        }],
         default_provider: "local".into(),
     };
     let router = ModelRouter::new(config);
 
     // "gpt-4o" matches the prefix rule → openai server
-    let gpt_req = ChatCompletionRequest::new(
-        "gpt-4o",
-        vec![ChatMessage::text(Role::User, "hello")],
-    );
+    let gpt_req =
+        ChatCompletionRequest::new("gpt-4o", vec![ChatMessage::text(Role::User, "hello")]);
     let gpt_resp = router.chat(&gpt_req).await.unwrap();
-    assert_eq!(gpt_resp.choices[0].message.content.as_deref(), Some("from openai"));
+    assert_eq!(
+        gpt_resp.choices[0].message.content.as_deref(),
+        Some("from openai")
+    );
 
     // "ai/mistral-nemo" does not match → falls back to local server
     let local_req = ChatCompletionRequest::new(
@@ -278,7 +294,10 @@ async fn test_routing_by_model_prefix() {
         vec![ChatMessage::text(Role::User, "hello")],
     );
     let local_resp = router.chat(&local_req).await.unwrap();
-    assert_eq!(local_resp.choices[0].message.content.as_deref(), Some("from local"));
+    assert_eq!(
+        local_resp.choices[0].message.content.as_deref(),
+        Some("from local")
+    );
 }
 
 /// SSE streaming returns chunks that can be collected into a full response.
@@ -300,10 +319,8 @@ async fn test_streaming_chat_completion() {
         .await;
 
     let router = single_provider_router(&server);
-    let req = ChatCompletionRequest::new(
-        "gpt-4o",
-        vec![ChatMessage::text(Role::User, "Say hello")],
-    );
+    let req =
+        ChatCompletionRequest::new("gpt-4o", vec![ChatMessage::text(Role::User, "Say hello")]);
 
     let stream = router.chat_stream(&req).await.expect("stream should open");
     let chunks: Vec<_> = stream.collect().await;
@@ -343,13 +360,13 @@ async fn test_provider_not_found() {
 /// Single-provider config with no rules is permitted on the Free tier.
 #[test]
 fn test_new_multi_single_provider_free_tier_allowed() {
-    let config = RouterConfig::single(
-        "local",
-        ProviderConfig::new("http://localhost:12434", None),
-    );
+    let config = RouterConfig::single("local", ProviderConfig::new("http://localhost:12434", None));
     let license = pares_agens_core::license::License::free();
     let result = ModelRouter::new_multi(config, &license);
-    assert!(result.is_ok(), "single provider with no rules should be allowed on Free tier");
+    assert!(
+        result.is_ok(),
+        "single provider with no rules should be allowed on Free tier"
+    );
 }
 
 /// Multiple providers on Free tier must be rejected.
@@ -366,7 +383,10 @@ fn test_new_multi_multiple_providers_blocked_on_free_tier() {
     let license = pares_agens_core::license::License::free();
     let result = ModelRouter::new_multi(config, &license);
     assert!(
-        matches!(result, Err(pares_agens_core::license::LicenseError::FeatureNotAvailable { .. })),
+        matches!(
+            result,
+            Err(pares_agens_core::license::LicenseError::FeatureNotAvailable { .. })
+        ),
         "multiple providers should be blocked on Free tier"
     );
 }
@@ -375,14 +395,23 @@ fn test_new_multi_multiple_providers_blocked_on_free_tier() {
 #[test]
 fn test_new_multi_routing_rules_blocked_on_free_tier() {
     let config = RouterConfig {
-        providers: HashMap::from([("local".to_string(), ProviderConfig::new("http://host", None))]),
-        rules: vec![RoutingRule { model_prefix: Some("gpt-".into()), provider: "local".into() }],
+        providers: HashMap::from([(
+            "local".to_string(),
+            ProviderConfig::new("http://host", None),
+        )]),
+        rules: vec![RoutingRule {
+            model_prefix: Some("gpt-".into()),
+            provider: "local".into(),
+        }],
         default_provider: "local".into(),
     };
     let license = pares_agens_core::license::License::free();
     let result = ModelRouter::new_multi(config, &license);
     assert!(
-        matches!(result, Err(pares_agens_core::license::LicenseError::FeatureNotAvailable { .. })),
+        matches!(
+            result,
+            Err(pares_agens_core::license::LicenseError::FeatureNotAvailable { .. })
+        ),
         "routing rules should be blocked on Free tier"
     );
 }
@@ -392,14 +421,25 @@ fn test_new_multi_routing_rules_blocked_on_free_tier() {
 fn test_new_multi_multiple_providers_allowed_on_pro_tier() {
     let config = RouterConfig {
         providers: HashMap::from([
-            ("openai".to_string(), ProviderConfig::new("http://openai", Some("key".into()))),
-            ("local".to_string(), ProviderConfig::new("http://local", None)),
+            (
+                "openai".to_string(),
+                ProviderConfig::new("http://openai", Some("key".into())),
+            ),
+            (
+                "local".to_string(),
+                ProviderConfig::new("http://local", None),
+            ),
         ]),
-        rules: vec![RoutingRule { model_prefix: Some("gpt-".into()), provider: "openai".into() }],
+        rules: vec![RoutingRule {
+            model_prefix: Some("gpt-".into()),
+            provider: "openai".into(),
+        }],
         default_provider: "local".into(),
     };
     let license = pares_agens_core::license::License::pro(None);
     let result = ModelRouter::new_multi(config, &license);
-    assert!(result.is_ok(), "multiple providers should be allowed on Pro tier");
+    assert!(
+        result.is_ok(),
+        "multiple providers should be allowed on Pro tier"
+    );
 }
-

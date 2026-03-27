@@ -142,7 +142,9 @@ impl MutationSet {
     /// Create a `MutationSet` from a single operator.
     #[must_use]
     pub fn single(op: MutationOperator) -> Self {
-        Self { operators: vec![op] }
+        Self {
+            operators: vec![op],
+        }
     }
 
     /// Return a combined description of all mutations.
@@ -251,7 +253,10 @@ mod tests {
         overrides.insert("lr".into(), json!(0.001));
         let mut previous = HashMap::new();
         previous.insert("lr".into(), json!(0.01));
-        let op = MutationOperator::HyperparamOverride { overrides, previous };
+        let op = MutationOperator::HyperparamOverride {
+            overrides,
+            previous,
+        };
         let diff = op.to_diff().unwrap();
         let back: MutationOperator = serde_json::from_value(diff).unwrap();
         assert_eq!(op, back);

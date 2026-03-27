@@ -135,7 +135,13 @@ mod tests {
 
     #[test]
     fn new_event_captures_fields() {
-        let ev = AuditEvent::new(EventKind::ToolExec, "agent-x", "tool:search", "query len: 42", true);
+        let ev = AuditEvent::new(
+            EventKind::ToolExec,
+            "agent-x",
+            "tool:search",
+            "query len: 42",
+            true,
+        );
         assert_eq!(ev.kind, EventKind::ToolExec);
         assert_eq!(ev.actor, "agent-x");
         assert_eq!(ev.destination, "tool:search");
@@ -146,10 +152,17 @@ mod tests {
 
     #[test]
     fn serialise_round_trip() {
-        let ev = AuditEvent::new(EventKind::ChannelSend, "svc", "telegram", "msg len: 10", false);
+        let ev = AuditEvent::new(
+            EventKind::ChannelSend,
+            "svc",
+            "telegram",
+            "msg len: 10",
+            false,
+        );
         let json = serde_json::to_string(&ev).unwrap();
         let restored: AuditEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(ev.id, restored.id);
         assert_eq!(ev.kind, restored.kind);
         assert_eq!(ev.pii_flag, restored.pii_flag);
-    }}
+    }
+}

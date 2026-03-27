@@ -9,9 +9,7 @@ pub enum InferenceError {
     ///
     /// Enable it with `cargo build --features native` (requires the
     /// `third_party/bitnet` submodule and CMake ≥ 3.21).
-    #[error(
-        "native inference is unavailable: recompile with the `native` feature enabled"
-    )]
+    #[error("native inference is unavailable: recompile with the `native` feature enabled")]
     NativeUnavailable,
 
     /// The model file could not be loaded (file not found, wrong format, etc.).

@@ -179,7 +179,12 @@ mod tests {
     #[tokio::test]
     async fn local_hit_returns_correct_payload() {
         let mut cache = make_cache();
-        cache.insert("a".into(), b"local data".to_vec(), "2026-01-01T00:00:00Z".to_string(), 0.9);
+        cache.insert(
+            "a".into(),
+            b"local data".to_vec(),
+            "2026-01-01T00:00:00Z".to_string(),
+            0.9,
+        );
 
         let fetcher = SimulatedPeerFetcher::empty();
         let mut router = FetchRouter::new(fetcher);
@@ -199,8 +204,13 @@ mod tests {
         let mut router = FetchRouter::new(fetcher);
         let mut metrics = CacheMetrics::new();
 
-        let result = router.get("remote", &mut cache, &mut metrics).await.unwrap();
-        assert!(matches!(result, FetchResult::RemoteFetch { payload, .. } if payload == b"peer payload"));
+        let result = router
+            .get("remote", &mut cache, &mut metrics)
+            .await
+            .unwrap();
+        assert!(
+            matches!(result, FetchResult::RemoteFetch { payload, .. } if payload == b"peer payload")
+        );
         assert_eq!(metrics.remote_fetches(), 1);
     }
 

@@ -335,7 +335,10 @@ mod tests {
         let key = SyncKey::generate();
         let display = format!("{key}");
         // Must not contain the full key value.
-        assert!(!display.contains(key.as_hex()), "Display leaked the full key");
+        assert!(
+            !display.contains(key.as_hex()),
+            "Display leaked the full key"
+        );
         assert!(display.starts_with("SyncKey("));
     }
 
@@ -344,7 +347,10 @@ mod tests {
         let key = SyncKey::generate();
         let code = key.to_pairing_code();
         assert_eq!(code.as_str().len(), 6);
-        assert!(code.as_str().chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()));
+        assert!(code
+            .as_str()
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()));
     }
 
     #[test]
@@ -392,12 +398,8 @@ mod tests {
     #[test]
     fn pairing_session_from_key_round_trips_sync_key() {
         let original = PairingSession::new("laptop").unwrap();
-        let reconstructed =
-            PairingSession::from_key(original.sync_key.as_hex(), "laptop").unwrap();
-        assert_eq!(
-            reconstructed.sync_key.as_hex(),
-            original.sync_key.as_hex()
-        );
+        let reconstructed = PairingSession::from_key(original.sync_key.as_hex(), "laptop").unwrap();
+        assert_eq!(reconstructed.sync_key.as_hex(), original.sync_key.as_hex());
         assert_eq!(
             reconstructed.pairing_code.as_str(),
             original.pairing_code.as_str()

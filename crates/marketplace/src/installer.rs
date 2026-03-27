@@ -91,7 +91,9 @@ impl Installer {
         // 3. Derive install path and record.
         let install_path = format!(
             "{}/{}-{}",
-            self.install_dir, metadata.id.replace('/', "-"), metadata.version
+            self.install_dir,
+            metadata.id.replace('/', "-"),
+            metadata.version
         );
 
         let installed_skill = InstalledSkill {

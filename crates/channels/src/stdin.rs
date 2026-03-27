@@ -46,7 +46,8 @@ impl ChannelAdapter for StdinAdapter {
             let event = Event::Message {
                 id: Uuid::new_v4().to_string(),
                 content: line,
-                channel: "stdin".to_string(), sender: self.from.clone(),
+                channel: "stdin".to_string(),
+                sender: self.from.clone(),
             };
             if let Some(Event::ModelResponse { content, .. }) = on_event(event).await {
                 println!("{}", content);

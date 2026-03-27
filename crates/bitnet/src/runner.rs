@@ -412,9 +412,8 @@ impl Iterator for TokenStream {
             // SAFETY: `self.ctx_ptr` is a valid, live context pointer (the
             // lifetime bound on `BitNetContext` prevents the context from
             // being dropped before the stream).
-            let token = unsafe {
-                pares_agens_bitnet_sys::bitnet_sample(self.ctx_ptr, &self.params)
-            };
+            let token =
+                unsafe { pares_agens_bitnet_sys::bitnet_sample(self.ctx_ptr, &self.params) };
 
             if token == pares_agens_bitnet_sys::BITNET_TOKEN_EOS {
                 return None;
@@ -426,9 +425,7 @@ impl Iterator for TokenStream {
 
             // Feed the sampled token back so the next step attends to it.
             // SAFETY: single i32 value; `self.ctx_ptr` valid.
-            let rc = unsafe {
-                pares_agens_bitnet_sys::bitnet_eval(self.ctx_ptr, &token, 1)
-            };
+            let rc = unsafe { pares_agens_bitnet_sys::bitnet_eval(self.ctx_ptr, &token, 1) };
 
             if rc != 0 {
                 return Some(Err(InferenceError::Eval(rc)));

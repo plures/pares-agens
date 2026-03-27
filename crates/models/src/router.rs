@@ -74,8 +74,7 @@ impl ModelRouter {
         license: &pares_agens_core::license::License,
     ) -> Result<Self, pares_agens_core::license::LicenseError> {
         if config.providers.len() > 1 || !config.rules.is_empty() {
-            license
-                .check_feature(pares_agens_core::license::Feature::MultipleModelProviders)?;
+            license.check_feature(pares_agens_core::license::Feature::MultipleModelProviders)?;
         }
         Ok(Self::new(config))
     }
@@ -115,7 +114,9 @@ impl ModelRouter {
         request: &ChatCompletionRequest,
     ) -> Result<impl Stream<Item = Result<ChatCompletionChunk, Error>>, Error> {
         let provider = self.select_provider(&request.model).to_owned();
-        self.get_client(&provider)?.chat_completion_stream(request).await
+        self.get_client(&provider)?
+            .chat_completion_stream(request)
+            .await
     }
 
     /// Reload the router from a [`crate::config::ConfigStore`].
@@ -136,12 +137,24 @@ mod tests {
     fn make_router_with_rules() -> ModelRouter {
         let config = RouterConfig {
             providers: HashMap::from([
-                ("openai".to_string(), ProviderConfig::new("http://openai", Some("key".into()))),
-                ("local".to_string(), ProviderConfig::new("http://local", None)),
+                (
+                    "openai".to_string(),
+                    ProviderConfig::new("http://openai", Some("key".into())),
+                ),
+                (
+                    "local".to_string(),
+                    ProviderConfig::new("http://local", None),
+                ),
             ]),
             rules: vec![
-                RoutingRule { model_prefix: Some("gpt-".into()), provider: "openai".into() },
-                RoutingRule { model_prefix: Some("claude-".into()), provider: "openai".into() },
+                RoutingRule {
+                    model_prefix: Some("gpt-".into()),
+                    provider: "openai".into(),
+                },
+                RoutingRule {
+                    model_prefix: Some("claude-".into()),
+                    provider: "openai".into(),
+                },
             ],
             default_provider: "local".into(),
         };

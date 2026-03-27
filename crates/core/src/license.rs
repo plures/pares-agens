@@ -195,7 +195,10 @@ impl License {
         if self.status.tier != LicenseTier::Pro {
             return false;
         }
-        self.status.expires_at.map(|exp| exp > Utc::now()).unwrap_or(true)
+        self.status
+            .expires_at
+            .map(|exp| exp > Utc::now())
+            .unwrap_or(true)
     }
 
     /// Assert that `feature` is available under the current license.
@@ -208,7 +211,9 @@ impl License {
     /// call to avoid stale TOCTOU state.
     pub fn check_feature(&self, feature: Feature) -> Result<(), LicenseError> {
         if self.status.tier != LicenseTier::Pro {
-            return Err(LicenseError::FeatureNotAvailable { feature: feature.name().to_owned() });
+            return Err(LicenseError::FeatureNotAvailable {
+                feature: feature.name().to_owned(),
+            });
         }
         if let Some(exp) = self.status.expires_at {
             if exp <= Utc::now() {
@@ -250,7 +255,9 @@ pub struct FixedKeyValidator {
 impl FixedKeyValidator {
     /// Create a validator with the given expected Pro key.
     pub fn new(pro_key: impl Into<String>) -> Self {
-        Self { pro_key: pro_key.into() }
+        Self {
+            pro_key: pro_key.into(),
+        }
     }
 }
 
@@ -262,7 +269,9 @@ impl LicenseValidator for FixedKeyValidator {
         if keys_match {
             Ok(License::pro(None))
         } else {
-            Err(LicenseError::InvalidKey { reason: "key does not match".into() })
+            Err(LicenseError::InvalidKey {
+                reason: "key does not match".into(),
+            })
         }
     }
 }
@@ -356,7 +365,9 @@ impl LicenseValidator for PolarValidator {
     async fn validate(&self, key: &str) -> Result<License, LicenseError> {
         let trimmed = key.trim();
         if trimmed.is_empty() {
-            return Err(LicenseError::InvalidKey { reason: "key is empty".into() });
+            return Err(LicenseError::InvalidKey {
+                reason: "key is empty".into(),
+            });
         }
 
         let resp = self
@@ -448,7 +459,10 @@ mod tests {
     fn pro_license_with_past_expiry_is_invalid() {
         let past = Utc::now() - chrono::TimeDelta::days(1);
         let lic = License::pro(Some(past));
-        assert!(!lic.is_pro(), "expired license should not be treated as pro");
+        assert!(
+            !lic.is_pro(),
+            "expired license should not be treated as pro"
+        );
         assert!(!lic.status().valid);
     }
 
@@ -467,7 +481,10 @@ mod tests {
         for feature in features {
             let name = feature.name();
             let result = lic.check_feature(feature);
-            assert!(result.is_err(), "free license should block feature '{name}'");
+            assert!(
+                result.is_err(),
+                "free license should block feature '{name}'"
+            );
             assert!(
                 matches!(result, Err(LicenseError::FeatureNotAvailable { .. })),
                 "expected FeatureNotAvailable for '{name}'"
@@ -509,7 +526,10 @@ mod tests {
         let json = serde_json::to_value(lic.status()).expect("should serialize");
         assert_eq!(json["tier"], "pro");
         assert_eq!(json["valid"], true);
-        assert!(json.get("expires_at").is_none(), "None expires_at should be omitted");
+        assert!(
+            json.get("expires_at").is_none(),
+            "None expires_at should be omitted"
+        );
     }
 
     #[test]
@@ -535,7 +555,10 @@ mod tests {
     #[tokio::test]
     async fn fixed_validator_accepts_matching_key() {
         let validator = FixedKeyValidator::new("secret-pro-key");
-        let lic = validator.validate("secret-pro-key").await.expect("should validate");
+        let lic = validator
+            .validate("secret-pro-key")
+            .await
+            .expect("should validate");
         assert!(lic.is_pro());
     }
 
@@ -549,7 +572,10 @@ mod tests {
     #[tokio::test]
     async fn fixed_validator_trims_whitespace() {
         let validator = FixedKeyValidator::new("my-key");
-        let lic = validator.validate("  my-key  ").await.expect("should trim and validate");
+        let lic = validator
+            .validate("  my-key  ")
+            .await
+            .expect("should trim and validate");
         assert!(lic.is_pro());
     }
 
@@ -583,7 +609,10 @@ mod tests {
             other => other,
         };
 
-        assert!(result.is_ok(), "grace period should allow offline use within window");
+        assert!(
+            result.is_ok(),
+            "grace period should allow offline use within window"
+        );
         assert!(result.unwrap().is_pro());
     }
 
