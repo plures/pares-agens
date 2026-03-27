@@ -16,6 +16,8 @@ pub mod forgetting;
 pub mod quality;
 /// Memory store trait and backend implementations.
 pub mod store;
+/// Correction detection and learning engine.
+pub mod correction;
 
 use std::sync::Arc;
 
@@ -257,6 +259,12 @@ fn format_exchange(exchange: &Exchange) -> String {
 /// Heuristic category detection based on content keywords.
 fn detect_category(text: &str) -> MemoryCategory {
     let lower = text.to_lowercase();
+
+    // Check for correction signals first (highest priority).
+    if correction::is_correction(&lower) {
+        return MemoryCategory::Correction;
+    }
+
     if lower.contains("error") || lower.contains("fix") || lower.contains("bug") || lower.contains("panic") {
         MemoryCategory::ErrorFix
     } else if lower.contains("fn ")
@@ -383,7 +391,7 @@ mod tests {
             .recall(
                 "snake_case naming convention",
                 5,
-                &[MemoryCategory::Preference, MemoryCategory::Conversation],
+                &[MemoryCategory::Preference, MemoryCategory::Conversation, MemoryCategory::Correction],
             )
             .await
             .unwrap();
@@ -432,7 +440,7 @@ mod tests {
             MemoryCategory::ErrorFix
         );
         assert_eq!(
-            detect_category("I prefer tabs over spaces always use tabs"),
+            detect_category("my convention is tabs over spaces, a preference"),
             MemoryCategory::Preference
         );
         assert_eq!(
@@ -442,6 +450,22 @@ mod tests {
         assert_eq!(
             detect_category("what is the weather today"),
             MemoryCategory::Conversation
+        );
+    }
+
+    #[test]
+    fn detect_category_classifies_corrections() {
+        assert_eq!(
+            detect_category("don't use unwrap in production"),
+            MemoryCategory::Correction
+        );
+        assert_eq!(
+            detect_category("I prefer spaces over tabs from now on"),
+            MemoryCategory::Correction
+        );
+        assert_eq!(
+            detect_category("Actually, that's wrong — use Vec instead"),
+            MemoryCategory::Correction
         );
     }
 }

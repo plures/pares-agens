@@ -249,6 +249,51 @@ impl GuidanceService {
         self.spans.lock().unwrap().clear();
         self.events.lock().unwrap().clear();
     }
+
+    /// Inject a guidance entry derived from a user correction.
+    ///
+    /// The entry is created with the [`GuidanceCategory::Rules`] category,
+    /// confidence 1.0, and priority 1 (highest) so it surfaces prominently in
+    /// future contexts.  The `correction_id` is recorded as a source span for
+    /// traceability.
+    ///
+    /// Returns the guidance entry ID.
+    pub fn inject_correction_guidance(
+        &self,
+        rule_summary: &str,
+        correction_id: &str,
+    ) -> String {
+        let entry = GuidanceEntry {
+            id: String::new(), // auto-generated
+            category: GuidanceCategory::Rules,
+            content: rule_summary.to_string(),
+            confidence: 1.0,
+            source_spans: vec![correction_id.to_string()],
+            generated_at: String::new(), // auto-generated
+            priority: 1,
+        };
+        let id = self.add_guidance(entry);
+
+        let event = AnalysisEvent {
+            id: Uuid::new_v4().to_string(),
+            event_type: "correction_applied".to_string(),
+            timestamp: Utc::now().to_rfc3339(),
+            guidance_updated: 1,
+            analyzed_memory_ids: vec![correction_id.to_string()],
+        };
+        self.record_analysis_event(event);
+
+        id
+    }
+
+    /// Remove a guidance entry by ID.  Returns `true` if the entry existed.
+    pub fn remove_guidance(&self, guidance_id: &str) -> bool {
+        self.entries
+            .lock()
+            .unwrap()
+            .remove(guidance_id)
+            .is_some()
+    }
 }
 
 #[cfg(test)]
@@ -323,5 +368,44 @@ mod tests {
         let events = service.get_recent_events(10);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, "memory_analyzed");
+    }
+
+    #[test]
+    fn inject_correction_guidance_creates_rule() {
+        let service = GuidanceService::new();
+
+        let id = service.inject_correction_guidance(
+            "avoid: use unwrap in production",
+            "correction-123",
+        );
+
+        let rules = service.get_guidance(&GuidanceCategory::Rules);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].content, "avoid: use unwrap in production");
+        assert_eq!(rules[0].confidence, 1.0);
+        assert_eq!(rules[0].priority, 1);
+        assert_eq!(rules[0].source_spans, vec!["correction-123".to_string()]);
+
+        let events = service.get_recent_events(10);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "correction_applied");
+        assert!(!id.is_empty());
+    }
+
+    #[test]
+    fn remove_guidance_removes_entry() {
+        let service = GuidanceService::new();
+
+        let id = service.inject_correction_guidance("some rule", "corr-1");
+        assert_eq!(service.get_all_guidance().len(), 1);
+
+        assert!(service.remove_guidance(&id));
+        assert!(service.get_all_guidance().is_empty());
+    }
+
+    #[test]
+    fn remove_guidance_nonexistent_returns_false() {
+        let service = GuidanceService::new();
+        assert!(!service.remove_guidance("nonexistent"));
     }
 }

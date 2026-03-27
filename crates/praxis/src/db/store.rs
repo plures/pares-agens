@@ -81,6 +81,14 @@ impl PraxisStore {
         self.constraints.len()
     }
 
+    /// Remove a [`Constraint`] by ID.  Returns the removed constraint, or
+    /// `Err(NotFound)` if no constraint with the given ID exists.
+    pub fn remove_constraint(&mut self, id: &str) -> Result<Constraint, StoreError> {
+        self.constraints
+            .remove(id)
+            .ok_or_else(|| StoreError::NotFound(id.to_string()))
+    }
+
     // ── ADRs ─────────────────────────────────────────────────────────────────
 
     /// Insert a new [`Adr`].
@@ -296,5 +304,22 @@ mod tests {
     fn constraint_adrs_missing_returns_empty() {
         let store = PraxisStore::new();
         assert!(store.constraint_adrs("C-NONE").is_empty());
+    }
+
+    #[test]
+    fn remove_constraint_existing() {
+        let mut store = PraxisStore::new();
+        store.insert_constraint(make_constraint("C-0001")).unwrap();
+        let removed = store.remove_constraint("C-0001").unwrap();
+        assert_eq!(removed.id, "C-0001");
+        assert!(store.get_constraint("C-0001").is_none());
+        assert_eq!(store.constraint_count(), 0);
+    }
+
+    #[test]
+    fn remove_constraint_not_found() {
+        let mut store = PraxisStore::new();
+        let err = store.remove_constraint("C-NOPE").unwrap_err();
+        assert_eq!(err, StoreError::NotFound("C-NOPE".into()));
     }
 }
