@@ -1,6 +1,6 @@
 //! Praxis procedures evaluated against [`PraxisStore`].
 //!
-//! These are the four procedures specified in the issue:
+//! These are the procedures available in this module:
 //!
 //! | Procedure | Description |
 //! |-----------|-------------|
@@ -8,6 +8,8 @@
 //! | [`on_action`] | Pre-action hook — returns `Err` when a blocking constraint fires |
 //! | [`compile_nl`] | Compiles natural-language text into a [`Constraint`] insert |
 //! | [`query_gaps`] | Returns [`Evidence`] records whose `result` is `Unknown` |
+//! | [`apply_correction`] | Creates or updates a constraint from a user correction |
+//! | [`undo_correction`] | Removes a correction-sourced constraint from the store |
 
 use crate::db::schema::{AgentContext, Condition, Constraint, Evidence, EvidenceResult, Severity};
 use crate::db::store::PraxisStore;
@@ -225,6 +227,84 @@ pub fn query_gaps(store: &PraxisStore) -> Vec<&Evidence> {
 }
 
 // ---------------------------------------------------------------------------
+// apply_correction
+// ---------------------------------------------------------------------------
+
+/// The result of applying a user correction to the praxis store.
+#[derive(Debug, Clone)]
+pub struct CorrectionApplied {
+    /// The constraint that was created or updated.
+    pub constraint: Constraint,
+    /// Whether this was an insert (`true`) or update of an existing constraint.
+    pub is_new: bool,
+    /// Human-readable confirmation message.
+    pub confirmation: String,
+}
+
+/// Apply a user correction to the praxis store.
+///
+/// Compiles the correction text into a [`Constraint`] via [`compile_nl`] and
+/// upserts it into `store`.  Returns a [`CorrectionApplied`] record the caller
+/// can use for confirmation messages and audit.
+///
+/// The constraint inherits decay protection: its description is prefixed with
+/// `[correction]` so downstream systems can identify correction-sourced rules.
+///
+/// # Example
+///
+/// ```rust
+/// use pares_agens_praxis::db::procedures::apply_correction;
+/// use pares_agens_praxis::db::store::PraxisStore;
+///
+/// let mut store = PraxisStore::new();
+/// let result = apply_correction(
+///     &mut store,
+///     "write_ actions must declare a resource_owner",
+///     "C-CORR-1",
+/// );
+/// assert!(result.is_new);
+/// assert!(store.get_constraint("C-CORR-1").is_some());
+/// ```
+pub fn apply_correction(
+    store: &mut PraxisStore,
+    correction_text: &str,
+    id: impl Into<String>,
+) -> CorrectionApplied {
+    let id = id.into();
+    let is_new = store.get_constraint(&id).is_none();
+
+    let mut constraint = compile_nl(correction_text, &id);
+    // Prefix description so correction-sourced rules are identifiable.
+    constraint.description = format!("[correction] {}", constraint.description);
+
+    store.upsert_constraint(constraint.clone());
+
+    let confirmation = format!(
+        "Got it, I'll remember to {} going forward.",
+        constraint.description.trim_start_matches("[correction] ")
+    );
+
+    CorrectionApplied {
+        constraint,
+        is_new,
+        confirmation,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// undo_correction
+// ---------------------------------------------------------------------------
+
+/// Undo a previously applied correction by removing its constraint from the
+/// store.
+///
+/// Returns the removed [`Constraint`], or `None` if no constraint with the
+/// given ID exists.
+pub fn undo_correction(store: &mut PraxisStore, constraint_id: &str) -> Option<Constraint> {
+    store.remove_constraint(constraint_id).ok()
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -385,5 +465,70 @@ mod tests {
             ids.contains(&"EV-ADR0004-CI"),
             "EV-ADR0004-CI (unknown) should appear in gaps; got: {ids:?}"
         );
+    }
+
+    // ── apply_correction ─────────────────────────────────────────────────────
+
+    #[test]
+    fn apply_correction_creates_new_constraint() {
+        let mut store = PraxisStore::new();
+        let result = apply_correction(
+            &mut store,
+            "write_ actions must declare a resource_owner",
+            "C-CORR-1",
+        );
+        assert!(result.is_new);
+        assert!(store.get_constraint("C-CORR-1").is_some());
+        assert!(result.constraint.description.starts_with("[correction]"));
+        assert!(result.confirmation.contains("going forward"));
+    }
+
+    #[test]
+    fn apply_correction_updates_existing_constraint() {
+        let mut store = PraxisStore::new();
+        // First insertion
+        apply_correction(&mut store, "risk_score should be low", "C-CORR-2");
+        assert_eq!(store.constraint_count(), 1);
+        // Second insertion with same ID updates
+        let result = apply_correction(
+            &mut store,
+            "risk_score must stay below threshold",
+            "C-CORR-2",
+        );
+        assert!(!result.is_new);
+        assert_eq!(store.constraint_count(), 1);
+    }
+
+    #[test]
+    fn apply_correction_produces_constraint_with_correction_prefix() {
+        let mut store = PraxisStore::new();
+        let result = apply_correction(
+            &mut store,
+            "privilege_level should be restricted",
+            "C-CORR-3",
+        );
+        let c = store.get_constraint("C-CORR-3").unwrap();
+        assert!(c.description.starts_with("[correction]"));
+        assert!(result.confirmation.contains("going forward"));
+    }
+
+    // ── undo_correction ──────────────────────────────────────────────────────
+
+    #[test]
+    fn undo_correction_removes_constraint() {
+        let mut store = PraxisStore::new();
+        apply_correction(&mut store, "some rule", "C-CORR-4");
+        assert!(store.get_constraint("C-CORR-4").is_some());
+
+        let removed = undo_correction(&mut store, "C-CORR-4");
+        assert!(removed.is_some());
+        assert!(store.get_constraint("C-CORR-4").is_none());
+    }
+
+    #[test]
+    fn undo_correction_nonexistent_returns_none() {
+        let mut store = PraxisStore::new();
+        let removed = undo_correction(&mut store, "C-DOES-NOT-EXIST");
+        assert!(removed.is_none());
     }
 }

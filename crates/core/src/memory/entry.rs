@@ -28,6 +28,8 @@ pub enum MemoryCategory {
     BuildResult,
     /// Named state during an executable presentation.
     DemoCheckpoint,
+    /// User correction — a persistent behavioral adjustment.
+    Correction,
 }
 
 impl MemoryCategory {
@@ -45,6 +47,7 @@ impl MemoryCategory {
             Self::AutomationTrace => "automation-trace",
             Self::BuildResult => "build-result",
             Self::DemoCheckpoint => "demo-checkpoint",
+            Self::Correction => "correction",
         }
     }
 }

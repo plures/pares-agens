@@ -18,6 +18,9 @@ pub trait MemoryStore: Send + Sync {
 
     /// Return all stored entries (unordered).
     async fn all(&self) -> Result<Vec<MemoryEntry>, Error>;
+
+    /// Remove a memory entry by ID.  Returns `true` if the entry existed.
+    async fn remove(&self, id: &str) -> Result<bool, Error>;
 }
 
 /// Thread-safe in-memory store backed by a `RwLock<Vec<MemoryEntry>>`.
@@ -51,6 +54,13 @@ impl MemoryStore for InMemoryStore {
 
     async fn all(&self) -> Result<Vec<MemoryEntry>, Error> {
         Ok(self.entries.read().await.clone())
+    }
+
+    async fn remove(&self, id: &str) -> Result<bool, Error> {
+        let mut entries = self.entries.write().await;
+        let before = entries.len();
+        entries.retain(|e| e.id != id);
+        Ok(entries.len() < before)
     }
 }
 
@@ -146,6 +156,14 @@ impl MemoryStore for PluresDbStore {
             entries.push(entry);
         }
         Ok(entries)
+    }
+
+    async fn remove(&self, id: &str) -> Result<bool, Error> {
+        match self.store.delete(id) {
+            Ok(()) => Ok(true),
+            // StoreError::NotFound is the only variant — entry did not exist.
+            Err(_) => Ok(false),
+        }
     }
 }
 
@@ -244,5 +262,42 @@ mod tests {
         store.insert(make_entry("s1", "synced")).await.unwrap();
         let all = store.all().await.unwrap();
         assert_eq!(all.len(), 1);
+    }
+
+    // ── remove ───────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn in_memory_store_remove_existing() {
+        let store = InMemoryStore::new();
+        store.insert(make_entry("a", "alpha")).await.unwrap();
+        store.insert(make_entry("b", "beta")).await.unwrap();
+        let removed = store.remove("a").await.unwrap();
+        assert!(removed);
+        let all = store.all().await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, "b");
+    }
+
+    #[tokio::test]
+    async fn in_memory_store_remove_nonexistent() {
+        let store = InMemoryStore::new();
+        let removed = store.remove("nope").await.unwrap();
+        assert!(!removed);
+    }
+
+    #[tokio::test]
+    async fn pluresdb_store_remove_existing() {
+        let store = PluresDbStore::in_memory();
+        store.insert(make_entry("1", "first")).await.unwrap();
+        let removed = store.remove("1").await.unwrap();
+        assert!(removed);
+        assert!(store.all().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn pluresdb_store_remove_nonexistent() {
+        let store = PluresDbStore::in_memory();
+        let removed = store.remove("nope").await.unwrap();
+        assert!(!removed);
     }
 }

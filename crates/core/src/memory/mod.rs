@@ -16,6 +16,8 @@ pub mod forgetting;
 pub mod quality;
 /// Memory store trait and backend implementations.
 pub mod store;
+/// Correction detection and learning engine.
+pub mod correction;
 
 use std::sync::Arc;
 
@@ -257,6 +259,25 @@ fn format_exchange(exchange: &Exchange) -> String {
 /// Heuristic category detection based on content keywords.
 fn detect_category(text: &str) -> MemoryCategory {
     let lower = text.to_lowercase();
+
+    // Derive a user-only segment for correction detection so assistant phrasing
+    // can't falsely trigger a Correction category.
+    let user_segment = if let Some(user_idx) = lower.find("user:") {
+        let after_user = &lower[user_idx + "user:".len()..];
+        if let Some(assistant_idx) = after_user.find("\nassistant:") {
+            after_user[..assistant_idx].trim()
+        } else {
+            after_user.trim()
+        }
+    } else {
+        lower.as_str()
+    };
+
+    // Check for correction signals first (highest priority), using only the user text.
+    if correction::is_correction(user_segment) {
+        return MemoryCategory::Correction;
+    }
+
     if lower.contains("error") || lower.contains("fix") || lower.contains("bug") || lower.contains("panic") {
         MemoryCategory::ErrorFix
     } else if lower.contains("fn ")
@@ -383,7 +404,7 @@ mod tests {
             .recall(
                 "snake_case naming convention",
                 5,
-                &[MemoryCategory::Preference, MemoryCategory::Conversation],
+                &[MemoryCategory::Preference, MemoryCategory::Conversation, MemoryCategory::Correction],
             )
             .await
             .unwrap();
@@ -432,7 +453,7 @@ mod tests {
             MemoryCategory::ErrorFix
         );
         assert_eq!(
-            detect_category("I prefer tabs over spaces always use tabs"),
+            detect_category("my convention is tabs over spaces, a preference"),
             MemoryCategory::Preference
         );
         assert_eq!(
@@ -442,6 +463,22 @@ mod tests {
         assert_eq!(
             detect_category("what is the weather today"),
             MemoryCategory::Conversation
+        );
+    }
+
+    #[test]
+    fn detect_category_classifies_corrections() {
+        assert_eq!(
+            detect_category("don't use unwrap in production"),
+            MemoryCategory::Correction
+        );
+        assert_eq!(
+            detect_category("I prefer spaces over tabs from now on"),
+            MemoryCategory::Correction
+        );
+        assert_eq!(
+            detect_category("Actually, that's wrong — use Vec instead"),
+            MemoryCategory::Correction
         );
     }
 }
