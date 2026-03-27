@@ -68,3 +68,4 @@ pub mod state;
 pub use agent::Memory as AgentMemory;
 pub use agent::{Agent, InMemory};
 pub use event::Event;
+pub use state::{InMemoryStateStore, PluresDbStateStore, StateStore};
