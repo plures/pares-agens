@@ -260,8 +260,21 @@ fn format_exchange(exchange: &Exchange) -> String {
 fn detect_category(text: &str) -> MemoryCategory {
     let lower = text.to_lowercase();
 
-    // Check for correction signals first (highest priority).
-    if correction::is_correction(&lower) {
+    // Derive a user-only segment for correction detection so assistant phrasing
+    // can't falsely trigger a Correction category.
+    let user_segment = if let Some(user_idx) = lower.find("user:") {
+        let after_user = &lower[user_idx + "user:".len()..];
+        if let Some(assistant_idx) = after_user.find("\nassistant:") {
+            after_user[..assistant_idx].trim()
+        } else {
+            after_user.trim()
+        }
+    } else {
+        lower.as_str()
+    };
+
+    // Check for correction signals first (highest priority), using only the user text.
+    if correction::is_correction(user_segment) {
         return MemoryCategory::Correction;
     }
 
