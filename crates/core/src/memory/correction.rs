@@ -32,16 +32,25 @@ use super::{
 // ---------------------------------------------------------------------------
 
 /// Phrases that strongly signal user corrections.
+///
+/// Each entry must be specific enough to avoid matching normal questions and
+/// statements.  Broad substrings like standalone `"never"` or `"wrong"` are
+/// intentionally excluded because they produce false positives (e.g.
+/// "I **never** used tokio before", "**wrong** type inference happens when…").
 const CORRECTION_SIGNALS: &[&str] = &[
+    // ── explicit "don't / do not" directives ─────────────────────────────
     "don't do",
     "dont do",
     "do not do",
     "stop doing",
-    "never do",
     "don't use",
     "dont use",
     "do not use",
-    "never use",
+    // ── "never" + verb (avoids matching "I never used X before") ─────────
+    "never do ",
+    "never use ",
+    "never again",
+    // ── preference / directive ────────────────────────────────────────────
     "i prefer",
     "i'd prefer",
     "id prefer",
@@ -50,31 +59,41 @@ const CORRECTION_SIGNALS: &[&str] = &[
     "instead of",
     "rather than",
     "not like that",
-    "wrong",
+    "always use",
+    "i want you to",
+    // ── explicit wrongness indicators (require context) ──────────────────
     "that's incorrect",
     "thats incorrect",
     "that is incorrect",
     "that's wrong",
     "thats wrong",
     "that is wrong",
-    "actually,",
-    "actually ",
-    "no, ",
-    "no. ",
+    "you're wrong",
+    "youre wrong",
+    "you are wrong",
+    // ── conversational correction openers ─────────────────────────────────
     "i said",
     "i told you",
     "i already said",
     "remember to",
     "don't forget",
     "dont forget",
-    "always use",
-    "never",
+    // ── temporal / going-forward directives ───────────────────────────────
     "from now on",
     "going forward",
     "in the future",
     "change that to",
     "switch to",
-    "i want you to",
+];
+
+/// Patterns that must appear at the **start** of the message to count as a
+/// correction signal.  These are too broad as substring matches but are strong
+/// signals when they open the sentence.
+const CORRECTION_PREFIXES: &[&str] = &[
+    "no, ",
+    "no. ",
+    "actually,",
+    "actually, ",
 ];
 
 /// Return `true` when the user message looks like a correction rather than a
@@ -84,7 +103,14 @@ const CORRECTION_SIGNALS: &[&str] = &[
 /// augmented) by an LLM classifier.
 pub fn is_correction(user_message: &str) -> bool {
     let lower = user_message.to_lowercase();
-    CORRECTION_SIGNALS.iter().any(|sig| lower.contains(sig))
+    // Substring matches for specific multi-word phrases.
+    if CORRECTION_SIGNALS.iter().any(|sig| lower.contains(sig)) {
+        return true;
+    }
+    // Prefix-only matches for short tokens that are too broad as substrings.
+    CORRECTION_PREFIXES
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
 }
 
 // ---------------------------------------------------------------------------
@@ -200,9 +226,11 @@ impl CorrectionEngine {
 
     /// Undo a previously applied correction.
     ///
-    /// Removes the memory entry with the given `correction_id`.  Returns the
-    /// constraint ID (if any) so the caller can also remove it from the praxis
-    /// store.
+    /// Removes the memory entry with the given `correction_id`.  Returns
+    /// `true` if the entry existed and was removed, `false` if it was not
+    /// found.  The caller is responsible for also removing any associated
+    /// praxis constraint and guidance entry using the `constraint_id` from the
+    /// original [`CorrectionRecord`].
     ///
     /// # Errors
     /// Propagates store errors.
@@ -315,6 +343,19 @@ mod tests {
         assert!(!is_correction("How do I write async Rust?"));
         assert!(!is_correction("Show me an example of pattern matching"));
         assert!(!is_correction("What does the borrow checker do?"));
+    }
+
+    #[test]
+    fn rejects_sentences_with_broad_keywords() {
+        // "never" as part of normal description, not a directive
+        assert!(!is_correction("I never used tokio before"));
+        assert!(!is_correction("This has never been an issue until now"));
+        // "wrong" as part of normal description, not a correction
+        assert!(!is_correction("wrong type inference happens when lifetimes are elided"));
+        assert!(!is_correction("What went wrong with the build?"));
+        // "actually" mid-sentence, not a correction opener
+        assert!(!is_correction("I actually want to learn about traits"));
+        assert!(!is_correction("Can you actually explain that?"));
     }
 
     // ── derive_rule_summary ──────────────────────────────────────────────────
