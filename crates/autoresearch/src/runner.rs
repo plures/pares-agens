@@ -24,7 +24,7 @@ use crate::{
     hypothesis::{DefaultHypothesisEngine, HypothesisEngine},
     ledger::ExperimentLedger,
     measurement::{KeyValueExtractor, MetricExtractor},
-    report::ResearchReport,
+    report::{ReportParams, ResearchReport},
     sandbox::{DryRunSandbox, ExecutionSandbox},
     schedule::StopCondition,
     verdict::{VerdictEngine, VerdictInput},
@@ -168,13 +168,15 @@ impl ResearchRunner {
         let stop_condition = self.experiment_loop(&mut state);
 
         let report = ResearchReport::from_ledger(
-            self.config.id.clone(),
-            target_label,
-            self.config.metric.clone(),
-            self.config.higher_is_better,
-            state.baseline_metric,
-            state.start_time,
-            stop_condition,
+            ReportParams {
+                run_id: self.config.id.clone(),
+                target_label,
+                metric: self.config.metric.clone(),
+                higher_is_better: self.config.higher_is_better,
+                baseline_metric: state.baseline_metric,
+                started_at: state.start_time,
+                stop_condition,
+            },
             &state.ledger,
         );
 

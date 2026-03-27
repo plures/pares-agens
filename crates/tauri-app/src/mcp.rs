@@ -200,18 +200,6 @@ pub async fn openai_tools(state: &AppState) -> Vec<Value> {
         .collect()
 }
 
-/// Stop a specific MCP server and remove its tools.
-#[allow(dead_code)]
-pub async fn stop_mcp_server(state: &AppState, name: &str) {
-    let mut clients = state.mcp_clients.lock().await;
-    if clients.remove(name).is_some() {
-        info!(server = %name, "MCP server stopped");
-    }
-    // Remove tools from this server
-    let mut tools = state.mcp_tools.write().await;
-    tools.retain(|(server_name, _)| server_name != name);
-}
-
 /// Restart all MCP servers (stop all, then start enabled).
 pub async fn restart_mcp_servers(state: &AppState) {
     {

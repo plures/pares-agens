@@ -374,14 +374,13 @@ impl Procedure for Autorecall {
 pub struct PrimitiveExtract {
     /// Reserved for future LLM-based extraction; not used in the initial
     /// pattern-matching implementation.
-    #[allow(dead_code)]
-    memory: Arc<PluresLm>,
+    _memory: Arc<PluresLm>,
 }
 
 impl PrimitiveExtract {
     /// Create a `PrimitiveExtract` procedure backed by `memory`.
     pub fn new(memory: Arc<PluresLm>) -> Self {
-        Self { memory }
+        Self { _memory: memory }
     }
 }
 
@@ -546,7 +545,7 @@ impl Procedure for CerebellumSweep {
 }
 
 /// Register all built-in cerebellum procedures into a registry.
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn register_builtins(
     registry: &mut crate::procedure::ProcedureRegistry,
     memory: Arc<PluresLm>,
