@@ -117,6 +117,14 @@ pub fn is_correction(user_message: &str) -> bool {
 // CorrectionRecord
 // ---------------------------------------------------------------------------
 
+/// Tag prefix used to persist the constraint ID inside a memory entry.
+///
+/// During [`CorrectionEngine::apply`] the constraint ID (if any) is stored as
+/// a tag of the form `"constraint_id:<id>"`.  [`CorrectionEngine::undo`] reads
+/// this tag back so it can return the constraint ID to the caller without
+/// requiring the original [`CorrectionRecord`] to be kept around.
+const CONSTRAINT_TAG_PREFIX: &str = "constraint_id:";
+
 /// A record of an applied correction.
 ///
 /// Returned by [`CorrectionEngine::apply`] so callers can track what changed
@@ -135,6 +143,18 @@ pub struct CorrectionRecord {
     pub confirmation: String,
     /// Timestamp when the correction was applied.
     pub applied_at: String,
+}
+
+/// Outcome of [`CorrectionEngine::undo`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UndoOutcome {
+    /// `true` if the memory entry was found and removed.
+    pub removed: bool,
+    /// The constraint ID that was associated with this correction (if any).
+    ///
+    /// The caller should use this to also remove the constraint from the
+    /// praxis store and remove the associated guidance entry.
+    pub constraint_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -191,14 +211,19 @@ impl CorrectionEngine {
             exchange.user, exchange.assistant
         );
 
+        let mut tags = vec![
+            "decay_protected".to_string(),
+            "correction".to_string(),
+        ];
+        if let Some(ref cid) = constraint_id {
+            tags.push(format!("{CONSTRAINT_TAG_PREFIX}{cid}"));
+        }
+
         let entry = MemoryEntry {
             id: id.clone(),
             content,
             category: MemoryCategory::Correction,
-            tags: vec![
-                "decay_protected".to_string(),
-                "correction".to_string(),
-            ],
+            tags,
             // Zero-vector placeholder; the caller should embed before insert
             // if a real embedding provider is available.  For the memory
             // store layer it is fine to store a placeholder.
@@ -226,19 +251,40 @@ impl CorrectionEngine {
 
     /// Undo a previously applied correction.
     ///
-    /// Removes the memory entry with the given `correction_id`.  Returns
-    /// `true` if the entry existed and was removed, `false` if it was not
-    /// found.  The caller is responsible for also removing any associated
-    /// praxis constraint and guidance entry using the `constraint_id` from the
-    /// original [`CorrectionRecord`].
+    /// Looks up the memory entry for `correction_id`, extracts the persisted
+    /// constraint ID (if any), then removes the entry.  Returns an
+    /// [`UndoOutcome`] so the caller can also clean up the corresponding
+    /// praxis constraint and guidance entry without needing to keep the
+    /// original [`CorrectionRecord`] around.
     ///
     /// # Errors
     /// Propagates store errors.
-    pub async fn undo(&self, correction_id: &str) -> Result<bool, Error> {
-        self.store
+    pub async fn undo(&self, correction_id: &str) -> Result<UndoOutcome, Error> {
+        // Look up the entry to extract the constraint_id tag before removal.
+        let constraint_id = self
+            .store
+            .all()
+            .await
+            .map_err(|e| Error::Store(e.to_string()))?
+            .iter()
+            .find(|e| e.id == correction_id)
+            .and_then(|e| {
+                e.tags.iter().find_map(|t| {
+                    t.strip_prefix(CONSTRAINT_TAG_PREFIX)
+                        .map(|s| s.to_string())
+                })
+            });
+
+        let removed = self
+            .store
             .remove(correction_id)
             .await
-            .map_err(|e| Error::Store(e.to_string()))
+            .map_err(|e| Error::Store(e.to_string()))?;
+
+        Ok(UndoOutcome {
+            removed,
+            constraint_id,
+        })
     }
 }
 
@@ -431,6 +477,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(record.constraint_id, Some("C-CORR-001".to_string()));
+
+        // The constraint_id must also be persisted as a tag in the entry.
+        let entries = store.all().await.unwrap();
+        assert!(entries[0]
+            .tags
+            .contains(&"constraint_id:C-CORR-001".to_string()));
     }
 
     #[tokio::test]
@@ -446,17 +498,39 @@ mod tests {
         let record = engine.apply(&exchange, None).await.unwrap();
         assert_eq!(store.all().await.unwrap().len(), 1);
 
-        let removed = engine.undo(&record.id).await.unwrap();
-        assert!(removed);
+        let outcome = engine.undo(&record.id).await.unwrap();
+        assert!(outcome.removed);
+        assert_eq!(outcome.constraint_id, None);
         assert!(store.all().await.unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn undo_nonexistent_returns_false() {
+    async fn undo_returns_constraint_id() {
         let store = test_store();
         let engine = CorrectionEngine::new(Arc::clone(&store));
-        let removed = engine.undo("nonexistent-id").await.unwrap();
-        assert!(!removed);
+
+        let exchange = Exchange {
+            user: "Don't use unwrap".to_string(),
+            assistant: "Ok.".to_string(),
+        };
+
+        let record = engine
+            .apply(&exchange, Some("C-CORR-99".to_string()))
+            .await
+            .unwrap();
+
+        let outcome = engine.undo(&record.id).await.unwrap();
+        assert!(outcome.removed);
+        assert_eq!(outcome.constraint_id, Some("C-CORR-99".to_string()));
+    }
+
+    #[tokio::test]
+    async fn undo_nonexistent_returns_not_removed() {
+        let store = test_store();
+        let engine = CorrectionEngine::new(Arc::clone(&store));
+        let outcome = engine.undo("nonexistent-id").await.unwrap();
+        assert!(!outcome.removed);
+        assert_eq!(outcome.constraint_id, None);
     }
 
     #[tokio::test]
