@@ -3160,10 +3160,13 @@ version = "0.5.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "pluresdb 2.9.10",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
