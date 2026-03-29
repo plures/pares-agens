@@ -154,9 +154,8 @@ impl PluresDbAuditStore {
     /// Returns an error string if the underlying [`SledStorage`] cannot be
     /// opened (e.g. permission denied, corrupted database).
     pub fn open(path: impl AsRef<Path>) -> Result<Self, String> {
-        let storage: Arc<dyn StorageEngine> = Arc::new(
-            SledStorage::open(path).map_err(|e| format!("open failed: {e}"))?,
-        );
+        let storage: Arc<dyn StorageEngine> =
+            Arc::new(SledStorage::open(path).map_err(|e| format!("open failed: {e}"))?);
         let store = CrdtStore::default().with_persistence(storage);
         Ok(Self { store })
     }
@@ -358,8 +357,12 @@ mod tests {
     #[tokio::test]
     async fn pluresdb_query_filters_by_actor() {
         let store = PluresDbAuditStore::in_memory();
-        store.append(make_event(EventKind::ToolExec, "agent-1")).await;
-        store.append(make_event(EventKind::ToolExec, "agent-2")).await;
+        store
+            .append(make_event(EventKind::ToolExec, "agent-1"))
+            .await;
+        store
+            .append(make_event(EventKind::ToolExec, "agent-2"))
+            .await;
 
         let q = AuditQuery::new().with_actor("agent-1");
         let results = store.query(&q).await;
@@ -396,7 +399,9 @@ mod tests {
     async fn pluresdb_open_creates_persistent_store() {
         let dir = tempfile::tempdir().unwrap();
         let store = PluresDbAuditStore::open(dir.path()).unwrap();
-        store.append(make_event(EventKind::ModelCall, "persist")).await;
+        store
+            .append(make_event(EventKind::ModelCall, "persist"))
+            .await;
         assert_eq!(store.len().await, 1);
     }
 
