@@ -366,9 +366,7 @@ async fn praxis_blocked_procedure_does_not_execute() {
     // BlockedProc::execute returns a "should-not-appear" message — verify it
     // is NOT present (only the ConstraintViolation should be there).
     assert!(
-        follow_ups
-            .iter()
-            .all(|e| e.kind() != "message"),
+        follow_ups.iter().all(|e| e.kind() != "message"),
         "blocked procedure must not produce normal follow-up events"
     );
 }

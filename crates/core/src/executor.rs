@@ -125,9 +125,7 @@ impl Executor {
                             .join("; ");
                         warn!(
                             procedure = procedure_name,
-                            fix,
-                            "procedure execution blocked by praxis constraint(s): {}",
-                            blocked
+                            fix, "procedure execution blocked by praxis constraint(s): {}", blocked
                         );
                         follow_ups.push(Event::ConstraintViolation {
                             procedure: procedure_name.to_string(),
