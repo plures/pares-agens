@@ -55,6 +55,13 @@ pub enum Event {
         /// `true` when the tool reported an error.
         is_error: bool,
     },
+    /// A praxis pre-action constraint was violated and the action was blocked.
+    PreActionConstraint {
+        /// The action type that was blocked (e.g. `"execute_procedure:foo"`).
+        action: String,
+        /// Human-readable description of the violated constraint(s).
+        reason: String,
+    },
 }
 
 impl Event {
@@ -66,6 +73,7 @@ impl Event {
             Event::StateChange { .. } => "state_change",
             Event::ModelResponse { .. } => "model_response",
             Event::ToolResult { .. } => "tool_result",
+            Event::PreActionConstraint { .. } => "pre_action_constraint",
         }
     }
 }

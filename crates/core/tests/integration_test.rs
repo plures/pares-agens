@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use pares_agens_core::{
     event::Event,
-    executor::Executor,
+    executor::{Executor, NoopPraxisGate, PraxisGate},
     procedure::{Procedure, ProcedureRegistry},
     source::EventSource,
 };
@@ -225,6 +225,10 @@ async fn all_five_event_kinds_are_constructible() {
             content: "{}".into(),
             is_error: false,
         },
+        Event::PreActionConstraint {
+            action: "execute_procedure:foo".into(),
+            reason: "constraint violated".into(),
+        },
     ];
 
     let kinds = [
@@ -233,8 +237,96 @@ async fn all_five_event_kinds_are_constructible() {
         "state_change",
         "model_response",
         "tool_result",
+        "pre_action_constraint",
     ];
     for (event, expected_kind) in events.iter().zip(kinds.iter()) {
         assert_eq!(event.kind(), *expected_kind);
     }
+}
+
+// ── PraxisGate integration tests ─────────────────────────────────────────────
+
+/// A blocking gate that rejects every action.
+struct BlockAllGate;
+
+impl PraxisGate for BlockAllGate {
+    fn check(&self, action: &str) -> Result<(), String> {
+        Err(format!("blocked by test: {action}"))
+    }
+}
+
+#[tokio::test]
+async fn noop_praxis_gate_permits_all_procedures() {
+    let mut registry = ProcedureRegistry::new();
+    registry.register(Box::new(EchoMessage));
+    let executor = Executor::with_praxis_gate(registry, Box::new(NoopPraxisGate));
+
+    let follow_ups = executor.dispatch(&msg("hello")).await;
+    assert_eq!(follow_ups.len(), 1, "NoopPraxisGate should allow execution");
+}
+
+#[tokio::test]
+async fn blocking_praxis_gate_emits_pre_action_constraint_event() {
+    let mut registry = ProcedureRegistry::new();
+    registry.register(Box::new(EchoMessage));
+    let executor = Executor::with_praxis_gate(registry, Box::new(BlockAllGate));
+
+    let follow_ups = executor.dispatch(&msg("hello")).await;
+    assert_eq!(
+        follow_ups.len(),
+        1,
+        "blocking gate should emit exactly one PreActionConstraint event"
+    );
+    match &follow_ups[0] {
+        Event::PreActionConstraint { action, reason } => {
+            assert!(
+                action.contains("echo_message"),
+                "action should name the blocked procedure"
+            );
+            assert!(
+                reason.contains("blocked by test"),
+                "reason should contain gate message"
+            );
+        }
+        other => panic!("expected PreActionConstraint, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn blocking_gate_does_not_execute_procedure() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let counter = Arc::new(AtomicUsize::new(0));
+
+    struct CountingProcedure {
+        counter: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Procedure for CountingProcedure {
+        fn name(&self) -> &str {
+            "counting"
+        }
+        fn handles(&self) -> &str {
+            "message"
+        }
+        async fn execute(&self, _: &Event) -> Vec<Event> {
+            self.counter.fetch_add(1, Ordering::SeqCst);
+            vec![]
+        }
+    }
+
+    let mut registry = ProcedureRegistry::new();
+    registry.register(Box::new(CountingProcedure {
+        counter: counter.clone(),
+    }));
+    let executor = Executor::with_praxis_gate(registry, Box::new(BlockAllGate));
+
+    executor.dispatch(&msg("hello")).await;
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        0,
+        "blocked procedure must not execute"
+    );
 }
