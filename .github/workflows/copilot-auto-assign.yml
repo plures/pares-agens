@@ -1,0 +1,67 @@
+name: Copilot Auto-Assign
+
+on:
+  issues:
+    types: [opened]
+  pull_request:
+    types: [opened, ready_for_review]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  assign-issue:
+    if: github.event_name == 'issues' && !contains(github.event.issue.labels.*.name, 'no-copilot')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assign Copilot to issue
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // Copilot SWE Agent self-assigns when it starts working.
+            // This workflow adds a comment to signal that Copilot should pick it up.
+            // The copilot-pr-lifecycle handles the rest.
+            const { owner, repo } = context.repo;
+            const issue = context.payload.issue;
+            
+            // Skip if already assigned
+            if (issue.assignees.length > 0) {
+              core.info('Issue already assigned, skipping');
+              return;
+            }
+            
+            // Add copilot label to signal availability
+            await github.rest.issues.addLabels({
+              owner, repo,
+              issue_number: issue.number,
+              labels: ['copilot']
+            });
+
+  review-pr:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.user.login != 'Copilot' &&
+      github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request Copilot review
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+            
+            // Request Copilot code review
+            try {
+              await github.rest.pulls.requestReviewers({
+                owner, repo,
+                pull_number: pr.number,
+                reviewers: ['Copilot']
+              });
+              core.info(`Requested Copilot review on PR #${pr.number}`);
+            } catch (e) {
+              core.warning(`Could not request Copilot review: ${e.message}`);
+            }
