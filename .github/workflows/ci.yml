@@ -33,7 +33,29 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
+      - name: cargo check
+        run: cargo check --workspace
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo check (inference feature)
+        # Type-check the BitNet inference crate with the `inference` feature
+        # enabled.  This exercises the FFI declarations and safe wrapper without
+        # requiring the bitnet.cpp submodule or CMake — `cargo check` does not
+        # link the native library.
+        run: cargo check -p pares-agens-bitnet --features inference
+
+      - name: cargo test
+        run: cargo test --workspace
+
       - name: Install Tauri system dependencies
+        # The GUI crates (tauri-app, desktop) are excluded from the default
+        # workspace because they require GTK/WebKit system libraries on Linux.
+        # Install those libraries here so we can check them explicitly below.
         run: |
           # Retry apt-get update up to 3 times to handle transient mirror issues
           for i in 1 2 3; do
@@ -56,21 +78,12 @@ jobs:
             sleep 15
           done || { echo "apt-get install failed after 3 attempts"; exit 1; }
 
-      - name: cargo check
-        run: cargo check --workspace
+      - name: cargo check (tauri GUI crates)
+        run: |
+          cargo check --manifest-path crates/tauri-app/Cargo.toml
+          cargo check --manifest-path crates/desktop/Cargo.toml
 
-      - name: cargo fmt
-        run: cargo fmt --all -- --check
-
-      - name: cargo clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: cargo check (inference feature)
-        # Type-check the BitNet inference crate with the `inference` feature
-        # enabled.  This exercises the FFI declarations and safe wrapper without
-        # requiring the bitnet.cpp submodule or CMake — `cargo check` does not
-        # link the native library.
-        run: cargo check -p pares-agens-bitnet --features inference
-
-      - name: cargo test
-        run: cargo test --workspace
+      - name: cargo clippy (tauri GUI crates)
+        run: |
+          cargo clippy --manifest-path crates/tauri-app/Cargo.toml --all-targets -- -D warnings
+          cargo clippy --manifest-path crates/desktop/Cargo.toml --all-targets -- -D warnings

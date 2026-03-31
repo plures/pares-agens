@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client", "crates/tauri-app", "crates/desktop", "crates/migrate", "crates/trainer", "crates/privacy", "crates/marketplace", "crates/arca", "crates/faber", "crates/agenda", "crates/optimizer", "crates/praxis", "crates/sync", "crates/service", "crates/autoresearch", "crates/bitnet-sys", "crates/bitnet", "crates/inference", "crates/audit", "crates/gpu", "crates/dmem"]
+members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client", "crates/migrate", "crates/trainer", "crates/privacy", "crates/marketplace", "crates/arca", "crates/faber", "crates/agenda", "crates/optimizer", "crates/praxis", "crates/sync", "crates/service", "crates/autoresearch", "crates/bitnet-sys", "crates/bitnet", "crates/inference", "crates/audit", "crates/gpu", "crates/dmem"]
+# The GUI application crates (tauri-app, desktop) require GTK system libraries
+# on Linux (libwebkit2gtk-4.1-dev, libgtk-3-dev, etc.) which are not available
+# in a standard developer environment.  They are excluded from the default
+# workspace so that `cargo check --workspace` works on a fresh clone.  CI
+# checks them explicitly after installing the required system packages.
+exclude = ["crates/tauri-app", "crates/desktop"]
 
 [workspace.package]
 version = "0.5.0"
