@@ -82,6 +82,7 @@ impl Event {
             Event::StateChange { .. } => "state_change",
             Event::ModelResponse { .. } => "model_response",
             Event::ToolResult { .. } => "tool_result",
+            Event::PreActionConstraint { .. } => "pre_action_constraint",
             Event::ConstraintViolation { .. } => "constraint_violation",
         }
     }
