@@ -9,5 +9,6 @@
   },
   "engines": {
     "node": ">=20"
-  }
+  },
+  "version": "undefined.1.0"
 }
