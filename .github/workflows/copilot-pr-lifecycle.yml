@@ -83,13 +83,35 @@ jobs:
               const reviews = await github.rest.pulls.listReviews({
                 owner, repo, pull_number: pr.number
               });
+              // Copilot review submits as COMMENTED, not APPROVED — treat it as review-complete
               const copilotReview = reviews.data.find(r =>
                 r.user.login === 'copilot-pull-request-reviewer[bot]'
               );
               const hasApproval = reviews.data.some(r => r.state === 'APPROVED');
+              const reviewComplete = copilotReview || hasApproval;
 
-              if (allGreen && !copilotReview) {
-                // CI green but no review yet — request Copilot code review
+              if (allGreen && reviewComplete) {
+                // CI green + review done → approve (if needed) and merge
+                if (!hasApproval) {
+                  await github.rest.pulls.createReview({
+                    owner, repo, pull_number: pr.number,
+                    event: 'APPROVE',
+                    body: 'Auto-approved: CI green + Copilot code review complete.'
+                  });
+                }
+                try {
+                  await github.rest.pulls.merge({
+                    owner, repo, pull_number: pr.number,
+                    merge_method: 'squash'
+                  });
+                  console.log(`✅ Merged PR #${pr.number}`);
+                } catch (e) {
+                  console.log(`⚠️ Merge failed for #${pr.number}: ${e.message}`);
+                  return;
+                }
+                // Continue to Phase 2 to assign next issue
+              } else if (allGreen && !copilotReview) {
+                // CI green but no review yet — request Copilot code review (no nudges — C-COP-001)
                 const reviewers = await github.rest.pulls.listRequestedReviewers({
                   owner, repo, pull_number: pr.number
                 });
@@ -106,41 +128,6 @@ jobs:
                   console.log(`⏳ CI green, review already requested on PR #${pr.number}`);
                 }
                 return;
-              }
-
-              if (allGreen && copilotReview && !hasApproval) {
-                // CI green + Copilot reviewed → approve and merge
-                await github.rest.pulls.createReview({
-                  owner, repo, pull_number: pr.number,
-                  event: 'APPROVE',
-                  body: 'Auto-approved: CI green + Copilot code review complete.'
-                });
-                try {
-                  await github.rest.pulls.merge({
-                    owner, repo, pull_number: pr.number,
-                    merge_method: 'squash'
-                  });
-                  console.log(`✅ Merged PR #${pr.number}`);
-                } catch (e) {
-                  console.log(`⚠️ Merge failed for #${pr.number}: ${e.message}`);
-                  return;
-                }
-                // Continue to Phase 2 to assign next issue
-              }
-
-              if (allGreen && hasApproval) {
-                // Already approved, just merge
-                try {
-                  await github.rest.pulls.merge({
-                    owner, repo, pull_number: pr.number,
-                    merge_method: 'squash'
-                  });
-                  console.log(`✅ Merged PR #${pr.number} (already approved)`);
-                } catch (e) {
-                  console.log(`⚠️ Merge failed: ${e.message}`);
-                  return;
-                }
-                // Continue to Phase 2 to assign next issue
               }
 
               if (failing.length > 0) {
@@ -303,32 +290,7 @@ jobs:
               }
             }
 
-            // Phase 3: Stall detection — if Copilot assigned but no PR after 30min, re-ping
-            const assigned = allIssues.data.filter(i =>
-              !i.pull_request && i.assignees.some(a => a.login === 'Copilot')
-            );
-            for (const issue of assigned) {
-              const assignedAt = new Date(issue.updated_at);
-              const age = Date.now() - assignedAt.getTime();
-              if (age > 30 * 60 * 1000) {
-                // Check no open PR references this issue
-                const hasPR = copilotPRs.some(pr => pr.body && pr.body.includes(`#${issue.number}`));
-                if (!hasPR) {
-                  // Ensure type is set
-                  try {
-                    await github.request('PATCH /repos/{owner}/{repo}/issues/{issue_number}', {
-                      owner, repo, issue_number: issue.number, type: 'Task'
-                    });
-                  } catch (e) {}
-                  await github.rest.issues.createComment({
-                    owner, repo, issue_number: issue.number,
-                    body: '@copilot This issue has been assigned for over 30 minutes with no PR. Please implement it.'
-                  });
-                  console.log(`⏰ Stall: re-pinged #${issue.number}`);
-                }
-              }
-            }
-
+            // Phase 3: Stall detection removed — nudges don't work (C-COP-001)
             console.log('🎉 No eligible issues remaining');
 
             async function ensureLabelsAndType(github, owner, repo, issue, type) {
