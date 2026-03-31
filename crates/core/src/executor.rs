@@ -52,13 +52,15 @@ impl Default for DefaultPraxisGate {
 
 impl PraxisGate for DefaultPraxisGate {
     fn check(&self, action: &str) -> Result<(), String> {
-        use pares_agens_praxis::db::{AgentContext, SessionType};
         use pares_agens_praxis::db::procedures::on_action;
+        use pares_agens_praxis::db::{AgentContext, SessionType};
 
         // The second argument is the resource target; executor-level checks are
         // action-only and do not have a specific target resource.
         let ctx = AgentContext::new(action, "", SessionType::Main);
-        on_action(&self.store, &ctx).map(|_| ()).map_err(|blocked| blocked.to_string())
+        on_action(&self.store, &ctx)
+            .map(|_| ())
+            .map_err(|blocked| blocked.to_string())
     }
 }
 
