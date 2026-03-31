@@ -55,6 +55,18 @@ pub enum Event {
         /// `true` when the tool reported an error.
         is_error: bool,
     },
+    /// A praxis pre-action gate blocked procedure execution.
+    ///
+    /// Emitted by [`Executor::dispatch`] when the [`PraxisGate`] rejects an
+    /// action via its `check()` method.  This is the gate-based constraint path;
+    /// for the store-based path see [`Event::ConstraintViolation`].
+    /// The blocked procedure is skipped (not executed).
+    PreActionConstraint {
+        /// The action string that was checked (e.g. `"execute_procedure:foo"`).
+        action: String,
+        /// Human-readable reason returned by the gate.
+        reason: String,
+    },
     /// A praxis pre-action constraint blocked procedure execution.
     ///
     /// Emitted by [`Executor::dispatch`] when `on_action` returns

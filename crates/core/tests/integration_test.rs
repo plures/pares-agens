@@ -233,6 +233,7 @@ async fn all_event_kinds_are_constructible() {
         Event::PreActionConstraint {
             action: "execute_procedure:foo".into(),
             reason: "constraint violated".into(),
+        },
         Event::ConstraintViolation {
             procedure: "p".into(),
             event_kind: "message".into(),
@@ -263,6 +264,9 @@ struct BlockAllGate;
 impl PraxisGate for BlockAllGate {
     fn check(&self, action: &str) -> Result<(), String> {
         Err(format!("blocked by test: {action}"))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Praxis constraint gate tests
 // ---------------------------------------------------------------------------
@@ -344,6 +348,10 @@ async fn blocking_praxis_gate_emits_pre_action_constraint_event() {
             );
         }
         other => panic!("expected PreActionConstraint, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn praxis_allows_safe_procedure() {
     let mut registry = ProcedureRegistry::new();
     registry.register(Box::new(EchoMessage));
@@ -436,6 +444,9 @@ async fn blocking_gate_does_not_execute_procedure() {
         0,
         "blocked procedure must not execute"
     );
+}
+
+#[tokio::test]
 async fn praxis_blocked_procedure_does_not_execute() {
     let mut registry = ProcedureRegistry::new();
     registry.register(Box::new(BlockedProc));
