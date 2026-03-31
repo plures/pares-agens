@@ -22,6 +22,7 @@ pub fn decide(event: &Event, learned_context: &str, config: &CerebellumConfig) -
         Event::StateChange { .. } => Route::Procedural,
         Event::PreActionConstraint { .. } => Route::Drop,
         Event::Message { content, .. } => decide_message(content, learned_context, config),
+        Event::ConstraintViolation { .. } => Route::Drop,
     }
 }
 

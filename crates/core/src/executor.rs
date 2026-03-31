@@ -1,4 +1,12 @@
+use std::sync::Arc;
+
 use tracing::{debug, info, warn};
+
+use pares_agens_praxis::db::{
+    procedures::on_action,
+    schema::{AgentContext, SessionType},
+    store::PraxisStore,
+};
 
 use crate::{
     event::Event, optimization::OptimizationSafetyGate, procedure::ProcedureRegistry,
@@ -79,6 +87,10 @@ pub struct Executor {
     registry: ProcedureRegistry,
     safety_gate: OptimizationSafetyGate,
     praxis_gate: Box<dyn PraxisGate>,
+    /// Optional praxis store used to enforce pre-action constraints via
+    /// [`on_action`].  When `None` the constraint check is skipped and all
+    /// procedures are allowed to proceed (existing behaviour).
+    praxis_store: Option<Arc<PraxisStore>>,
 }
 
 impl Executor {
@@ -88,6 +100,7 @@ impl Executor {
             registry,
             safety_gate: OptimizationSafetyGate::new(),
             praxis_gate: Box::new(DefaultPraxisGate::new()),
+            praxis_store: None,
         }
     }
 
@@ -109,12 +122,29 @@ impl Executor {
             registry,
             safety_gate: OptimizationSafetyGate::new(),
             praxis_gate,
+            praxis_store: None,
         }
+    }
+
+    /// Create a new executor with a praxis constraint store.
+    ///
+    /// When a [`PraxisStore`] is provided, [`on_action`] is called before
+    /// every procedure execution.  Procedures that violate an `Error`-severity
+    /// constraint are blocked and a [`Event::ConstraintViolation`] is emitted
+    /// in place of the normal follow-up events.
+    pub fn with_praxis_store(mut self, store: Arc<PraxisStore>) -> Self {
+        self.praxis_store = Some(store);
+        self
     }
 
     /// Get a reference to the safety gate for external access.
     pub fn safety_gate(&self) -> &OptimizationSafetyGate {
         &self.safety_gate
+    }
+
+    /// Get a reference to the praxis store, if configured.
+    pub fn praxis_store(&self) -> Option<&PraxisStore> {
+        self.praxis_store.as_deref()
     }
 
     /// Dispatch a single event to every matching procedure and return all

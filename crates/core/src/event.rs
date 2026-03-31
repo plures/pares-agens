@@ -55,12 +55,21 @@ pub enum Event {
         /// `true` when the tool reported an error.
         is_error: bool,
     },
-    /// A praxis pre-action constraint was violated and the action was blocked.
-    PreActionConstraint {
-        /// The action type that was blocked (e.g. `"execute_procedure:foo"`).
-        action: String,
-        /// Human-readable description of the violated constraint(s).
-        reason: String,
+    /// A praxis pre-action constraint blocked procedure execution.
+    ///
+    /// Emitted by [`Executor::dispatch`] when `on_action` returns
+    /// [`ActionBlocked`][pares_agens_praxis::db::procedures::ActionBlocked].
+    /// The `fix` field surfaces the remediation instructions from all
+    /// violated constraints so the caller or logs can act on them.
+    ConstraintViolation {
+        /// Name of the procedure that was blocked.
+        procedure: String,
+        /// Event kind that triggered the dispatch attempt.
+        event_kind: String,
+        /// Human-readable summary of all blocking violations.
+        message: String,
+        /// Semicolon-separated remediation instructions from every violated constraint.
+        fix: String,
     },
 }
 
@@ -74,6 +83,7 @@ impl Event {
             Event::ModelResponse { .. } => "model_response",
             Event::ToolResult { .. } => "tool_result",
             Event::PreActionConstraint { .. } => "pre_action_constraint",
+            Event::ConstraintViolation { .. } => "constraint_violation",
         }
     }
 }
