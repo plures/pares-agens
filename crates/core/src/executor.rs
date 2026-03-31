@@ -1,4 +1,12 @@
+use std::sync::Arc;
+
 use tracing::{debug, info, warn};
+
+use pares_agens_praxis::db::{
+    procedures::on_action,
+    schema::{AgentContext, SessionType},
+    store::PraxisStore,
+};
 
 use crate::{
     event::Event, optimization::OptimizationSafetyGate, procedure::ProcedureRegistry,
@@ -18,6 +26,10 @@ use crate::{
 pub struct Executor {
     registry: ProcedureRegistry,
     safety_gate: OptimizationSafetyGate,
+    /// Optional praxis store used to enforce pre-action constraints via
+    /// [`on_action`].  When `None` the constraint check is skipped and all
+    /// procedures are allowed to proceed (existing behaviour).
+    praxis_store: Option<Arc<PraxisStore>>,
 }
 
 impl Executor {
@@ -26,6 +38,7 @@ impl Executor {
         Self {
             registry,
             safety_gate: OptimizationSafetyGate::new(),
+            praxis_store: None,
         }
     }
 
@@ -37,12 +50,29 @@ impl Executor {
         Self {
             registry,
             safety_gate,
+            praxis_store: None,
         }
+    }
+
+    /// Create a new executor with a praxis constraint store.
+    ///
+    /// When a [`PraxisStore`] is provided, [`on_action`] is called before
+    /// every procedure execution.  Procedures that violate an `Error`-severity
+    /// constraint are blocked and a [`Event::ConstraintViolation`] is emitted
+    /// in place of the normal follow-up events.
+    pub fn with_praxis_store(mut self, store: Arc<PraxisStore>) -> Self {
+        self.praxis_store = Some(store);
+        self
     }
 
     /// Get a reference to the safety gate for external access.
     pub fn safety_gate(&self) -> &OptimizationSafetyGate {
         &self.safety_gate
+    }
+
+    /// Get a reference to the praxis store, if configured.
+    pub fn praxis_store(&self) -> Option<&PraxisStore> {
+        self.praxis_store.as_deref()
     }
 
     /// Dispatch a single event to every matching procedure and return all
@@ -65,6 +95,48 @@ impl Executor {
                 procedure = procedure_name,
                 kind, "executing procedure with safety check"
             );
+
+            // ── Praxis pre-action constraint check ───────────────────────────
+            if let Some(store) = &self.praxis_store {
+                // The executor always dispatches on behalf of the top-level
+                // orchestration session (`SessionType::Main`).  Sub-agent
+                // sessions build their own `AgentContext` before calling
+                // `on_action` directly; the executor-level hook covers the
+                // main dispatch path only.
+                let ctx = AgentContext::new(procedure_name, kind, SessionType::Main);
+                match on_action(store, &ctx) {
+                    Ok(warnings) => {
+                        for w in &warnings {
+                            warn!(
+                                procedure = procedure_name,
+                                constraint = w.constraint.id,
+                                fix = w.constraint.fix,
+                                "praxis warning: {}",
+                                w.message
+                            );
+                        }
+                    }
+                    Err(blocked) => {
+                        let fix = blocked
+                            .violations
+                            .iter()
+                            .map(|v| v.constraint.fix.as_str())
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        warn!(
+                            procedure = procedure_name,
+                            fix, "procedure execution blocked by praxis constraint(s): {}", blocked
+                        );
+                        follow_ups.push(Event::ConstraintViolation {
+                            procedure: procedure_name.to_string(),
+                            event_kind: kind.to_string(),
+                            message: blocked.to_string(),
+                            fix,
+                        });
+                        continue;
+                    }
+                }
+            }
 
             // Apply optimization safety check
             let action = format!("execute_procedure:{}", procedure_name);

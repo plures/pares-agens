@@ -5,7 +5,12 @@ use pares_agens_core::{
     procedure::{Procedure, ProcedureRegistry},
     source::EventSource,
 };
-use std::sync::Mutex;
+use pares_agens_praxis::db::{
+    schema::{Condition, Constraint, Severity},
+    seed::default_store,
+    store::PraxisStore,
+};
+use std::sync::{Arc, Mutex};
 
 // ---------------------------------------------------------------------------
 // Stub procedures used by integration tests
@@ -196,8 +201,8 @@ async fn registry_only_routes_matching_kinds() {
 }
 
 #[tokio::test]
-async fn all_five_event_kinds_are_constructible() {
-    let events = [
+async fn all_event_kinds_are_constructible() {
+    let events: Vec<Event> = vec![
         Event::Message {
             id: "1".into(),
             channel: "c".into(),
@@ -225,16 +230,154 @@ async fn all_five_event_kinds_are_constructible() {
             content: "{}".into(),
             is_error: false,
         },
+        Event::ConstraintViolation {
+            procedure: "p".into(),
+            event_kind: "message".into(),
+            message: "blocked".into(),
+            fix: "fix it".into(),
+        },
     ];
 
-    let kinds = [
+    let expected_kinds = [
         "message",
         "timer",
         "state_change",
         "model_response",
         "tool_result",
+        "constraint_violation",
     ];
-    for (event, expected_kind) in events.iter().zip(kinds.iter()) {
+    for (event, expected_kind) in events.iter().zip(expected_kinds.iter()) {
         assert_eq!(event.kind(), *expected_kind);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Praxis constraint gate tests
+// ---------------------------------------------------------------------------
+
+/// Build a PraxisStore containing exactly one blocking constraint that fires
+/// when the action type equals `"blocked_procedure"`.
+fn store_blocking_procedure() -> Arc<PraxisStore> {
+    let mut store = PraxisStore::new();
+    store.upsert_constraint(Constraint {
+        id: "T-0001".into(),
+        description: "Test: block_procedure is always blocked.".into(),
+        when: Condition::ActionStartsWith {
+            prefix: "blocked_procedure".into(),
+        },
+        require: Condition::Not {
+            condition: Box::new(Condition::Always),
+        }, // require: !Always → always fails when `when` triggers
+        fix: "Do not use blocked_procedure.".into(),
+        evidence: vec![],
+        severity: Severity::Error,
+    });
+    Arc::new(store)
+}
+
+/// Procedure whose name starts with `"blocked_procedure"` — triggers the
+/// test constraint above.
+struct BlockedProc;
+
+#[async_trait]
+impl Procedure for BlockedProc {
+    fn name(&self) -> &str {
+        "blocked_procedure"
+    }
+    fn handles(&self) -> &str {
+        "message"
+    }
+    async fn execute(&self, _: &Event) -> Vec<Event> {
+        // Should never be reached — constraint should block it.
+        vec![Event::Message {
+            id: "should-not-appear".into(),
+            channel: "test".into(),
+            sender: "agent".into(),
+            content: "should not appear".into(),
+        }]
+    }
+}
+
+#[tokio::test]
+async fn praxis_allows_safe_procedure() {
+    let mut registry = ProcedureRegistry::new();
+    registry.register(Box::new(EchoMessage));
+    // The default_store constraints (C-0002 through C-0008) gate on specific
+    // action-type prefixes such as "write_", "delete_", or metadata fields like
+    // "privilege_level".  The procedure name "echo_message" matches none of
+    // those patterns, so on_action must return Ok and execution proceeds.
+    let store = Arc::new(default_store());
+    let executor = Executor::new(registry).with_praxis_store(store);
+
+    let follow_ups = executor.dispatch(&msg("hello")).await;
+
+    // Should get the normal echo back — no ConstraintViolation
+    assert!(
+        follow_ups
+            .iter()
+            .all(|e| e.kind() != "constraint_violation"),
+        "safe procedure must not be blocked by praxis"
+    );
+    assert_eq!(follow_ups.len(), 1, "echo should still produce one reply");
+}
+
+#[tokio::test]
+async fn praxis_blocks_violating_procedure_and_emits_event() {
+    let mut registry = ProcedureRegistry::new();
+    registry.register(Box::new(BlockedProc));
+    let store = store_blocking_procedure();
+    let executor = Executor::new(registry).with_praxis_store(store);
+
+    let follow_ups = executor.dispatch(&msg("trigger")).await;
+
+    assert_eq!(
+        follow_ups.len(),
+        1,
+        "exactly one ConstraintViolation event expected"
+    );
+    match &follow_ups[0] {
+        Event::ConstraintViolation {
+            procedure,
+            event_kind,
+            message,
+            fix,
+        } => {
+            assert_eq!(procedure, "blocked_procedure");
+            assert_eq!(event_kind, "message");
+            assert!(
+                message.contains("T-0001"),
+                "message should reference the constraint id"
+            );
+            assert_eq!(fix, "Do not use blocked_procedure.");
+        }
+        other => panic!("expected ConstraintViolation, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn praxis_blocked_procedure_does_not_execute() {
+    let mut registry = ProcedureRegistry::new();
+    registry.register(Box::new(BlockedProc));
+    let store = store_blocking_procedure();
+    let executor = Executor::new(registry).with_praxis_store(store);
+
+    let follow_ups = executor.dispatch(&msg("trigger")).await;
+
+    // BlockedProc::execute returns a "should-not-appear" message — verify it
+    // is NOT present (only the ConstraintViolation should be there).
+    assert!(
+        follow_ups.iter().all(|e| e.kind() != "message"),
+        "blocked procedure must not produce normal follow-up events"
+    );
+}
+
+#[tokio::test]
+async fn praxis_without_store_executes_normally() {
+    // Executor without a praxis store — existing behaviour must be preserved.
+    let mut registry = ProcedureRegistry::new();
+    registry.register(Box::new(EchoMessage));
+    let executor = Executor::new(registry); // no praxis store
+
+    let follow_ups = executor.dispatch(&msg("hello")).await;
+    assert_eq!(follow_ups.len(), 1);
 }
