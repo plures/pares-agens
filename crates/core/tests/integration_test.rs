@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use pares_agens_core::{
     event::Event,
     executor::{Executor, NoopPraxisGate, PraxisGate},
+    optimization::OptimizationSafetyGate,
     procedure::{Procedure, ProcedureRegistry},
     source::EventSource,
 };
@@ -472,4 +473,22 @@ async fn praxis_without_store_executes_normally() {
 
     let follow_ups = executor.dispatch(&msg("hello")).await;
     assert_eq!(follow_ups.len(), 1);
+}
+
+/// Regression test: `Executor::with_safety_gate` must compile and initialise
+/// correctly (was missing `praxis_store: None` field, causing E0063 in PR #396).
+#[tokio::test]
+async fn with_safety_gate_compiles_and_executes() {
+    let mut registry = ProcedureRegistry::new();
+    registry.register(Box::new(EchoMessage));
+    let gate = OptimizationSafetyGate::new();
+    let executor = Executor::with_safety_gate(registry, gate);
+
+    // Verify the executor runs correctly with the custom safety gate.
+    let follow_ups = executor.dispatch(&msg("hello")).await;
+    assert_eq!(
+        follow_ups.len(),
+        1,
+        "with_safety_gate executor should execute procedures normally"
+    );
 }
