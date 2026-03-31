@@ -52,13 +52,15 @@ impl Default for DefaultPraxisGate {
 
 impl PraxisGate for DefaultPraxisGate {
     fn check(&self, action: &str) -> Result<(), String> {
-        use pares_agens_praxis::db::{AgentContext, SessionType};
         use pares_agens_praxis::db::procedures::on_action;
+        use pares_agens_praxis::db::{AgentContext, SessionType};
 
         // The second argument is the resource target; executor-level checks are
         // action-only and do not have a specific target resource.
         let ctx = AgentContext::new(action, "", SessionType::Main);
-        on_action(&self.store, &ctx).map(|_| ()).map_err(|blocked| blocked.to_string())
+        on_action(&self.store, &ctx)
+            .map(|_| ())
+            .map_err(|blocked| blocked.to_string())
     }
 }
 
@@ -113,6 +115,7 @@ impl Executor {
             registry,
             safety_gate,
             praxis_gate: Box::new(DefaultPraxisGate::new()),
+            praxis_store: None,
         }
     }
 
@@ -167,6 +170,32 @@ impl Executor {
                 procedure = procedure_name,
                 kind, "executing procedure with safety check"
             );
+
+            // Apply store-based praxis constraint check (emits ConstraintViolation)
+            if let Some(store) = &self.praxis_store {
+                // Use the procedure name as the action type; the target resource is
+                // not known at the executor level so an empty string is passed.
+                let ctx = AgentContext::new(procedure_name, "", SessionType::Main);
+                if let Err(blocked) = on_action(store, &ctx) {
+                    warn!(
+                        procedure = procedure_name,
+                        "procedure execution blocked by praxis store constraint"
+                    );
+                    let fix = blocked
+                        .violations
+                        .iter()
+                        .map(|v| v.constraint.fix.as_str())
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    follow_ups.push(Event::ConstraintViolation {
+                        procedure: procedure_name.to_string(),
+                        event_kind: kind.to_string(),
+                        message: blocked.to_string(),
+                        fix,
+                    });
+                    continue;
+                }
+            }
 
             // Apply praxis pre-action constraint check
             let action = format!("execute_procedure:{}", procedure_name);
