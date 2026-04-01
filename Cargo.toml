@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client", "crates/tauri-app", "crates/desktop", "crates/migrate", "crates/trainer", "crates/privacy", "crates/marketplace", "crates/arca", "crates/faber", "crates/agenda", "crates/optimizer", "crates/praxis", "crates/sync", "crates/service", "crates/autoresearch", "crates/bitnet-sys", "crates/bitnet", "crates/inference", "crates/audit", "crates/gpu", "crates/dmem"]
 
 [workspace.package]
-version = "undefined.2.4"
+version = "undefined.2.5"
 edition = "2021"
 license = "BSL-1.1"
 repository = "https://github.com/plures/pares-agens"

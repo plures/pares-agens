@@ -1,3 +1,7 @@
+## [undefined.2.5] — 2026-04-01
+
+- refactor: centralize lifecycle — call reusable from plures/repo-template (f7f4aa4)
+
 ## [undefined.2.4] — 2026-04-01
 
 - fix: lifecycle v4.4 — catch self-approval error, don't crash on own PRs (e462fb1)
