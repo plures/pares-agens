@@ -1,3 +1,7 @@
+## [undefined.2.2] — 2026-04-01
+
+- fix: lifecycle v4.2 — filter out release/publish checks from CI evaluation (4634715)
+
 ## [undefined.2.1] — 2026-04-01
 
 - fix: lifecycle v4.1 — process all PRs independently, add Path F debug logging (9844ba9)
