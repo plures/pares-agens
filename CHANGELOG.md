@@ -1,3 +1,7 @@
+## [undefined.2.4] — 2026-04-01
+
+- fix: lifecycle v4.4 — catch self-approval error, don't crash on own PRs (e462fb1)
+
 ## [undefined.2.3] — 2026-04-01
 
 - fix: lifecycle v4.3 — guard notify step, escape PR title in JSON (75ad6b6)
