@@ -1,3 +1,7 @@
+## [undefined.1.1] — 2026-04-01
+
+- fix(lifecycle): change return→continue so all PRs process in one tick (5be4997)
+
 ## [undefined.1.0] — 2026-03-31
 
 - fix(lifecycle): v9.1 — fix QA dispatch (client_payload as JSON object) (2d15f21)
