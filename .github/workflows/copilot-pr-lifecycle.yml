@@ -65,7 +65,10 @@ jobs:
 
             // ── Phase 1: Process open Copilot PRs ──
             const openPRs = await github.rest.pulls.list({ owner, repo, state: 'open', per_page: 10 });
-            const copilotPRs = openPRs.data.filter(p => p.user.login === 'Copilot');
+            console.log(`Found ${openPRs.data.length} open PRs`);
+            openPRs.data.forEach(p => console.log(`  PR #${p.number} by ${p.user.login} (${p.user.type})`));
+            const copilotPRs = openPRs.data.filter(p => p.user.login === 'Copilot' || p.user.login === 'copilot-swe-agent[bot]' || p.user.type === 'Bot');
+            console.log(`Copilot PRs: ${copilotPRs.length}`);
             let prHandled = false;
 
             for (const pr of copilotPRs) {
