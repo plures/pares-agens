@@ -1,3 +1,15 @@
+## [undefined.2.0] — 2026-04-01
+
+- feat: lifecycle v4 — merge all PRs, Copilot default reviewer, no nudges (e50f8c6)
+- chore: remove copilot-auto-assign.yml (cc75f65)
+- Merge pull request #416 from plures/copilot/fix-cargo-clippy-warnings (36e8909)
+- fix: correct invalid workspace version from undefined.1.1 to 0.6.1 (90b21ca)
+- fix(lifecycle): v9.2 — process all PRs per tick (return→continue), widen bot filter (266e978)
+- Initial plan (fb4a8db)
+- Initial plan (#400) (df95ae5)
+- Initial plan (#404) (09b385e)
+- fix(lifecycle): add debug logging + widen bot login filter (e5e2341)
+
 ## [undefined.1.1] — 2026-04-01
 
 - fix(lifecycle): change return→continue so all PRs process in one tick (5be4997)
