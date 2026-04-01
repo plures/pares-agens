@@ -2577,7 +2577,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mcp-client"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3115,7 +3115,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "chrono",
  "clap",
@@ -3131,7 +3131,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-agenda"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "chrono",
  "serde",
@@ -3142,7 +3142,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-arca"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -3156,7 +3156,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-audit"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3172,7 +3172,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-autoresearch"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "chrono",
  "serde",
@@ -3184,7 +3184,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-bitnet"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "pares-agens-bitnet-sys",
  "thiserror 2.0.18",
@@ -3192,11 +3192,11 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-bitnet-sys"
-version = "0.5.0"
+version = "0.5.1"
 
 [[package]]
 name = "pares-agens-channels"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "async-trait",
  "pares-agens-core",
@@ -3209,7 +3209,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-core"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3231,7 +3231,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-desktop"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -3241,7 +3241,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-dmem"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3255,7 +3255,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-faber"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "chrono",
  "serde",
@@ -3266,7 +3266,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-gpu"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "async-trait",
  "serde",
@@ -3277,7 +3277,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-inference"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3293,7 +3293,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-marketplace"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "pares-trainer",
  "serde",
@@ -3303,7 +3303,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-optimizer"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -3312,7 +3312,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-praxis"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "chrono",
  "serde",
@@ -3323,7 +3323,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-privacy"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "pares-trainer",
  "regex",
@@ -3335,7 +3335,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-service"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -3344,7 +3344,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-sync"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "chrono",
  "serde",
@@ -3355,7 +3355,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-tauri"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "mcp-client",
  "pares-agens",
@@ -3375,7 +3375,7 @@ dependencies = [
 
 [[package]]
 name = "pares-models"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3391,7 +3391,7 @@ dependencies = [
 
 [[package]]
 name = "pares-trainer"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "serde",
  "serde_json",
