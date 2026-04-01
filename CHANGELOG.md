@@ -1,3 +1,7 @@
+## [undefined.2.3] — 2026-04-01
+
+- fix: lifecycle v4.3 — guard notify step, escape PR title in JSON (75ad6b6)
+
 ## [undefined.2.2] — 2026-04-01
 
 - fix: lifecycle v4.2 — filter out release/publish checks from CI evaluation (4634715)
