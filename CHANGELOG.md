@@ -1,3 +1,11 @@
+## [undefined.2.6] — 2026-04-02
+
+- fix: restore valid semver version in Cargo.toml (b78b96f)
+- ci: tech-doc-writer triggers on minor prerelease only [actions-optimization] (a34fac4)
+- ci: add concurrency group to copilot-pr-lifecycle [actions-optimization] (056d773)
+- ci: centralize lifecycle — event-driven with schedule guard (f849b6a)
+- ci: remove copilot-queue-manager — redundant with lifecycle, violates no-comment rule (8146c36)
+
 ## [undefined.2.5] — 2026-04-01
 
 - refactor: centralize lifecycle — call reusable from plures/repo-template (f7f4aa4)
