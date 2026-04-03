@@ -10,6 +10,7 @@
 //! | [`store`] | [`PraxisStore`] — in-process collection store with graph traversal |
 //! | [`procedures`] | `evaluate`, `on_action`, `compile_nl`, `query_gaps` |
 //! | [`seed`] | Built-in constraints (migrated from `.praxis/`) + ADR-0004 records |
+//! | [`guidance`] | `GuidanceEntry`, `SourceSpan`, `AnalysisEvent` tables + [`GuidanceStore`] |
 //!
 //! # Quick start
 //!
@@ -27,12 +28,14 @@
 //! }
 //! ```
 
+pub mod guidance;
 pub mod procedures;
 pub mod schema;
 pub mod seed;
 pub mod store;
 
 // Re-export the most commonly used types at the `db` level for ergonomic imports.
+pub use guidance::{AnalysisEvent, GuidanceCategory, GuidanceEntry, GuidanceStore, SourceSpan};
 pub use schema::{
     Adr, AdrStatus, AgentContext, Condition, Constraint, Evidence, EvidenceResult, SessionType,
     Severity,
