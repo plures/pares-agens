@@ -1,10 +1,10 @@
 [package]
 name = "pares-agens-desktop"
 description = "Pares Agens desktop application — system tray agent node"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
+version = "0.4.0"
+edition = "2021"
+license = "BSL-1.1"
+repository = "https://github.com/plures/pares-agens"
 
 [lib]
 name = "pares_agens_desktop"

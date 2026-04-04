@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client", "crates/tauri-app", "crates/desktop", "crates/migrate", "crates/trainer", "crates/privacy", "crates/marketplace", "crates/arca", "crates/faber", "crates/agenda", "crates/optimizer", "crates/praxis", "crates/sync", "crates/service", "crates/autoresearch", "crates/bitnet-sys", "crates/bitnet", "crates/inference", "crates/audit", "crates/gpu", "crates/dmem"]
+members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client", "crates/migrate", "crates/trainer", "crates/privacy", "crates/marketplace", "crates/arca", "crates/faber", "crates/agenda", "crates/optimizer", "crates/praxis", "crates/sync", "crates/service", "crates/autoresearch", "crates/bitnet-sys", "crates/bitnet", "crates/inference", "crates/audit", "crates/gpu", "crates/dmem"]
+# Tauri desktop app crates require GTK/WebKit system libraries on Linux.
+# Excluding them from the workspace allows `cargo check --workspace` to run
+# on systems without those libraries installed (e.g. CI without display, QA).
+# They are built separately by build-installers.yml via `cargo tauri build`.
+exclude = ["crates/tauri-app", "crates/desktop"]
 
 [workspace.package]
 version = "0.4.0"
