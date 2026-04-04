@@ -103,3 +103,75 @@ pub fn platform_manager() -> Box<dyn ServiceManager> {
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     return Box::new(stub::StubServiceManager::new());
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── ServiceStatus ────────────────────────────────────────────────────────
+
+    #[test]
+    fn service_status_variants_are_distinct() {
+        assert_ne!(ServiceStatus::Running, ServiceStatus::Stopped);
+        assert_ne!(ServiceStatus::NotInstalled, ServiceStatus::Unknown);
+    }
+
+    #[test]
+    fn service_status_clone_and_debug() {
+        let s = ServiceStatus::Running;
+        let s2 = s.clone();
+        assert_eq!(s, s2);
+        assert!(!format!("{s:?}").is_empty());
+    }
+
+    #[test]
+    fn service_status_serde_round_trip() {
+        let statuses = [
+            ServiceStatus::Running,
+            ServiceStatus::Stopped,
+            ServiceStatus::NotInstalled,
+            ServiceStatus::Unknown,
+        ];
+        for status in &statuses {
+            let json = serde_json::to_string(status).expect("serialize");
+            let back: ServiceStatus = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*status, back);
+        }
+    }
+
+    // ── ServiceInfo ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn service_info_construction_and_clone() {
+        let info = ServiceInfo {
+            status: ServiceStatus::Running,
+            pid: Some(1234),
+            description: "running fine".to_string(),
+        };
+        let info2 = info.clone();
+        assert_eq!(info.pid, info2.pid);
+        assert_eq!(info.description, info2.description);
+    }
+
+    #[test]
+    fn service_info_serde_round_trip() {
+        let info = ServiceInfo {
+            status: ServiceStatus::Stopped,
+            pid: None,
+            description: "stopped".to_string(),
+        };
+        let json = serde_json::to_string(&info).expect("serialize");
+        let back: ServiceInfo = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.status, ServiceStatus::Stopped);
+        assert!(back.pid.is_none());
+        assert_eq!(back.description, "stopped");
+    }
+
+    // ── platform_manager ────────────────────────────────────────────────────
+
+    #[test]
+    fn platform_manager_returns_a_manager() {
+        // Just verify it constructs without panicking.
+        let _mgr = platform_manager();
+    }
+}
