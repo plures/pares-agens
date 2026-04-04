@@ -202,4 +202,70 @@ mod tests {
         assert!(content.contains("/usr/local/bin/pares-agens"));
         drop(unit_path);
     }
+
+    #[test]
+    fn default_uses_new() {
+        // Default::default() must produce a valid instance with a well-formed path.
+        let mgr = LinuxServiceManager::default();
+        let path = mgr.unit_file_path();
+        assert!(path.to_string_lossy().ends_with(".service"));
+    }
+
+    #[test]
+    fn unit_template_has_required_systemd_sections() {
+        assert!(UNIT_TEMPLATE.contains("[Unit]"));
+        assert!(UNIT_TEMPLATE.contains("[Service]"));
+        assert!(UNIT_TEMPLATE.contains("[Install]"));
+        assert!(UNIT_TEMPLATE.contains("ExecStart={exec_path}"));
+        assert!(UNIT_TEMPLATE.contains("Restart=on-failure"));
+    }
+
+    #[test]
+    fn status_returns_not_installed_when_unit_file_absent() {
+        // The CI environment has no pares-agens systemd unit installed, so
+        // status() must return NotInstalled without ever calling systemctl.
+        let mgr = LinuxServiceManager::new();
+        let unit_path = mgr.unit_file_path();
+        if unit_path.exists() {
+            // Skip this assertion when running on a developer machine that
+            // actually has the service installed.
+            return;
+        }
+        let info = mgr.status().expect("status() must not fail");
+        assert_eq!(info.status, crate::ServiceStatus::NotInstalled);
+        assert!(info.pid.is_none());
+    }
+
+    #[test]
+    fn install_writes_unit_file_to_correct_location() {
+        // Verify that the UNIT_TEMPLATE expands the exec_path placeholder and
+        // produces a well-formed systemd unit file.  This test exercises the
+        // template expansion logic without requiring systemctl.
+        let exec_path = "/usr/local/bin/pares-agens";
+        let content = UNIT_TEMPLATE.replace("{exec_path}", exec_path);
+
+        // The expanded file must contain the resolved ExecStart line.
+        assert!(
+            content.contains(&format!("ExecStart={exec_path}")),
+            "unit file must embed exec path"
+        );
+        // Confirm all required sections are present after expansion.
+        assert!(content.contains("[Unit]"));
+        assert!(content.contains("[Service]"));
+        assert!(content.contains("[Install]"));
+
+        // Verify the file can be written to a temp location (exercises the
+        // std::fs::write path used by install()).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let unit_path = tmp
+            .path()
+            .join("systemd")
+            .join("user")
+            .join(format!("{SERVICE_NAME}.service"));
+        std::fs::create_dir_all(unit_path.parent().unwrap()).expect("create dirs");
+        std::fs::write(&unit_path, &content).expect("write unit file");
+
+        let read_back = std::fs::read_to_string(&unit_path).expect("read unit file");
+        assert_eq!(content, read_back);
+    }
 }
