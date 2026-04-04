@@ -1,3 +1,10 @@
+## [undefined.3.0] — 2026-04-03
+
+- Merge pull request #426 from plures/copilot/persist-guidance-service-to-pluresdb (f58a49c)
+- Merge branch 'main' into copilot/persist-guidance-service-to-pluresdb (c3daf64)
+- feat(praxis/guidance): persist GuidanceService to PluresDB (e4f276b)
+- Initial plan (9a5cb62)
+
 ## [undefined.2.6] — 2026-04-02
 
 - fix: restore valid semver version in Cargo.toml (b78b96f)
