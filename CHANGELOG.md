@@ -1,3 +1,10 @@
+## [undefined.3.1] — 2026-04-04
+
+- Merge pull request #428 from plures/copilot/fix-ci-failures-on-pr-426 (38ba8c3)
+- Merge branch 'main' into copilot/fix-ci-failures-on-pr-426 (847c0df)
+- fix(ci): resolve cargo fmt failures from PR #426 guidance persistence (7a36d52)
+- Initial plan (b271962)
+
 ## [undefined.3.0] — 2026-04-03
 
 - Merge pull request #426 from plures/copilot/persist-guidance-service-to-pluresdb (f58a49c)
