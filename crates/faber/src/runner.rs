@@ -131,13 +131,20 @@ impl RunReport {
 /// Executes [`Pipeline`]s and produces [`RunReport`]s.
 ///
 /// Shell steps are spawned as real subprocesses via [`tokio::process::Command`]
-/// using `sh -c` on Unix or `cmd /C` on Windows.  Stdout and stderr are
-/// captured and stored in the [`StepResult`].  A non-zero exit code causes the
-/// step to be recorded as [`StepStatus::Failed`].
+/// using `sh -c` on Unix-like systems or `cmd /C` on Windows.  Stdout and
+/// stderr are captured and stored in the [`StepResult`].  A non-zero exit code
+/// causes the step to be recorded as [`StepStatus::Failed`].
 ///
 /// `AgentTool` steps are routed through an optional [`ToolDispatcher`].
 /// `EmitEvent` steps are routed through an optional [`EventBus`].
 /// When no dispatcher/bus is wired up the step is recorded as a passed stub.
+///
+/// # Security
+///
+/// Shell commands are passed verbatim to the system shell.  Callers are
+/// responsible for ensuring that [`StepKind::Shell`] commands come from a
+/// trusted source (e.g. a checked-in pipeline definition).  Never construct
+/// shell commands from untrusted user input.
 ///
 /// # Example
 ///
@@ -303,7 +310,13 @@ impl CiRunner {
 ///
 /// Returns `Ok((success, combined_output))` where `success` is `true` when the
 /// process exits with code 0.  On non-zero exit the combined output is prefixed
-/// with `exit <code>\n`.
+/// with `exit <code>\n`.  Processes terminated by a signal (no exit code on
+/// Unix) report `exit 255`.
+///
+/// # Security
+///
+/// The command string is passed verbatim to the system shell.  Callers must
+/// only pass commands from trusted pipeline definitions.
 async fn spawn_shell(command: &str) -> Result<(bool, String), FaberError> {
     use tokio::process::Command;
 
@@ -331,7 +344,9 @@ async fn spawn_shell(command: &str) -> Result<(bool, String), FaberError> {
     if output.status.success() {
         Ok((true, combined))
     } else {
-        let code = output.status.code().unwrap_or(-1);
+        // Processes killed by a signal have no exit code on Unix; use 255 as a
+        // sentinel value that is distinct from any valid exit code (0-254).
+        let code = output.status.code().unwrap_or(255);
         Ok((false, format!("exit {code}\n{combined}")))
     }
 }
