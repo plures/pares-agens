@@ -322,4 +322,138 @@ mod tests {
         let service = GuidanceService::new();
         assert!(!service.remove_guidance("nonexistent"));
     }
+
+    #[test]
+    fn add_guidance_auto_generates_id_when_empty() {
+        let service = GuidanceService::new();
+        let entry = GuidanceEntry {
+            id: String::new(),
+            category: GuidanceCategory::Facts,
+            content: "auto-id fact".to_string(),
+            confidence: 0.8,
+            source_spans: vec![],
+            generated_at: "2026-01-01T00:00:00Z".to_string(),
+            priority: 2,
+        };
+        let id = service.add_guidance(entry);
+        assert!(!id.is_empty());
+    }
+
+    #[test]
+    fn add_guidance_auto_generates_timestamp_when_empty() {
+        let service = GuidanceService::new();
+        let entry = GuidanceEntry {
+            id: "ts-test".to_string(),
+            category: GuidanceCategory::Facts,
+            content: "timestamp fact".to_string(),
+            confidence: 0.8,
+            source_spans: vec![],
+            generated_at: String::new(),
+            priority: 2,
+        };
+        service.add_guidance(entry);
+        let all = service.get_all_guidance();
+        assert_eq!(all.len(), 1);
+        assert!(!all[0].generated_at.is_empty());
+    }
+
+    #[test]
+    fn add_span_auto_generates_id_when_empty() {
+        let service = GuidanceService::new();
+        let span = SourceSpan {
+            id: String::new(),
+            memory_id: "mem-1".to_string(),
+            start_pos: 0,
+            end_pos: 5,
+            text: "hello".to_string(),
+            relevance: 0.9,
+        };
+        let id = service.add_span(span);
+        assert!(!id.is_empty());
+    }
+
+    #[test]
+    fn add_span_and_get_spans_roundtrip() {
+        let service = GuidanceService::new();
+        let span = SourceSpan {
+            id: "span-abc".to_string(),
+            memory_id: "mem-1".to_string(),
+            start_pos: 3,
+            end_pos: 12,
+            text: "some text".to_string(),
+            relevance: 0.75,
+        };
+        let returned_id = service.add_span(span);
+        assert_eq!(returned_id, "span-abc");
+
+        let ids = vec!["span-abc".to_string(), "span-missing".to_string()];
+        let spans = service.get_spans(&ids);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].id, "span-abc");
+        assert_eq!(spans[0].text, "some text");
+    }
+
+    #[test]
+    fn clear_removes_all_guidance_and_events() {
+        let service = GuidanceService::new();
+        service.inject_correction_guidance("some rule", "corr-1");
+        service.add_span(SourceSpan {
+            id: "s-1".to_string(),
+            memory_id: "m-1".to_string(),
+            start_pos: 0,
+            end_pos: 5,
+            text: "hello".to_string(),
+            relevance: 0.5,
+        });
+        assert_eq!(service.get_all_guidance().len(), 1);
+
+        service.clear();
+        assert!(service.get_all_guidance().is_empty());
+        assert!(service.get_recent_events(10).is_empty());
+    }
+
+    #[test]
+    fn default_trait_creates_empty_service() {
+        let service = GuidanceService::default();
+        assert!(service.get_all_guidance().is_empty());
+        assert!(service.get_recent_events(10).is_empty());
+    }
+
+    #[test]
+    fn generate_guidance_detects_error_and_bug_as_risk() {
+        let service = GuidanceService::new();
+        service.generate_guidance_from_memory("An error occurred in the pipeline", "mem-err");
+        let risks = service.get_guidance(&GuidanceCategory::Risks);
+        assert_eq!(risks.len(), 1);
+        assert!(risks[0].content.contains("error"));
+    }
+
+    #[test]
+    fn generate_guidance_detects_always_never_as_rule() {
+        let service = GuidanceService::new();
+        service.generate_guidance_from_memory("You should always validate inputs", "mem-rule");
+        let rules = service.get_guidance(&GuidanceCategory::Rules);
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].content.contains("Policy"));
+    }
+
+    #[test]
+    fn generate_guidance_content_with_no_patterns_only_records_event() {
+        let service = GuidanceService::new();
+        service.generate_guidance_from_memory("The sky is blue", "mem-plain");
+        assert!(service.get_all_guidance().is_empty());
+        let events = service.get_recent_events(10);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "memory_analyzed");
+    }
+
+    #[test]
+    fn guidance_category_as_str_covers_all_variants() {
+        assert_eq!(GuidanceCategory::Facts.as_str(), "facts");
+        assert_eq!(GuidanceCategory::Rules.as_str(), "rules");
+        assert_eq!(GuidanceCategory::Constraints.as_str(), "constraints");
+        assert_eq!(GuidanceCategory::Decisions.as_str(), "decisions");
+        assert_eq!(GuidanceCategory::Risks.as_str(), "risks");
+        assert_eq!(GuidanceCategory::Guidance.as_str(), "guidance");
+    }
 }
