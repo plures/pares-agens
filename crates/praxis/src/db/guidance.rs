@@ -247,7 +247,12 @@ impl GuidanceStore {
 mod tests {
     use super::*;
 
-    fn make_entry(id: &str, category: GuidanceCategory, priority: u8, confidence: f32) -> GuidanceEntry {
+    fn make_entry(
+        id: &str,
+        category: GuidanceCategory,
+        priority: u8,
+        confidence: f32,
+    ) -> GuidanceEntry {
         GuidanceEntry {
             id: id.to_string(),
             category,
@@ -351,10 +356,10 @@ mod tests {
         store.upsert_entry(make_entry("med-lo", GuidanceCategory::Facts, 2, 0.5));
 
         let facts = store.entries_by_category(&GuidanceCategory::Facts);
-        assert_eq!(facts[0].id, "high");       // priority 1
-        assert_eq!(facts[1].id, "med-hi");     // priority 2, confidence 0.9
-        assert_eq!(facts[2].id, "med-lo");     // priority 2, confidence 0.5
-        assert_eq!(facts[3].id, "low");        // priority 3
+        assert_eq!(facts[0].id, "high"); // priority 1
+        assert_eq!(facts[1].id, "med-hi"); // priority 2, confidence 0.9
+        assert_eq!(facts[2].id, "med-lo"); // priority 2, confidence 0.5
+        assert_eq!(facts[3].id, "low"); // priority 3
     }
 
     #[test]
@@ -382,7 +387,11 @@ mod tests {
         store.upsert_span(make_span("S-001", "mem-1"));
         store.upsert_span(make_span("S-002", "mem-2"));
 
-        let ids = vec!["S-001".to_string(), "S-002".to_string(), "S-MISSING".to_string()];
+        let ids = vec![
+            "S-001".to_string(),
+            "S-002".to_string(),
+            "S-MISSING".to_string(),
+        ];
         let spans = store.spans_by_ids(&ids);
         assert_eq!(spans.len(), 2);
     }
@@ -437,7 +446,11 @@ mod tests {
         assert_eq!(newest[0].id, "E-NEW");
 
         // E-000 was evicted
-        let all: Vec<&str> = store.recent_events(50).iter().map(|e| e.id.as_str()).collect();
+        let all: Vec<&str> = store
+            .recent_events(50)
+            .iter()
+            .map(|e| e.id.as_str())
+            .collect();
         assert!(!all.contains(&"E-000"), "E-000 should have been evicted");
         assert!(all.contains(&"E-001"), "E-001 should still be present");
     }

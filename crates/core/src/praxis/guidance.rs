@@ -323,4 +323,3 @@ mod tests {
         assert!(!service.remove_guidance("nonexistent"));
     }
 }
-
