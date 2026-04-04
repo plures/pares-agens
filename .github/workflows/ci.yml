@@ -59,6 +59,14 @@ jobs:
       - name: cargo check
         run: cargo check --workspace
 
+      - name: cargo check (Tauri desktop crates — requires system libraries)
+        # These crates are excluded from the workspace because they require
+        # GTK/WebKit system libraries on Linux. Check them explicitly here
+        # now that the system libraries are installed.
+        run: |
+          cargo check --manifest-path crates/tauri-app/Cargo.toml
+          cargo check --manifest-path crates/desktop/Cargo.toml
+
       - name: cargo fmt
         run: cargo fmt --all -- --check
 
