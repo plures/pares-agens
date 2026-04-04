@@ -3275,10 +3275,12 @@ dependencies = [
 name = "pares-agens-faber"
 version = "0.4.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tokio",
  "uuid",
 ]
 
