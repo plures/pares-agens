@@ -217,6 +217,43 @@ impl PluresDbBridge {
             .exec(&steps)
             .map_err(|e| BridgeError::Execution(e.to_string()))
     }
+
+    /// Load praxis constraints stored in PluresDB.
+    ///
+    /// Queries for nodes with type `praxis:constraint` and deserializes them
+    /// into [`Constraint`] records.  Returns an empty vec if no constraints
+    /// are stored (the caller should merge with seed constraints).
+    pub fn load_constraints(
+        &self,
+    ) -> Result<Vec<pares_agens_praxis::db::schema::Constraint>, BridgeError> {
+        use pluresdb_procedures::ir::{Predicate, Step};
+
+        let steps = vec![Step::Filter {
+            predicate: Predicate::eq("type", "praxis:constraint"),
+        }];
+
+        let engine = ProcedureEngine::new(&self.crdt, "pares-agens");
+        let result = engine
+            .exec(&steps)
+            .map_err(|e| BridgeError::Execution(e.to_string()))?;
+
+        let mut constraints = Vec::new();
+        for node in &result.nodes {
+            // Each node is a serde_json::Value; try to deserialize the constraint data
+            match serde_json::from_value::<pares_agens_praxis::db::schema::Constraint>(
+                node.clone(),
+            ) {
+                Ok(c) => constraints.push(c),
+                Err(e) => {
+                    tracing::warn!(
+                        "failed to deserialize praxis constraint from node: {e}"
+                    );
+                }
+            }
+        }
+
+        Ok(constraints)
+    }
 }
 
 // ---------------------------------------------------------------------------
