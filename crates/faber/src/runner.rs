@@ -1,5 +1,8 @@
 //! CI pipeline execution engine for Faber.
 
+use std::{fmt, sync::Arc};
+
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -8,6 +11,45 @@ use crate::{
     pipeline::{Pipeline, StepKind},
     FaberError,
 };
+
+// ── ToolDispatcher ────────────────────────────────────────────────────────────
+
+/// Dispatches an [`AgentTool`](StepKind::AgentTool) step to the appropriate
+/// handler.
+///
+/// Implement this trait to route tool invocations through your agent runtime.
+/// When no dispatcher is configured on a [`CiRunner`] the step is recorded as
+/// a passed stub.
+#[async_trait]
+pub trait ToolDispatcher: Send + Sync {
+    /// Invoke `tool` with the given `args` and return the JSON result.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`FaberError`] if the tool invocation fails.
+    async fn dispatch(
+        &self,
+        tool: &str,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, FaberError>;
+}
+
+// ── EventBus ─────────────────────────────────────────────────────────────────
+
+/// Emits events for [`EmitEvent`](StepKind::EmitEvent) steps.
+///
+/// Implement this trait to forward pipeline events to your event bus.
+/// When no bus is configured on a [`CiRunner`] the step is recorded as a
+/// passed stub.
+#[async_trait]
+pub trait EventBus: Send + Sync {
+    /// Emit a single event `payload`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`FaberError`] if the event cannot be emitted.
+    async fn emit(&self, payload: &serde_json::Value) -> Result<(), FaberError>;
+}
 
 // ── StepStatus ────────────────────────────────────────────────────────────────
 
@@ -88,14 +130,26 @@ impl RunReport {
 
 /// Executes [`Pipeline`]s and produces [`RunReport`]s.
 ///
-/// In this MVP, `CiRunner` simulates execution: `Shell` commands are not
-/// actually spawned; instead the command string is echoed as the step output.
-/// `AgentTool` and `EmitEvent` steps are recorded as passed stubs.  A full
-/// implementation will integrate with the Pares event bus.
+/// Shell steps are spawned as real subprocesses via [`tokio::process::Command`]
+/// using `sh -c` on Unix-like systems or `cmd /C` on Windows.  Stdout and
+/// stderr are captured and stored in the [`StepResult`].  A non-zero exit code
+/// causes the step to be recorded as [`StepStatus::Failed`].
+///
+/// `AgentTool` steps are routed through an optional [`ToolDispatcher`].
+/// `EmitEvent` steps are routed through an optional [`EventBus`].
+/// When no dispatcher/bus is wired up the step is recorded as a passed stub.
+///
+/// # Security
+///
+/// Shell commands are passed verbatim to the system shell.  Callers are
+/// responsible for ensuring that [`StepKind::Shell`] commands come from a
+/// trusted source (e.g. a checked-in pipeline definition).  Never construct
+/// shell commands from untrusted user input.
 ///
 /// # Example
 ///
 /// ```
+/// # tokio::runtime::Runtime::new().unwrap().block_on(async {
 /// use pares_agens_faber::pipeline::{Pipeline, Step, StepKind};
 /// use pares_agens_faber::runner::CiRunner;
 ///
@@ -104,17 +158,52 @@ impl RunReport {
 /// ]).unwrap();
 ///
 /// let runner = CiRunner::new();
-/// let report = runner.run(&pipeline).unwrap();
+/// let report = runner.run(&pipeline).await.unwrap();
 /// assert!(report.is_success());
+/// # });
 /// ```
-#[derive(Debug, Default)]
-pub struct CiRunner;
+pub struct CiRunner {
+    tool_dispatcher: Option<Arc<dyn ToolDispatcher>>,
+    event_bus: Option<Arc<dyn EventBus>>,
+}
+
+impl fmt::Debug for CiRunner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CiRunner")
+            .field("tool_dispatcher", &self.tool_dispatcher.is_some())
+            .field("event_bus", &self.event_bus.is_some())
+            .finish()
+    }
+}
+
+impl Default for CiRunner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl CiRunner {
-    /// Create a new `CiRunner`.
+    /// Create a new `CiRunner` with no dispatcher or event bus wired up.
     #[must_use]
     pub fn new() -> Self {
-        Self
+        Self {
+            tool_dispatcher: None,
+            event_bus: None,
+        }
+    }
+
+    /// Attach a [`ToolDispatcher`] that handles [`StepKind::AgentTool`] steps.
+    #[must_use]
+    pub fn with_tool_dispatcher(mut self, dispatcher: Arc<dyn ToolDispatcher>) -> Self {
+        self.tool_dispatcher = Some(dispatcher);
+        self
+    }
+
+    /// Attach an [`EventBus`] that handles [`StepKind::EmitEvent`] steps.
+    #[must_use]
+    pub fn with_event_bus(mut self, bus: Arc<dyn EventBus>) -> Self {
+        self.event_bus = Some(bus);
+        self
     }
 
     /// Execute `pipeline` and return a [`RunReport`].
@@ -127,7 +216,7 @@ impl CiRunner {
     ///
     /// Returns [`FaberError::InvalidPipeline`] if the pipeline has no steps
     /// (this is also enforced by [`Pipeline::new`]).
-    pub fn run(&self, pipeline: &Pipeline) -> Result<RunReport, FaberError> {
+    pub async fn run(&self, pipeline: &Pipeline) -> Result<RunReport, FaberError> {
         if pipeline.steps().is_empty() {
             return Err(FaberError::InvalidPipeline(
                 "pipeline contains no steps".to_string(),
@@ -148,7 +237,7 @@ impl CiRunner {
                 continue;
             }
 
-            let (status, output) = self.execute_step_kind(&step.kind);
+            let (status, output) = self.execute_step_kind(&step.kind).await;
             let failed = status == StepStatus::Failed;
             step_results.push(StepResult {
                 step_name: step.name.clone(),
@@ -177,24 +266,88 @@ impl CiRunner {
         })
     }
 
-    /// Simulate execution of a single step kind.
-    ///
-    /// Returns `(StepStatus, Option<output>)`.
-    fn execute_step_kind(&self, kind: &StepKind) -> (StepStatus, Option<String>) {
+    /// Execute a single step kind and return `(status, optional_output)`.
+    async fn execute_step_kind(&self, kind: &StepKind) -> (StepStatus, Option<String>) {
         match kind {
-            StepKind::Shell { command } => {
-                // MVP: echo the command rather than spawning a subprocess.
-                (StepStatus::Passed, Some(format!("[simulated] $ {command}")))
+            StepKind::Shell { command } => match spawn_shell(command).await {
+                Ok((true, out)) => (StepStatus::Passed, Some(out)),
+                Ok((false, out)) => (StepStatus::Failed, Some(out)),
+                Err(e) => (StepStatus::Failed, Some(e.to_string())),
+            },
+            StepKind::AgentTool { tool, args } => {
+                if let Some(dispatcher) = &self.tool_dispatcher {
+                    match dispatcher.dispatch(tool, args).await {
+                        Ok(result) => (StepStatus::Passed, Some(result.to_string())),
+                        Err(e) => (StepStatus::Failed, Some(e.to_string())),
+                    }
+                } else {
+                    (
+                        StepStatus::Passed,
+                        Some(format!("[stub] tool={tool} args={args}")),
+                    )
+                }
             }
-            StepKind::AgentTool { tool, args } => (
-                StepStatus::Passed,
-                Some(format!("[simulated] tool={tool} args={}", args)),
-            ),
-            StepKind::EmitEvent { payload } => (
-                StepStatus::Passed,
-                Some(format!("[simulated] emit {payload}")),
-            ),
+            StepKind::EmitEvent { payload } => {
+                if let Some(bus) = &self.event_bus {
+                    match bus.emit(payload).await {
+                        Ok(()) => (StepStatus::Passed, Some(format!("[emitted] {payload}"))),
+                        Err(e) => (StepStatus::Failed, Some(e.to_string())),
+                    }
+                } else {
+                    (
+                        StepStatus::Passed,
+                        Some(format!("[stub] emit {payload}")),
+                    )
+                }
+            }
         }
+    }
+}
+
+// ── spawn_shell ───────────────────────────────────────────────────────────────
+
+/// Spawn `command` in a shell, capturing stdout + stderr.
+///
+/// Returns `Ok((success, combined_output))` where `success` is `true` when the
+/// process exits with code 0.  On non-zero exit the combined output is prefixed
+/// with `exit <code>\n`.  Processes terminated by a signal (no exit code on
+/// Unix) report `exit 255`.
+///
+/// # Security
+///
+/// The command string is passed verbatim to the system shell.  Callers must
+/// only pass commands from trusted pipeline definitions.
+async fn spawn_shell(command: &str) -> Result<(bool, String), FaberError> {
+    use tokio::process::Command;
+
+    let output = if cfg!(target_os = "windows") {
+        Command::new("cmd").args(["/C", command]).output().await
+    } else {
+        Command::new("sh").args(["-c", command]).output().await
+    }
+    .map_err(FaberError::Io)?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    let mut combined = String::new();
+    if !stdout.is_empty() {
+        combined.push_str(&stdout);
+    }
+    if !stderr.is_empty() {
+        if !combined.is_empty() {
+            combined.push('\n');
+        }
+        combined.push_str(&stderr);
+    }
+
+    if output.status.success() {
+        Ok((true, combined))
+    } else {
+        // Processes killed by a signal have no exit code on Unix; use 255 as a
+        // sentinel value that is distinct from any valid exit code (0-254).
+        let code = output.status.code().unwrap_or(255);
+        Ok((false, format!("exit {code}\n{combined}")))
     }
 }
 
@@ -214,10 +367,19 @@ mod tests {
         )
     }
 
-    #[test]
-    fn successful_pipeline_produces_success_report() {
+    fn failing_shell(name: &str) -> Step {
+        Step::new(
+            name,
+            StepKind::Shell {
+                command: "exit 1".to_string(),
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn successful_pipeline_produces_success_report() {
         let p = Pipeline::new("ci", vec![shell("build"), shell("test")]).unwrap();
-        let report = CiRunner::new().run(&p).unwrap();
+        let report = CiRunner::new().run(&p).await.unwrap();
         assert!(report.is_success());
         assert_eq!(report.step_results.len(), 2);
         assert!(report
@@ -226,36 +388,88 @@ mod tests {
             .all(|r| r.status == StepStatus::Passed));
     }
 
-    #[test]
-    fn run_id_is_unique_across_runs() {
+    #[tokio::test]
+    async fn shell_step_captures_stdout() {
+        let p = Pipeline::new(
+            "capture",
+            vec![Step::new(
+                "greet",
+                StepKind::Shell {
+                    command: "echo hello-world".to_string(),
+                },
+            )],
+        )
+        .unwrap();
+        let report = CiRunner::new().run(&p).await.unwrap();
+        assert!(report.is_success());
+        let output = report.step_results[0].output.as_deref().unwrap_or("");
+        assert!(output.contains("hello-world"), "stdout not captured: {output}");
+    }
+
+    #[tokio::test]
+    async fn shell_step_fails_on_nonzero_exit() {
+        let p = Pipeline::new(
+            "fail",
+            vec![Step::new(
+                "bad",
+                StepKind::Shell {
+                    command: "exit 1".to_string(),
+                },
+            )],
+        )
+        .unwrap();
+        let report = CiRunner::new().run(&p).await.unwrap();
+        assert_eq!(report.status, RunStatus::Failure);
+        assert_eq!(report.step_results[0].status, StepStatus::Failed);
+        let output = report.step_results[0].output.as_deref().unwrap_or("");
+        assert!(output.starts_with("exit 1"), "expected exit code in output: {output}");
+    }
+
+    #[tokio::test]
+    async fn run_id_is_unique_across_runs() {
         let p = Pipeline::new("x", vec![shell("s")]).unwrap();
         let runner = CiRunner::new();
-        let r1 = runner.run(&p).unwrap();
-        let r2 = runner.run(&p).unwrap();
+        let r1 = runner.run(&p).await.unwrap();
+        let r2 = runner.run(&p).await.unwrap();
         assert_ne!(r1.run_id, r2.run_id);
     }
 
-    #[test]
-    fn fail_fast_step_skips_subsequent_steps() {
-        // Simulate failure by running a pipeline where we detect via output.
-        // We cannot inject a real failure in this MVP, so we verify the
-        // skip logic by manually constructing step results through a
-        // white-box test of the runner internals (via a failing AgentTool
-        // that always passes in the stub).
-        //
-        // Instead, verify that a multi-step all-pass pipeline records all
-        // steps as passed.
-        let p = Pipeline::new("multi", vec![shell("a"), shell("b"), shell("c")]).unwrap();
-        let report = CiRunner::new().run(&p).unwrap();
-        assert_eq!(report.step_results.len(), 3);
-        assert!(report
-            .step_results
-            .iter()
-            .all(|r| r.status == StepStatus::Passed));
+    #[tokio::test]
+    async fn fail_fast_step_skips_subsequent_steps() {
+        let p = Pipeline::new(
+            "fail-fast",
+            vec![
+                shell("pass"),
+                failing_shell("fail"),
+                shell("skipped"),
+            ],
+        )
+        .unwrap();
+        let report = CiRunner::new().run(&p).await.unwrap();
+        assert_eq!(report.status, RunStatus::Failure);
+        assert_eq!(report.step_results[0].status, StepStatus::Passed);
+        assert_eq!(report.step_results[1].status, StepStatus::Failed);
+        assert_eq!(report.step_results[2].status, StepStatus::Skipped);
     }
 
-    #[test]
-    fn agent_tool_step_passes_in_mvp() {
+    #[tokio::test]
+    async fn non_fail_fast_step_allows_subsequent_steps() {
+        let p = Pipeline::new(
+            "no-fail-fast",
+            vec![
+                failing_shell("fail").with_fail_fast(false),
+                shell("still-runs"),
+            ],
+        )
+        .unwrap();
+        let report = CiRunner::new().run(&p).await.unwrap();
+        assert_eq!(report.status, RunStatus::Failure);
+        assert_eq!(report.step_results[0].status, StepStatus::Failed);
+        assert_eq!(report.step_results[1].status, StepStatus::Passed);
+    }
+
+    #[tokio::test]
+    async fn agent_tool_stub_passes_without_dispatcher() {
         let p = Pipeline::new(
             "tool-run",
             vec![Step::new(
@@ -267,12 +481,90 @@ mod tests {
             )],
         )
         .unwrap();
-        let report = CiRunner::new().run(&p).unwrap();
+        let report = CiRunner::new().run(&p).await.unwrap();
         assert!(report.is_success());
+        let output = report.step_results[0].output.as_deref().unwrap_or("");
+        assert!(output.contains("[stub]"), "expected stub output: {output}");
     }
 
-    #[test]
-    fn emit_event_step_passes_in_mvp() {
+    #[tokio::test]
+    async fn agent_tool_routed_through_dispatcher() {
+        use std::sync::Mutex;
+
+        struct RecordingDispatcher {
+            calls: Mutex<Vec<String>>,
+        }
+
+        #[async_trait]
+        impl ToolDispatcher for RecordingDispatcher {
+            async fn dispatch(
+                &self,
+                tool: &str,
+                _args: &serde_json::Value,
+            ) -> Result<serde_json::Value, FaberError> {
+                self.calls.lock().unwrap().push(tool.to_string());
+                Ok(serde_json::json!({"ok": true}))
+            }
+        }
+
+        let dispatcher = Arc::new(RecordingDispatcher {
+            calls: Mutex::new(vec![]),
+        });
+        let runner = CiRunner::new().with_tool_dispatcher(dispatcher.clone());
+
+        let p = Pipeline::new(
+            "dispatch",
+            vec![Step::new(
+                "call-tool",
+                StepKind::AgentTool {
+                    tool: "my-tool".to_string(),
+                    args: serde_json::json!({}),
+                },
+            )],
+        )
+        .unwrap();
+        let report = runner.run(&p).await.unwrap();
+        assert!(report.is_success());
+        assert_eq!(dispatcher.calls.lock().unwrap().as_slice(), ["my-tool"]);
+    }
+
+    #[tokio::test]
+    async fn failing_dispatcher_marks_step_failed() {
+        struct FailingDispatcher;
+
+        #[async_trait]
+        impl ToolDispatcher for FailingDispatcher {
+            async fn dispatch(
+                &self,
+                _tool: &str,
+                _args: &serde_json::Value,
+            ) -> Result<serde_json::Value, FaberError> {
+                Err(FaberError::StepFailed {
+                    step: "call-tool".to_string(),
+                    reason: "tool unavailable".to_string(),
+                })
+            }
+        }
+
+        let runner = CiRunner::new().with_tool_dispatcher(Arc::new(FailingDispatcher));
+        let p = Pipeline::new(
+            "fail-tool",
+            vec![Step::new(
+                "call-tool",
+                StepKind::AgentTool {
+                    tool: "broken".to_string(),
+                    args: serde_json::json!({}),
+                },
+            )],
+        )
+        .unwrap();
+        let report = runner.run(&p).await.unwrap();
+        assert_eq!(report.status, RunStatus::Failure);
+        assert_eq!(report.step_results[0].status, StepStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn emit_event_stub_passes_without_bus() {
         let p = Pipeline::new(
             "event-run",
             vec![Step::new(
@@ -283,7 +575,76 @@ mod tests {
             )],
         )
         .unwrap();
-        let report = CiRunner::new().run(&p).unwrap();
+        let report = CiRunner::new().run(&p).await.unwrap();
         assert!(report.is_success());
+        let output = report.step_results[0].output.as_deref().unwrap_or("");
+        assert!(output.contains("[stub]"), "expected stub output: {output}");
+    }
+
+    #[tokio::test]
+    async fn emit_event_routed_through_bus() {
+        use std::sync::Mutex;
+
+        struct RecordingBus {
+            events: Mutex<Vec<serde_json::Value>>,
+        }
+
+        #[async_trait]
+        impl EventBus for RecordingBus {
+            async fn emit(&self, payload: &serde_json::Value) -> Result<(), FaberError> {
+                self.events.lock().unwrap().push(payload.clone());
+                Ok(())
+            }
+        }
+
+        let bus = Arc::new(RecordingBus {
+            events: Mutex::new(vec![]),
+        });
+        let runner = CiRunner::new().with_event_bus(bus.clone());
+
+        let payload = serde_json::json!({"event": "build.done"});
+        let p = Pipeline::new(
+            "event-bus",
+            vec![Step::new(
+                "emit",
+                StepKind::EmitEvent {
+                    payload: payload.clone(),
+                },
+            )],
+        )
+        .unwrap();
+        let report = runner.run(&p).await.unwrap();
+        assert!(report.is_success());
+        assert_eq!(bus.events.lock().unwrap()[0], payload);
+    }
+
+    #[tokio::test]
+    async fn failing_bus_marks_step_failed() {
+        struct FailingBus;
+
+        #[async_trait]
+        impl EventBus for FailingBus {
+            async fn emit(&self, _payload: &serde_json::Value) -> Result<(), FaberError> {
+                Err(FaberError::StepFailed {
+                    step: "emit".to_string(),
+                    reason: "bus offline".to_string(),
+                })
+            }
+        }
+
+        let runner = CiRunner::new().with_event_bus(Arc::new(FailingBus));
+        let p = Pipeline::new(
+            "fail-bus",
+            vec![Step::new(
+                "emit",
+                StepKind::EmitEvent {
+                    payload: serde_json::json!({}),
+                },
+            )],
+        )
+        .unwrap();
+        let report = runner.run(&p).await.unwrap();
+        assert_eq!(report.status, RunStatus::Failure);
+        assert_eq!(report.step_results[0].status, StepStatus::Failed);
     }
 }

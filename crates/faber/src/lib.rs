@@ -39,6 +39,10 @@ pub enum FaberError {
     #[error("run cancelled: {0}")]
     Cancelled(String),
 
+    /// An I/O error occurred while spawning or waiting for a subprocess.
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
     /// JSON (de)serialisation failed.
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
