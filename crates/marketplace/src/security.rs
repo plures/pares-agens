@@ -13,16 +13,15 @@
 //! A [`SecurityReport`] aggregates all findings and provides a convenient
 //! [`is_safe`](SecurityReport::is_safe) predicate.
 //!
-//! # Stub behaviour
-//!
-//! Checksum verification compares the SHA-256 hex digest of the supplied
-//! bytes against the expected value.  Signature verification checks that a
-//! signature field is present and non-empty.  Pattern scanning uses a
-//! keyword list rather than a full static-analysis pass so that the crate
-//! compiles with zero additional dependencies.
+//! Checksum verification computes a real SHA-256 digest of the supplied bytes
+//! (via the `sha2` crate) and compares it against the expected hex value.
+//! Signature verification checks that a signature field is present and
+//! non-empty.  Pattern scanning uses a keyword list rather than a full
+//! static-analysis pass.
 
 use crate::{MarketplaceError, SkillMetadata};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 // ── Severity ──────────────────────────────────────────────────────────────────
 
@@ -110,6 +109,8 @@ impl SecurityChecker {
     /// Verify that `data` matches `expected_checksum` (a lowercase SHA-256 hex
     /// digest).
     ///
+    /// The digest is computed with a real SHA-256 implementation (`sha2`).
+    ///
     /// # Errors
     ///
     /// - [`MarketplaceError::InvalidMetadata`] — `expected_checksum` is not a
@@ -143,8 +144,7 @@ impl SecurityChecker {
     /// required.
     ///
     /// A signature is considered present when `metadata.signature` is
-    /// `Some(s)` and `s` is non-empty.  A real implementation would verify
-    /// the signature cryptographically.
+    /// `Some(s)` and `s` is non-empty.
     ///
     /// # Errors
     ///
@@ -272,26 +272,17 @@ const SUSPICIOUS_PATTERNS: &[(&str, &str, Severity)] = &[
     ("api_key", "hard-coded API key candidate", Severity::Medium),
 ];
 
-// ── SHA-256 stub ──────────────────────────────────────────────────────────────
+// ── SHA-256 ───────────────────────────────────────────────────────────────────
 
-/// Compute a deterministic but **non-cryptographic** hex digest of `data`.
-///
-/// This is a lightweight stand-in for a real SHA-256 implementation so that
-/// the crate can be tested without pulling in `sha2` or `ring`.  A
-/// production deployment should replace this with a proper hash function.
+/// Compute the SHA-256 hex digest of `data`.
 fn sha256_hex(data: &[u8]) -> String {
-    // FNV-1a 64-bit hash stretched to 64 hex characters.
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for &byte in data {
-        hash ^= u64(byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
+    use std::fmt::Write as _;
+    let hash = Sha256::digest(data);
+    let mut s = String::with_capacity(64);
+    for b in &hash {
+        write!(s, "{b:02x}").expect("formatting to String is infallible");
     }
-    // Repeat the hash four times to produce a 64-character hex string.
-    format!("{hash:016x}{hash:016x}{hash:016x}{hash:016x}")
-}
-
-fn u64(b: u8) -> u64 {
-    u64::from(b)
+    s
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -316,15 +307,10 @@ mod tests {
         let checker = SecurityChecker::new();
         let data = b"hello world";
         let wrong = "a".repeat(64);
-        // Only fails when the stub digest doesn't happen to equal "aaa…"
-        let result = checker.verify_checksum(data, &wrong);
-        // Either ok (unlikely collision) or SecurityViolation.
-        if result.is_err() {
-            assert!(matches!(
-                result,
-                Err(MarketplaceError::SecurityViolation(_))
-            ));
-        }
+        assert!(matches!(
+            checker.verify_checksum(data, &wrong),
+            Err(MarketplaceError::SecurityViolation(_))
+        ));
     }
 
     #[test]
@@ -333,6 +319,36 @@ mod tests {
         assert!(matches!(
             checker.verify_checksum(b"data", "not-a-hash"),
             Err(MarketplaceError::InvalidMetadata(_))
+        ));
+    }
+
+    /// Known-good SHA-256 fixture: SHA-256(b"hello world") verified against
+    /// the system `sha256sum` utility.
+    #[test]
+    fn verify_checksum_known_good_hello_world() {
+        let checker = SecurityChecker::new();
+        // echo -n "hello world" | sha256sum
+        let digest = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
+        assert!(checker.verify_checksum(b"hello world", digest).is_ok());
+    }
+
+    /// Known-good SHA-256 fixture: SHA-256(b"") is the well-known empty hash.
+    #[test]
+    fn verify_checksum_known_good_empty() {
+        let checker = SecurityChecker::new();
+        // SHA-256 of the empty string — RFC-4634 test vector.
+        let digest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        assert!(checker.verify_checksum(b"", digest).is_ok());
+    }
+
+    /// SHA-256 of one input must not match a different input.
+    #[test]
+    fn verify_checksum_different_data_fails() {
+        let checker = SecurityChecker::new();
+        let digest = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
+        assert!(matches!(
+            checker.verify_checksum(b"hello WORLD", digest),
+            Err(MarketplaceError::SecurityViolation(_))
         ));
     }
 
