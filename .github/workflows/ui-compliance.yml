@@ -1,0 +1,130 @@
+name: Design-Dojo UI Compliance
+on:
+  pull_request:
+    paths:
+      - '**/*.svelte'
+      - '**/*.ts'
+      - '**/*.tsx'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ui-compliance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for inline UI primitives
+        id: check
+        run: |
+          set -euo pipefail
+
+          # Files changed in this PR
+          CHANGED=$(git diff --name-only ${{ github.event.pull_request.base.sha }}..HEAD -- '*.svelte' '*.ts' '*.tsx' || true)
+
+          if [ -z "$CHANGED" ]; then
+            echo "No UI files changed"
+            echo "violations=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          VIOLATIONS=""
+          COUNT=0
+
+          # Banned raw HTML elements in Svelte files (should use design-dojo components)
+          BANNED_ELEMENTS="<button[^>]*>|<input[^>]*>|<select[^>]*>|<textarea[^>]*>|<dialog[^>]*>|<table[^>]*>|<progress[^>]*>"
+
+          # Banned local component patterns
+          BANNED_IMPORTS="from ['\"](\./|\.\./|@/|\\\$lib/)(components|ui)/"
+
+          for file in $CHANGED; do
+            [ -f "$file" ] || continue
+
+            # Skip design-dojo itself, test files, examples
+            if echo "$file" | grep -qE "design-dojo/|__tests__|\.test\.|\.spec\.|examples/|stories/"; then
+              continue
+            fi
+
+            # Check for raw HTML elements in .svelte files
+            if echo "$file" | grep -qE "\.svelte$"; then
+              raw_hits=$(grep -nE "$BANNED_ELEMENTS" "$file" 2>/dev/null | grep -v "<!--" | grep -v "// " || true)
+              if [ -n "$raw_hits" ]; then
+                while IFS= read -r line; do
+                  VIOLATIONS="${VIOLATIONS}❌ \`${file}\`: ${line}\n"
+                  COUNT=$((COUNT + 1))
+                done <<< "$raw_hits"
+              fi
+            fi
+
+            # Check for local component imports (should import from @plures/design-dojo)
+            local_imports=$(grep -nE "$BANNED_IMPORTS" "$file" 2>/dev/null || true)
+            if [ -n "$local_imports" ]; then
+              while IFS= read -r line; do
+                # Allow importing from @plures/design-dojo re-exports
+                if ! echo "$line" | grep -q "design-dojo"; then
+                  VIOLATIONS="${VIOLATIONS}⚠️ \`${file}\`: ${line} — should import from @plures/design-dojo\n"
+                  COUNT=$((COUNT + 1))
+                fi
+              done <<< "$local_imports"
+            fi
+          done
+
+          echo "violations=$COUNT" >> "$GITHUB_OUTPUT"
+
+          if [ "$COUNT" -gt 0 ]; then
+            echo "## 🥋 Design-Dojo UI Compliance Report" > /tmp/compliance-report.md
+            echo "" >> /tmp/compliance-report.md
+            echo "Found **$COUNT** violation(s). All UI primitives must come from \`@plures/design-dojo\`." >> /tmp/compliance-report.md
+            echo "" >> /tmp/compliance-report.md
+            echo "### Violations" >> /tmp/compliance-report.md
+            echo "" >> /tmp/compliance-report.md
+            echo -e "$VIOLATIONS" >> /tmp/compliance-report.md
+            echo "" >> /tmp/compliance-report.md
+            echo "### How to fix" >> /tmp/compliance-report.md
+            echo "1. Check if the component exists in \`@plures/design-dojo\` (Button, Input, Select, Dialog, Table, Toggle, etc.)" >> /tmp/compliance-report.md
+            echo "2. If it exists: \`import { Button } from '@plures/design-dojo'\`" >> /tmp/compliance-report.md
+            echo "3. If it doesn't exist: create it in [plures/design-dojo](https://github.com/plures/design-dojo) first, then import" >> /tmp/compliance-report.md
+            echo "4. **Never** use raw HTML \`<button>\`, \`<input>\`, \`<select>\`, \`<dialog>\`, \`<table>\` directly" >> /tmp/compliance-report.md
+
+            cat /tmp/compliance-report.md
+
+            echo "---"
+            echo "FAIL: $COUNT UI compliance violations found"
+            exit 1
+          else
+            echo "✅ All UI components properly imported from @plures/design-dojo"
+          fi
+
+      - name: Comment on PR
+        if: failure() && steps.check.outputs.violations != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('/tmp/compliance-report.md', 'utf8');
+
+            // Find existing comment to update
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const botComment = comments.find(c => c.body.includes('Design-Dojo UI Compliance Report'));
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: report,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: report,
+              });
+            }
