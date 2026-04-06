@@ -294,10 +294,7 @@ impl CiRunner {
                         Err(e) => (StepStatus::Failed, Some(e.to_string())),
                     }
                 } else {
-                    (
-                        StepStatus::Passed,
-                        Some(format!("[stub] emit {payload}")),
-                    )
+                    (StepStatus::Passed, Some(format!("[stub] emit {payload}")))
                 }
             }
         }
@@ -403,7 +400,10 @@ mod tests {
         let report = CiRunner::new().run(&p).await.unwrap();
         assert!(report.is_success());
         let output = report.step_results[0].output.as_deref().unwrap_or("");
-        assert!(output.contains("hello-world"), "stdout not captured: {output}");
+        assert!(
+            output.contains("hello-world"),
+            "stdout not captured: {output}"
+        );
     }
 
     #[tokio::test]
@@ -422,7 +422,10 @@ mod tests {
         assert_eq!(report.status, RunStatus::Failure);
         assert_eq!(report.step_results[0].status, StepStatus::Failed);
         let output = report.step_results[0].output.as_deref().unwrap_or("");
-        assert!(output.starts_with("exit 1"), "expected exit code in output: {output}");
+        assert!(
+            output.starts_with("exit 1"),
+            "expected exit code in output: {output}"
+        );
     }
 
     #[tokio::test]
@@ -438,11 +441,7 @@ mod tests {
     async fn fail_fast_step_skips_subsequent_steps() {
         let p = Pipeline::new(
             "fail-fast",
-            vec![
-                shell("pass"),
-                failing_shell("fail"),
-                shell("skipped"),
-            ],
+            vec![shell("pass"), failing_shell("fail"), shell("skipped")],
         )
         .unwrap();
         let report = CiRunner::new().run(&p).await.unwrap();
