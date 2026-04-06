@@ -29,9 +29,12 @@
 pub mod guidance;
 /// Decision ledger — append-only audit trail with optional approval gates.
 pub mod ledger;
+/// PluresDB-backed praxis gate for native constraint evaluation.
+pub mod pluresdb_gate;
 
 pub use guidance::{AnalysisEvent, GuidanceCategory, GuidanceEntry, GuidanceService, SourceSpan};
 pub use ledger::{
     GateStatus, InMemoryLedgerStore, Ledger, LedgerContext, LedgerEntry, LedgerStore,
     LedgerStoreError, NoOpChannel, NotificationChannel, PluresDbLedgerStore, ValidationStatus,
 };
+pub use pluresdb_gate::PluresDbPraxisGate;
