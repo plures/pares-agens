@@ -55,7 +55,6 @@ impl PluresDbPraxisGate {
     }
 }
 
-
 impl PraxisGate for PluresDbPraxisGate {
     fn check(&self, action: &str) -> Result<(), String> {
         let store = self.build_store();
