@@ -55,9 +55,6 @@ impl PluresDbPraxisGate {
     }
 }
 
-// Safety: PluresDbBridge is Send + Sync through Arc, PraxisStore built per-call.
-unsafe impl Send for PluresDbPraxisGate {}
-unsafe impl Sync for PluresDbPraxisGate {}
 
 impl PraxisGate for PluresDbPraxisGate {
     fn check(&self, action: &str) -> Result<(), String> {
