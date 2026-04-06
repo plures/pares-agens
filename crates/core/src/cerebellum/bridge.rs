@@ -240,14 +240,11 @@ impl PluresDbBridge {
         let mut constraints = Vec::new();
         for node in &result.nodes {
             // Each node is a serde_json::Value; try to deserialize the constraint data
-            match serde_json::from_value::<pares_agens_praxis::db::schema::Constraint>(
-                node.clone(),
-            ) {
+            match serde_json::from_value::<pares_agens_praxis::db::schema::Constraint>(node.clone())
+            {
                 Ok(c) => constraints.push(c),
                 Err(e) => {
-                    tracing::warn!(
-                        "failed to deserialize praxis constraint from node: {e}"
-                    );
+                    tracing::warn!("failed to deserialize praxis constraint from node: {e}");
                 }
             }
         }
