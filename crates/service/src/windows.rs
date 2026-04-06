@@ -3,6 +3,13 @@
 //! Manages the Pares Agens background service through the Windows Service
 //! Control Manager (SCM).
 //!
+//! ## Service Start Type
+//!
+//! The service is registered with `ServiceStartType::AutoStart`, meaning it
+//! starts automatically when Windows boots.  If on-demand startup is
+//! preferred, modify the registry entry after installation or use the Services
+//! GUI (`services.msc`) to change the startup type to **Manual**.
+//!
 //! ## Required Permissions
 //!
 //! Most lifecycle operations require **Administrator** (elevated) privileges.
@@ -63,7 +70,7 @@ use windows_service::{
 };
 
 /// Windows service name as registered with the SCM.
-const SERVICE_NAME: &str = "PareAgens";
+const SERVICE_NAME: &str = "ParesAgens";
 
 /// Human-readable display name shown in `services.msc`.
 const SERVICE_DISPLAY_NAME: &str = "Pares Agens AI Assistant";
@@ -153,12 +160,20 @@ impl ScmBackend for RealScmBackend {
         let (status, description) = match win_status.current_state {
             ServiceState::Running => (ServiceStatus::Running, "Service is running".to_owned()),
             ServiceState::Stopped => (ServiceStatus::Stopped, "Service is stopped".to_owned()),
+            // Transitional states: map to the nearest stable state so that
+            // callers do not attempt conflicting control operations while the
+            // SCM is in the middle of a state change.  A `StopPending` service
+            // is treated as `Stopped` (prevents issuing a duplicate `stop()`),
+            // and a `StartPending` service is treated as `Running` (prevents
+            // issuing a duplicate `start()`).
             ServiceState::StopPending => {
                 (ServiceStatus::Stopped, "Service is stopping".to_owned())
             }
             ServiceState::StartPending => {
                 (ServiceStatus::Running, "Service is starting".to_owned())
             }
+            // Paused services cannot be started without first being resumed;
+            // `Stopped` is the closest available variant in the current enum.
             ServiceState::Paused
             | ServiceState::PausePending
             | ServiceState::ContinuePending => {
