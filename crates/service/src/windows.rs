@@ -140,8 +140,8 @@ fn is_already_exists(e: &windows_service::Error) -> bool {
 
 impl ScmBackend for RealScmBackend {
     fn query_state(&self) -> Result<ServiceInfo, ServiceError> {
-        let scm = WinScm::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
-            .map_err(map_err)?;
+        let scm =
+            WinScm::local_computer(None::<&str>, ServiceManagerAccess::CONNECT).map_err(map_err)?;
 
         let service = match scm.open_service(SERVICE_NAME, ServiceAccess::QUERY_STATUS) {
             Ok(s) => s,
@@ -166,17 +166,13 @@ impl ScmBackend for RealScmBackend {
             // is treated as `Stopped` (prevents issuing a duplicate `stop()`),
             // and a `StartPending` service is treated as `Running` (prevents
             // issuing a duplicate `start()`).
-            ServiceState::StopPending => {
-                (ServiceStatus::Stopped, "Service is stopping".to_owned())
-            }
+            ServiceState::StopPending => (ServiceStatus::Stopped, "Service is stopping".to_owned()),
             ServiceState::StartPending => {
                 (ServiceStatus::Running, "Service is starting".to_owned())
             }
             // Paused services cannot be started without first being resumed;
             // `Stopped` is the closest available variant in the current enum.
-            ServiceState::Paused
-            | ServiceState::PausePending
-            | ServiceState::ContinuePending => {
+            ServiceState::Paused | ServiceState::PausePending | ServiceState::ContinuePending => {
                 (ServiceStatus::Stopped, "Service is paused".to_owned())
             }
         };
@@ -220,8 +216,8 @@ impl ScmBackend for RealScmBackend {
     }
 
     fn do_start(&self) -> Result<(), ServiceError> {
-        let scm = WinScm::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
-            .map_err(map_err)?;
+        let scm =
+            WinScm::local_computer(None::<&str>, ServiceManagerAccess::CONNECT).map_err(map_err)?;
         let service = scm
             .open_service(SERVICE_NAME, ServiceAccess::START)
             .map_err(map_err)?;
@@ -231,8 +227,8 @@ impl ScmBackend for RealScmBackend {
     }
 
     fn do_stop(&self) -> Result<(), ServiceError> {
-        let scm = WinScm::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
-            .map_err(map_err)?;
+        let scm =
+            WinScm::local_computer(None::<&str>, ServiceManagerAccess::CONNECT).map_err(map_err)?;
         let service = scm
             .open_service(SERVICE_NAME, ServiceAccess::STOP)
             .map_err(map_err)?;
@@ -241,13 +237,10 @@ impl ScmBackend for RealScmBackend {
     }
 
     fn do_uninstall(&self) -> Result<(), ServiceError> {
-        let scm = WinScm::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
-            .map_err(map_err)?;
+        let scm =
+            WinScm::local_computer(None::<&str>, ServiceManagerAccess::CONNECT).map_err(map_err)?;
         let service = scm
-            .open_service(
-                SERVICE_NAME,
-                ServiceAccess::STOP | ServiceAccess::DELETE,
-            )
+            .open_service(SERVICE_NAME, ServiceAccess::STOP | ServiceAccess::DELETE)
             .map_err(map_err)?;
         // Attempt to stop first; ignore errors (service may already be stopped).
         let _ = service.stop();
