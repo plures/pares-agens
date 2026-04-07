@@ -4,11 +4,11 @@
 //! of the agent as a long-running background service using the native service
 //! manager for each platform:
 //!
-//! | Platform | Backend           |
-//! |----------|-------------------|
-//! | Linux    | systemd user unit |
-//! | macOS    | launchd agent     |
-//! | Windows  | stub (future)     |
+//! | Platform | Backend                   |
+//! |----------|---------------------------|
+//! | Linux    | systemd user unit         |
+//! | macOS    | launchd agent             |
+//! | Windows  | Windows Service (SCM)     |
 //!
 //! # Quick start
 //!
@@ -89,7 +89,7 @@ pub trait ServiceManager: Send + Sync {
 /// Return the platform-native [`ServiceManager`] for the current OS.
 ///
 /// On Linux this returns a systemd user-unit manager; on macOS a launchd
-/// agent; on Windows a stub that returns [`ServiceError::Unsupported`].
+/// agent; on Windows the Windows Service Control Manager backend.
 pub fn platform_manager() -> Box<dyn ServiceManager> {
     #[cfg(target_os = "linux")]
     return Box::new(linux::LinuxServiceManager::new());
