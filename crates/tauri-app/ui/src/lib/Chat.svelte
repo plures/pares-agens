@@ -208,7 +208,7 @@
   </form>
 </main>
 
-<script context="module">
+<script module>
   /** Simple markdown-ish formatting for chat messages */
   function formatContent(text) {
     if (!text) return '';
