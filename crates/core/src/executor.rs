@@ -441,9 +441,7 @@ mod tests {
             "an evidence request must be created for InsufficientData"
         );
         assert!(
-            evidence[0]
-                .description
-                .contains("experimental_optimizer"),
+            evidence[0].description.contains("experimental_optimizer"),
             "evidence description should mention the blocked procedure"
         );
     }
