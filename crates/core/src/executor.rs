@@ -13,255 +13,6 @@ use crate::{
     source::EventSource,
 };
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        event::Event,
-        procedure::{Procedure, ProcedureRegistry},
-        source::EventSource,
-    };
-    use async_trait::async_trait;
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    };
-
-    // ── helpers ───────────────────────────────────────────────────────────────
-
-    /// An `EventSource` that returns a fixed list of events on every call.
-    struct StaticEventSource {
-        events: Vec<Event>,
-    }
-
-    #[async_trait]
-    impl EventSource for StaticEventSource {
-        async fn poll_events(&self) -> Vec<Event> {
-            self.events.clone()
-        }
-    }
-
-    /// A `Procedure` that increments a shared counter on each execution and
-    /// returns a pre-configured list of follow-up events.
-    struct CountingProcedure {
-        name: &'static str,
-        handles: &'static str,
-        counter: Arc<AtomicUsize>,
-        follow_ups: Vec<Event>,
-    }
-
-    #[async_trait]
-    impl Procedure for CountingProcedure {
-        fn name(&self) -> &str {
-            self.name
-        }
-        fn handles(&self) -> &str {
-            self.handles
-        }
-        async fn execute(&self, _event: &Event) -> Vec<Event> {
-            self.counter.fetch_add(1, Ordering::SeqCst);
-            self.follow_ups.clone()
-        }
-    }
-
-    fn message_event() -> Event {
-        Event::Message {
-            id: "msg-1".into(),
-            channel: "test".into(),
-            sender: "user".into(),
-            content: "hello".into(),
-        }
-    }
-
-    fn timer_event() -> Event {
-        Event::Timer {
-            id: "tmr-1".into(),
-            name: "test_timer".into(),
-            recurring: false,
-        }
-    }
-
-    // ── dispatch: no matching procedures ─────────────────────────────────────
-
-    /// Regression: dispatching an event for which no procedure is registered
-    /// must return an empty follow-up list and must not panic.
-    #[tokio::test]
-    async fn dispatch_returns_empty_when_no_matching_procedures() {
-        let mut registry = ProcedureRegistry::new();
-        // Only a "message" handler is registered; a "timer" event is dispatched.
-        let counter = Arc::new(AtomicUsize::new(0));
-        registry.register(Box::new(CountingProcedure {
-            name: "handle_message",
-            handles: "message",
-            counter: counter.clone(),
-            follow_ups: vec![],
-        }));
-
-        let executor = Executor::with_praxis_gate(registry, Box::new(NoopPraxisGate));
-        let follow_ups = executor.dispatch(&timer_event()).await;
-
-        assert!(
-            follow_ups.is_empty(),
-            "expected no follow-ups for unmatched event kind"
-        );
-        assert_eq!(
-            counter.load(Ordering::SeqCst),
-            0,
-            "message handler must not run for a timer event"
-        );
-    }
-
-    // ── dispatch: safety gate — InsufficientData ──────────────────────────────
-
-    /// Procedures whose resolved action string contains "experimental" (or
-    /// "beta") are classified as `InsufficientData` by the safety gate.
-    /// The handler must not run, telemetry must be recorded, and an evidence
-    /// request must be generated.
-    #[tokio::test]
-    async fn dispatch_blocked_by_insufficient_data() {
-        let counter = Arc::new(AtomicUsize::new(0));
-        let mut registry = ProcedureRegistry::new();
-        // "execute_procedure:experimental_optimizer" contains "experimental"
-        // → safety gate returns InsufficientData.
-        registry.register(Box::new(CountingProcedure {
-            name: "experimental_optimizer",
-            handles: "message",
-            counter: counter.clone(),
-            follow_ups: vec![],
-        }));
-
-        let executor = Executor::with_praxis_gate(registry, Box::new(NoopPraxisGate));
-        let follow_ups = executor.dispatch(&message_event()).await;
-
-        assert!(
-            follow_ups.is_empty(),
-            "blocked procedure must not produce follow-ups"
-        );
-        assert_eq!(
-            counter.load(Ordering::SeqCst),
-            0,
-            "handler must not execute when gate returns InsufficientData"
-        );
-
-        let telemetry = executor.safety_gate().get_telemetry(None);
-        assert_eq!(telemetry.len(), 1, "one telemetry record expected");
-        assert_eq!(
-            telemetry[0].safety_status,
-            crate::optimization::OptimizationSafety::InsufficientData
-        );
-
-        let evidence = executor.safety_gate().get_pending_evidence_requests();
-        assert_eq!(
-            evidence.len(),
-            1,
-            "an evidence request must be created for InsufficientData"
-        );
-        assert!(
-            evidence[0]
-                .description
-                .contains("experimental_optimizer"),
-            "evidence description should mention the blocked procedure"
-        );
-    }
-
-    // ── dispatch: safety gate — UnsafeSolution ────────────────────────────────
-
-    /// Procedures whose resolved action string contains "delete" (or "remove")
-    /// are classified as `UnsafeSolution` by the safety gate.
-    /// The handler must not run, telemetry must be recorded, and no evidence
-    /// request should be generated (evidence requests are only for
-    /// `InsufficientData`).
-    #[tokio::test]
-    async fn dispatch_blocked_by_unsafe_solution() {
-        let counter = Arc::new(AtomicUsize::new(0));
-        let mut registry = ProcedureRegistry::new();
-        // "execute_procedure:delete_records" contains "delete"
-        // → safety gate returns UnsafeSolution.
-        registry.register(Box::new(CountingProcedure {
-            name: "delete_records",
-            handles: "message",
-            counter: counter.clone(),
-            follow_ups: vec![],
-        }));
-
-        let executor = Executor::with_praxis_gate(registry, Box::new(NoopPraxisGate));
-        let follow_ups = executor.dispatch(&message_event()).await;
-
-        assert!(
-            follow_ups.is_empty(),
-            "blocked procedure must not produce follow-ups"
-        );
-        assert_eq!(
-            counter.load(Ordering::SeqCst),
-            0,
-            "handler must not execute when gate returns UnsafeSolution"
-        );
-
-        let telemetry = executor.safety_gate().get_telemetry(None);
-        assert_eq!(telemetry.len(), 1, "one telemetry record expected");
-        assert_eq!(
-            telemetry[0].safety_status,
-            crate::optimization::OptimizationSafety::UnsafeSolution
-        );
-
-        let evidence = executor.safety_gate().get_pending_evidence_requests();
-        assert!(
-            evidence.is_empty(),
-            "UnsafeSolution must not generate an evidence request"
-        );
-    }
-
-    // ── run: follow-ups processed within the same tick ────────────────────────
-
-    /// When a procedure returns follow-up events, those events must be
-    /// dispatched within the **same** iteration of the event loop — before
-    /// the next `poll_events` call.
-    #[tokio::test]
-    async fn run_processes_follow_up_events_within_same_tick() {
-        let message_counter = Arc::new(AtomicUsize::new(0));
-        let timer_counter = Arc::new(AtomicUsize::new(0));
-
-        let mut registry = ProcedureRegistry::new();
-
-        // The "message" handler emits a timer event as a follow-up.
-        registry.register(Box::new(CountingProcedure {
-            name: "handle_message",
-            handles: "message",
-            counter: message_counter.clone(),
-            follow_ups: vec![timer_event()],
-        }));
-
-        // The "timer" handler should be invoked as a consequence of the above.
-        registry.register(Box::new(CountingProcedure {
-            name: "handle_timer",
-            handles: "timer",
-            counter: timer_counter.clone(),
-            follow_ups: vec![],
-        }));
-
-        let executor = Executor::with_praxis_gate(registry, Box::new(NoopPraxisGate));
-        // StaticEventSource always returns the same events; max_iterations = 1
-        // ensures we process exactly one tick and then stop.
-        let source = StaticEventSource {
-            events: vec![message_event()],
-        };
-        executor.run(&source, 1).await;
-
-        assert_eq!(
-            message_counter.load(Ordering::SeqCst),
-            1,
-            "message handler must run exactly once"
-        );
-        assert_eq!(
-            timer_counter.load(Ordering::SeqCst),
-            1,
-            "timer follow-up handler must run within the same tick"
-        );
-    }
-}
-
 // ── PraxisGate ────────────────────────────────────────────────────────────────
 
 /// Checks praxis pre-action constraints before a procedure is executed.
@@ -541,5 +292,252 @@ impl Executor {
                 break;
             }
         }
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        event::Event,
+        procedure::{Procedure, ProcedureRegistry},
+        source::EventSource,
+    };
+    use async_trait::async_trait;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    // ── helpers ───────────────────────────────────────────────────────────────
+
+    /// An `EventSource` that returns a fixed list of events on every call.
+    struct StaticEventSource {
+        events: Vec<Event>,
+    }
+
+    #[async_trait]
+    impl EventSource for StaticEventSource {
+        async fn poll_events(&self) -> Vec<Event> {
+            self.events.clone()
+        }
+    }
+
+    /// A `Procedure` that increments a shared counter on each execution and
+    /// returns a pre-configured list of follow-up events.
+    struct CountingProcedure {
+        name: &'static str,
+        handles: &'static str,
+        counter: Arc<AtomicUsize>,
+        follow_ups: Vec<Event>,
+    }
+
+    #[async_trait]
+    impl Procedure for CountingProcedure {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn handles(&self) -> &str {
+            self.handles
+        }
+        async fn execute(&self, _event: &Event) -> Vec<Event> {
+            self.counter.fetch_add(1, Ordering::SeqCst);
+            self.follow_ups.clone()
+        }
+    }
+
+    fn message_event() -> Event {
+        Event::Message {
+            id: "msg-1".into(),
+            channel: "test".into(),
+            sender: "user".into(),
+            content: "hello".into(),
+        }
+    }
+
+    fn timer_event() -> Event {
+        Event::Timer {
+            id: "tmr-1".into(),
+            name: "test_timer".into(),
+            recurring: false,
+        }
+    }
+
+    // ── dispatch: no matching procedures ─────────────────────────────────────
+
+    /// Regression: dispatching an event for which no procedure is registered
+    /// must return an empty follow-up list and must not panic.
+    #[tokio::test]
+    async fn dispatch_returns_empty_when_no_matching_procedures() {
+        let mut registry = ProcedureRegistry::new();
+        // Only a "message" handler is registered; a "timer" event is dispatched.
+        let counter = Arc::new(AtomicUsize::new(0));
+        registry.register(Box::new(CountingProcedure {
+            name: "handle_message",
+            handles: "message",
+            counter: counter.clone(),
+            follow_ups: vec![],
+        }));
+
+        let executor = Executor::with_praxis_gate(registry, Box::new(NoopPraxisGate));
+        let follow_ups = executor.dispatch(&timer_event()).await;
+
+        assert!(
+            follow_ups.is_empty(),
+            "expected no follow-ups for unmatched event kind"
+        );
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            0,
+            "message handler must not run for a timer event"
+        );
+    }
+
+    // ── dispatch: safety gate — InsufficientData ──────────────────────────────
+
+    /// Procedures whose resolved action string contains "experimental" (or
+    /// "beta") are classified as `InsufficientData` by the safety gate.
+    /// The handler must not run, telemetry must be recorded, and an evidence
+    /// request must be generated.
+    #[tokio::test]
+    async fn dispatch_blocked_by_insufficient_data() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut registry = ProcedureRegistry::new();
+        // "execute_procedure:experimental_optimizer" contains "experimental"
+        // → safety gate returns InsufficientData.
+        registry.register(Box::new(CountingProcedure {
+            name: "experimental_optimizer",
+            handles: "message",
+            counter: counter.clone(),
+            follow_ups: vec![],
+        }));
+
+        let executor = Executor::with_praxis_gate(registry, Box::new(NoopPraxisGate));
+        let follow_ups = executor.dispatch(&message_event()).await;
+
+        assert!(
+            follow_ups.is_empty(),
+            "blocked procedure must not produce follow-ups"
+        );
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            0,
+            "handler must not execute when gate returns InsufficientData"
+        );
+
+        let telemetry = executor.safety_gate().get_telemetry(None);
+        assert_eq!(telemetry.len(), 1, "one telemetry record expected");
+        assert_eq!(
+            telemetry[0].safety_status,
+            crate::optimization::OptimizationSafety::InsufficientData
+        );
+
+        let evidence = executor.safety_gate().get_pending_evidence_requests();
+        assert_eq!(
+            evidence.len(),
+            1,
+            "an evidence request must be created for InsufficientData"
+        );
+        assert!(
+            evidence[0].description.contains("experimental_optimizer"),
+            "evidence description should mention the blocked procedure"
+        );
+    }
+
+    // ── dispatch: safety gate — UnsafeSolution ────────────────────────────────
+
+    /// Procedures whose resolved action string contains "delete" (or "remove")
+    /// are classified as `UnsafeSolution` by the safety gate.
+    /// The handler must not run, telemetry must be recorded, and no evidence
+    /// request should be generated (evidence requests are only for
+    /// `InsufficientData`).
+    #[tokio::test]
+    async fn dispatch_blocked_by_unsafe_solution() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut registry = ProcedureRegistry::new();
+        // "execute_procedure:delete_records" contains "delete"
+        // → safety gate returns UnsafeSolution.
+        registry.register(Box::new(CountingProcedure {
+            name: "delete_records",
+            handles: "message",
+            counter: counter.clone(),
+            follow_ups: vec![],
+        }));
+
+        let executor = Executor::with_praxis_gate(registry, Box::new(NoopPraxisGate));
+        let follow_ups = executor.dispatch(&message_event()).await;
+
+        assert!(
+            follow_ups.is_empty(),
+            "blocked procedure must not produce follow-ups"
+        );
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            0,
+            "handler must not execute when gate returns UnsafeSolution"
+        );
+
+        let telemetry = executor.safety_gate().get_telemetry(None);
+        assert_eq!(telemetry.len(), 1, "one telemetry record expected");
+        assert_eq!(
+            telemetry[0].safety_status,
+            crate::optimization::OptimizationSafety::UnsafeSolution
+        );
+
+        let evidence = executor.safety_gate().get_pending_evidence_requests();
+        assert!(
+            evidence.is_empty(),
+            "UnsafeSolution must not generate an evidence request"
+        );
+    }
+
+    // ── run: follow-ups processed within the same tick ────────────────────────
+
+    /// When a procedure returns follow-up events, those events must be
+    /// dispatched within the **same** iteration of the event loop — before
+    /// the next `poll_events` call.
+    #[tokio::test]
+    async fn run_processes_follow_up_events_within_same_tick() {
+        let message_counter = Arc::new(AtomicUsize::new(0));
+        let timer_counter = Arc::new(AtomicUsize::new(0));
+
+        let mut registry = ProcedureRegistry::new();
+
+        // The "message" handler emits a timer event as a follow-up.
+        registry.register(Box::new(CountingProcedure {
+            name: "handle_message",
+            handles: "message",
+            counter: message_counter.clone(),
+            follow_ups: vec![timer_event()],
+        }));
+
+        // The "timer" handler should be invoked as a consequence of the above.
+        registry.register(Box::new(CountingProcedure {
+            name: "handle_timer",
+            handles: "timer",
+            counter: timer_counter.clone(),
+            follow_ups: vec![],
+        }));
+
+        let executor = Executor::with_praxis_gate(registry, Box::new(NoopPraxisGate));
+        // StaticEventSource always returns the same events; max_iterations = 1
+        // ensures we process exactly one tick and then stop.
+        let source = StaticEventSource {
+            events: vec![message_event()],
+        };
+        executor.run(&source, 1).await;
+
+        assert_eq!(
+            message_counter.load(Ordering::SeqCst),
+            1,
+            "message handler must run exactly once"
+        );
+        assert_eq!(
+            timer_counter.load(Ordering::SeqCst),
+            1,
+            "timer follow-up handler must run within the same tick"
+        );
     }
 }
