@@ -237,14 +237,16 @@ jobs:
                 // Ensure labels exist before creating the issue
                 for (const lbl of ['ci-failure', 'bug']) {
                   try { await github.rest.issues.getLabel({ owner, repo, name: lbl }); } catch (_) {
-                    await github.rest.issues.createLabel({ owner, repo, name: lbl, color: lbl === 'bug' ? 'd73a4a' : 'e4e669' }).catch(() => {});
+                    await github.rest.issues.createLabel({ owner, repo, name: lbl, color: lbl === 'bug' ? 'd73a4a' : 'e4e669' })
+                      .catch((e) => core.warning(`Could not create label '${lbl}': ${e.message}`));
                   }
                 }
                 const existing = await github.rest.issues.listForRepo({
                   owner, repo, state: 'open', labels: 'ci-failure', per_page: 20
                 });
-                // Scope dedup to this specific PR so each failing PR gets its own issue
-                const existingForPR = existing.data.find(i => i.title.includes(`PR #${pr.number}`));
+                // Scope dedup to this specific PR (use word-boundary regex to avoid e.g. #12 matching #123)
+                const prNumPattern = new RegExp(`PR #${pr.number}\\b`);
+                const existingForPR = existing.data.find(i => prNumPattern.test(i.title));
                 if (!existingForPR) {
                   const issue = await github.rest.issues.create({
                     owner, repo,
@@ -260,7 +262,9 @@ jobs:
                   console.log(`🐛 Created ci-feedback issue #${issue.data.number}`);
                 }
 
-                // Close stale PR (failing > 24 h) so the queue advances to the feedback issue
+                // Close stale PR (failing > 24 h) so the queue advances to the feedback issue.
+                // 24 h gives Copilot time to self-fix on a first auto-rerun; beyond that the
+                // PR is unlikely to fix itself and blocking the queue serves no purpose.
                 const prAgeHours = (Date.now() - new Date(pr.created_at).getTime()) / 3600000;
                 if (prAgeHours > 24) {
                   console.log(`🗑️ PR #${pr.number} stale (${Math.round(prAgeHours)}h, ${failedAttempts} CI failures) — closing to unblock queue`);
