@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use tauri::Manager;
+use futures_util::StreamExt;
+use tauri::{Emitter, Manager};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info};
 
@@ -114,6 +115,7 @@ pub fn run() {
 
             // Spawn the adapter run-loop, routing all events through the agent
             // and then through the model router for real LLM responses.
+            let app_handle_for_cb = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 info!("Tauri IPC adapter starting (cerebellum + model router enabled)");
                 adapter
@@ -123,6 +125,7 @@ pub fn run() {
                         let settings = Arc::clone(&settings_for_cb);
                         let mcp_tools = Arc::clone(&mcp_tools_for_cb);
                         let mcp_clients = Arc::clone(&mcp_clients_for_cb);
+                        let app_handle = app_handle_for_cb.clone();
                         Box::pin(async move {
                             // Extract message fields before consuming the event — avoids
                             // cloning the entire Event payload.
@@ -181,6 +184,92 @@ pub fn run() {
                                     }
                                 };
 
+                                // ── Streaming path (no MCP tools) ─────────────────────────────
+                                //
+                                // When no tools are configured, stream tokens directly to the UI
+                                // via `model-chunk` Tauri events.  The `request_id` in each event
+                                // matches the placeholder message ID created by the frontend.
+                                if tools_json.is_none() {
+                                    let request = ChatCompletionRequest::new(&model, messages);
+                                    let router_guard = router.read().await;
+                                    match router_guard.chat_stream(&request).await {
+                                        Ok(stream) => {
+                                            drop(router_guard);
+                                            let mut stream = std::pin::pin!(stream);
+                                            while let Some(chunk) = stream.next().await {
+                                                match chunk {
+                                                    Ok(c) => {
+                                                        if let Some(choice) = c.choices.first() {
+                                                            if let Some(ref delta) = choice.delta.content {
+                                                                if !delta.is_empty() {
+                                                                    // Token chunks: silently drop on emit failure —
+                                                                    // individual tokens are non-critical and logging
+                                                                    // each would be noisy on a transient disconnect.
+                                                                    let _ = app_handle.emit(
+                                                                        "model-chunk",
+                                                                        serde_json::json!({
+                                                                            "request_id": &id,
+                                                                            "content": delta,
+                                                                            "done": false,
+                                                                        }),
+                                                                    );
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        error!(error = %e, model = %model, "streaming chunk error");
+                                                        if let Err(emit_err) = app_handle.emit(
+                                                            "model-error",
+                                                            serde_json::json!({
+                                                                "request_id": &id,
+                                                                "error": format_model_error(&e.to_string(), &model),
+                                                            }),
+                                                        ) {
+                                                            error!(error = %emit_err, "failed to emit model-error event");
+                                                        }
+                                                        return None;
+                                                    }
+                                                }
+                                            }
+                                            // Signal the frontend that streaming is complete.
+                                            // Log if this critical done signal fails — a stuck
+                                            // placeholder will result if it is lost.
+                                            if let Err(emit_err) = app_handle.emit(
+                                                "model-chunk",
+                                                serde_json::json!({
+                                                    "request_id": &id,
+                                                    "content": "",
+                                                    "done": true,
+                                                }),
+                                            ) {
+                                                error!(error = %emit_err, "failed to emit final model-chunk done event");
+                                            }
+                                            // Return None — the streaming events carry the content.
+                                            return None;
+                                        }
+                                        Err(e) => {
+                                            drop(router_guard);
+                                            error!(error = %e, model = %model, "model router stream failed");
+                                            if let Err(emit_err) = app_handle.emit(
+                                                "model-error",
+                                                serde_json::json!({
+                                                    "request_id": &id,
+                                                    "error": format_model_error(&e.to_string(), &model),
+                                                }),
+                                            ) {
+                                                error!(error = %emit_err, "failed to emit model-error event");
+                                            }
+                                            return None;
+                                        }
+                                    }
+                                }
+
+                                // ── Non-streaming path (MCP tools present) ─────────────────────
+                                //
+                                // When MCP tools are configured, use the tool-call loop with
+                                // non-streaming requests so we can inspect tool_calls in each
+                                // response before deciding whether to continue or return.
                                 let mut request = ChatCompletionRequest::new(&model, messages.clone());
                                 request.tools = tools_json;
 
@@ -289,18 +378,16 @@ pub fn run() {
                                         Err(e) => {
                                             drop(router_guard);
                                             error!(error = %e, model = %model, "model router call failed");
-                                            return Some(Event::Message {
-                                                id: format!("{id}-error"),
-                                                channel: "system".into(),
-                                                sender: "agent".into(),
-                                                content: format!(
-                                                    "⚠️ Model request to `{model}` failed: {e}\n\n\
-                                                     This may be due to missing provider configuration, invalid \
-                                                     model ID, authentication issues, or network/connectivity \
-                                                     problems. Please review your provider settings for this \
-                                                     model and try again."
-                                                ),
-                                            });
+                                            if let Err(emit_err) = app_handle.emit(
+                                                "model-error",
+                                                serde_json::json!({
+                                                    "request_id": &id,
+                                                    "error": format_model_error(&e.to_string(), &model),
+                                                }),
+                                            ) {
+                                                error!(error = %emit_err, "failed to emit model-error event");
+                                            }
+                                            return None;
                                         }
                                     }
                                 }
@@ -403,4 +490,38 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Pares Agens");
+}
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+/// Produce a user-friendly error message for model/stream failures.
+///
+/// Detects common connectivity and availability errors and provides
+/// actionable guidance.  Includes Ollama-specific hints when relevant
+/// (the default local provider), but remains useful for any endpoint.
+fn format_model_error(raw: &str, model: &str) -> String {
+    let lower = raw.to_lowercase();
+    if lower.contains("connection refused")
+        || lower.contains("failed to connect")
+        || lower.contains("error sending request")
+        || lower.contains("tcp connect")
+        || lower.contains("no route to host")
+        || lower.contains("os error 111")
+    {
+        format!(
+            "Cannot reach the model endpoint. Is the model server running?\n\n\
+             If you are using Ollama locally:\n\
+             • ollama serve\n\
+             • ollama pull {model}\n\n\
+             Otherwise, verify the endpoint URL in Settings and try again."
+        )
+    } else if lower.contains("model") && (lower.contains("not found") || lower.contains("404")) {
+        format!(
+            "Model `{model}` was not found on the configured endpoint.\n\n\
+             If you are using Ollama, pull it with: ollama pull {model}\n\
+             Otherwise, check the model name in Settings."
+        )
+    } else {
+        format!("Model request to `{model}` failed: {raw}")
+    }
 }

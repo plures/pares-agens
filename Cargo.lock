@@ -3380,6 +3380,7 @@ dependencies = [
 name = "pares-agens-tauri"
 version = "0.4.0"
 dependencies = [
+ "futures-util",
  "mcp-client",
  "pares-agens",
  "pares-agens-channels",
