@@ -11,10 +11,19 @@ use crate::state::{rebuild_model_router, AppState, Settings};
 
 /// Send a user message through the core agent runtime and return the response.
 ///
-/// The frontend calls this via `invoke("send_message", { content })`.
-/// The adapter's run-loop processes the event and returns a `ModelResponse`.
+/// The frontend calls this via `invoke("send_message", { content, requestId })`.
+/// The adapter's run-loop processes the event and either:
+/// - Emits `model-chunk` Tauri events (streaming path) and returns `""`, or
+/// - Returns the full response string (non-streaming / tool-call path).
+///
+/// `request_id` must match the placeholder message ID the UI created so that
+/// `model-chunk` / `model-error` events can be correlated on the frontend.
 #[tauri::command]
-pub async fn send_message(content: String, state: State<'_, AppState>) -> Result<String, String> {
+pub async fn send_message(
+    content: String,
+    request_id: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
     let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
     state
@@ -22,6 +31,7 @@ pub async fn send_message(content: String, state: State<'_, AppState>) -> Result
         .input_tx
         .send(TauriIpcMessage {
             content,
+            request_id,
             response_tx,
         })
         .await

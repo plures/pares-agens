@@ -18,7 +18,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tokio::sync::{oneshot, Mutex};
-use uuid::Uuid;
 
 use pares_agens_core::Event;
 
@@ -28,6 +27,12 @@ use crate::adapter::{ChannelAdapter, ChannelError};
 pub struct TauriIpcMessage {
     /// Text content typed by the user.
     pub content: String,
+    /// Frontend-assigned request identifier used to correlate streaming events.
+    ///
+    /// The adapter sets this as the [`Event::Message`] `id`, enabling the adapter
+    /// callback to emit `model-chunk` / `model-error` Tauri events keyed to the
+    /// same ID that the UI uses for its response placeholder.
+    pub request_id: String,
     /// One-shot sender for the agent's response event.
     pub response_tx: oneshot::Sender<Option<Event>>,
 }
@@ -78,11 +83,12 @@ impl ChannelAdapter for TauriIpcAdapter {
         let mut rx = self.input_rx.lock().await;
         while let Some(TauriIpcMessage {
             content,
+            request_id,
             response_tx,
         }) = rx.recv().await
         {
             let event = Event::Message {
-                id: Uuid::new_v4().to_string(),
+                id: request_id,
                 channel: "tauri".to_string(),
                 sender: self.from.clone(),
                 content,
@@ -134,6 +140,7 @@ mod tests {
             .input_tx
             .send(TauriIpcMessage {
                 content: "hello".into(),
+                request_id: "test-req-1".into(),
                 response_tx,
             })
             .await

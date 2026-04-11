@@ -96,20 +96,29 @@
 
     messages = [...messages, { role: 'user', content, time: fmtTime(), id }];
 
-    // Create placeholder for streaming response
+    // Create placeholder for streaming response.
+    // responseId must match the request_id used in model-chunk / model-error events.
     const responseId = `${id}-response`;
     messages = [...messages, { role: 'agent', content: '', time: fmtTime(), id: responseId, streaming: true }];
 
     try {
-      // send_message returns the complete response (non-streaming path)
-      // or triggers model-chunk/model-response events (streaming path)
-      const response = await invoke('send_message', { content });
-      
-      // If we got a direct response (non-streaming), update the placeholder
-      const idx = messages.findLastIndex(m => m.id === responseId);
-      if (idx >= 0 && messages[idx].streaming) {
-        messages[idx] = { ...messages[idx], content: response || '', streaming: false };
-        messages = [...messages];
+      // Pass requestId so the backend can key model-chunk / model-error events to
+      // the correct placeholder message.  The invoke blocks until the adapter
+      // callback completes (i.e. until the stream is exhausted).
+      //
+      // Streaming path: invoke returns "" — content arrives via model-chunk events.
+      // Non-streaming path (MCP tools): invoke returns the full response string.
+      const response = await invoke('send_message', { content, requestId: responseId });
+
+      // Only apply non-streaming update when the backend returned actual content
+      // (i.e. the MCP tool-call path).  For the streaming path (response === "")
+      // the model-chunk events have already updated the placeholder.
+      if (response) {
+        const idx = messages.findLastIndex(m => m.id === responseId);
+        if (idx >= 0 && messages[idx].streaming) {
+          messages[idx] = { ...messages[idx], content: response, streaming: false };
+          messages = [...messages];
+        }
       }
     } catch (err) {
       const idx = messages.findLastIndex(m => m.id === responseId);
