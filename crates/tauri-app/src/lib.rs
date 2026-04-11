@@ -202,6 +202,9 @@ pub fn run() {
                                                         if let Some(choice) = c.choices.first() {
                                                             if let Some(ref delta) = choice.delta.content {
                                                                 if !delta.is_empty() {
+                                                                    // Token chunks: silently drop on emit failure —
+                                                                    // individual tokens are non-critical and logging
+                                                                    // each would be noisy on a transient disconnect.
                                                                     let _ = app_handle.emit(
                                                                         "model-chunk",
                                                                         serde_json::json!({
@@ -216,39 +219,47 @@ pub fn run() {
                                                     }
                                                     Err(e) => {
                                                         error!(error = %e, model = %model, "streaming chunk error");
-                                                        let _ = app_handle.emit(
+                                                        if let Err(emit_err) = app_handle.emit(
                                                             "model-error",
                                                             serde_json::json!({
                                                                 "request_id": &id,
                                                                 "error": format_model_error(&e.to_string(), &model),
                                                             }),
-                                                        );
+                                                        ) {
+                                                            error!(error = %emit_err, "failed to emit model-error event");
+                                                        }
                                                         return None;
                                                     }
                                                 }
                                             }
                                             // Signal the frontend that streaming is complete.
-                                            let _ = app_handle.emit(
+                                            // Log if this critical done signal fails — a stuck
+                                            // placeholder will result if it is lost.
+                                            if let Err(emit_err) = app_handle.emit(
                                                 "model-chunk",
                                                 serde_json::json!({
                                                     "request_id": &id,
                                                     "content": "",
                                                     "done": true,
                                                 }),
-                                            );
+                                            ) {
+                                                error!(error = %emit_err, "failed to emit final model-chunk done event");
+                                            }
                                             // Return None — the streaming events carry the content.
                                             return None;
                                         }
                                         Err(e) => {
                                             drop(router_guard);
                                             error!(error = %e, model = %model, "model router stream failed");
-                                            let _ = app_handle.emit(
+                                            if let Err(emit_err) = app_handle.emit(
                                                 "model-error",
                                                 serde_json::json!({
                                                     "request_id": &id,
                                                     "error": format_model_error(&e.to_string(), &model),
                                                 }),
-                                            );
+                                            ) {
+                                                error!(error = %emit_err, "failed to emit model-error event");
+                                            }
                                             return None;
                                         }
                                     }
@@ -367,13 +378,15 @@ pub fn run() {
                                         Err(e) => {
                                             drop(router_guard);
                                             error!(error = %e, model = %model, "model router call failed");
-                                            let _ = app_handle.emit(
+                                            if let Err(emit_err) = app_handle.emit(
                                                 "model-error",
                                                 serde_json::json!({
                                                     "request_id": &id,
                                                     "error": format_model_error(&e.to_string(), &model),
                                                 }),
-                                            );
+                                            ) {
+                                                error!(error = %emit_err, "failed to emit model-error event");
+                                            }
                                             return None;
                                         }
                                     }
@@ -483,7 +496,9 @@ pub fn run() {
 
 /// Produce a user-friendly error message for model/stream failures.
 ///
-/// Specifically detects Ollama connectivity issues and suggests actionable steps.
+/// Detects common connectivity and availability errors and provides
+/// actionable guidance.  Includes Ollama-specific hints when relevant
+/// (the default local provider), but remains useful for any endpoint.
 fn format_model_error(raw: &str, model: &str) -> String {
     let lower = raw.to_lowercase();
     if lower.contains("connection refused")
@@ -494,16 +509,17 @@ fn format_model_error(raw: &str, model: &str) -> String {
         || lower.contains("os error 111")
     {
         format!(
-            "Cannot reach the model endpoint. Is Ollama running?\n\n\
-             Start Ollama and make sure the model `{model}` is available:\n\
+            "Cannot reach the model endpoint. Is the model server running?\n\n\
+             If you are using Ollama locally:\n\
              • ollama serve\n\
              • ollama pull {model}\n\n\
-             Then try again."
+             Otherwise, verify the endpoint URL in Settings and try again."
         )
     } else if lower.contains("model") && (lower.contains("not found") || lower.contains("404")) {
         format!(
             "Model `{model}` was not found on the configured endpoint.\n\n\
-             Pull it with: ollama pull {model}"
+             If you are using Ollama, pull it with: ollama pull {model}\n\
+             Otherwise, check the model name in Settings."
         )
     } else {
         format!("Model request to `{model}` failed: {raw}")
