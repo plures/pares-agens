@@ -205,8 +205,8 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            model: "qwen3:235b".to_string(),
-            endpoint: "http://localhost:11434/v1".to_string(),
+            model: "llama3".to_string(),
+            endpoint: "http://localhost:11434".to_string(),
             channel: "tauri".to_string(),
             system_prompt: "You are Pares Agens, a helpful desktop AI assistant.".to_string(),
             api_key: None,
@@ -214,11 +214,18 @@ impl Default for Settings {
             auto_start: false,
             providers: vec![ProviderEntry {
                 name: "ollama".to_string(),
-                base_url: "http://localhost:11434/v1".to_string(),
+                base_url: "http://localhost:11434".to_string(),
                 api_key: None,
-                models: vec!["qwen3:235b".to_string(), "llama3.1:8b".to_string()],
+                models: vec!["llama3".to_string(), "llama3.1:8b".to_string()],
             }],
-            routing: RoutingPrefs::default(),
+            routing: RoutingPrefs {
+                interactive: Some(ModelRef {
+                    provider: "ollama".to_string(),
+                    model: "llama3".to_string(),
+                }),
+                background: None,
+                coding: None,
+            },
             channel_adapters: vec![
                 ChannelAdapterConfig {
                     kind: "local".to_string(),

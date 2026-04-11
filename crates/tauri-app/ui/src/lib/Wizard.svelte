@@ -108,8 +108,8 @@
   async function finishWizard() {
     const name = agentName.trim() || 'Pares Agens';
 
-    let model    = 'qwen3:235b';
-    let endpoint = 'http://localhost:11434/v1';
+    let model    = 'llama3';
+    let endpoint = 'http://localhost:11434';
     let finalKey = null;
 
     if (modelSource === 'local') {
