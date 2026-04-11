@@ -6,7 +6,12 @@
     preference:     'memory-pref',
     decision:       'memory-dec',
     'error-fix':    'memory-err',
+    conversation:   'memory-conv',
+    correction:     'memory-corr',
   };
+
+  /** Maximum characters shown as a content preview before truncation. */
+  const MAX_CONTENT_PREVIEW_LENGTH = 120;
 
   const GUIDANCE_CATEGORIES = [
     { id: 'facts', name: 'Facts', icon: '📊' },
@@ -17,7 +22,7 @@
     { id: 'guidance', name: 'Guidance', icon: '💡' },
   ];
 
-  /** @type {{ id: string, content: string, category: string }[]} */
+  /** @type {{ id: string, content: string, category: string, created_at: string }[]} */
   let memories = $state([]);
   
   /** @type {Record<string, Array<{ id: string, content: string, confidence: number, priority: number, source_spans: string[] }>>} */
@@ -116,8 +121,17 @@
       {:else}
         {#each memories as m (m.id)}
           <li class="{CATEGORY_CSS[m.category] ?? ''}" title={m.content}>
-            <span class="memory-category">{m.category}</span><br />
-            <span class="memory-content">{m.content}</span>
+            <div class="memory-meta">
+              <span class="memory-category">{m.category}</span>
+              {#if m.created_at}
+                <span class="memory-time">
+                  {new Date(m.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                </span>
+              {/if}
+            </div>
+            <span class="memory-content">
+              {m.content.length > MAX_CONTENT_PREVIEW_LENGTH ? m.content.slice(0, MAX_CONTENT_PREVIEW_LENGTH) + '…' : m.content}
+            </span>
           </li>
         {/each}
       {/if}
@@ -303,6 +317,13 @@
     text-align: center;
   }
 
+  .memory-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 0.25rem;
+  }
+
   .memory-category {
     font-weight: 500;
     text-transform: uppercase;
@@ -310,15 +331,24 @@
     opacity: 0.8;
   }
 
+  .memory-time {
+    font-size: 0.7rem;
+    color: var(--color-text-tertiary, #999);
+    margin-left: auto;
+    padding-left: 0.5rem;
+  }
+
   .memory-content {
     display: block;
-    margin-top: 0.25rem;
+    margin-top: 0;
   }
 
   .memory-code { border-left: 3px solid #4ade80; }
   .memory-pref { border-left: 3px solid #60a5fa; }
-  .memory-dec { border-left: 3px solid #fbbf24; }
-  .memory-err { border-left: 3px solid #f87171; }
+  .memory-dec  { border-left: 3px solid #fbbf24; }
+  .memory-err  { border-left: 3px solid #f87171; }
+  .memory-conv { border-left: 3px solid #a78bfa; }
+  .memory-corr { border-left: 3px solid #fb923c; }
 
   /* Praxis Guidance Styles */
   .praxis-section {

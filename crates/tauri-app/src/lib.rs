@@ -10,6 +10,7 @@ use pares_agens_channels::tauri_ipc::tauri_ipc_channel;
 use pares_agens_core::agent::{Agent, InMemory};
 use pares_agens_core::cerebellum::{Cerebellum, CerebellumConfig};
 use pares_agens_core::memory::embed::MockEmbedder;
+use pares_agens_core::memory::entry::Exchange;
 use pares_agens_core::memory::store::PluresDbStore;
 use pares_agens_core::memory::store::{InMemoryStore, MemoryStore};
 use pares_agens_core::memory::PluresLm;
@@ -105,6 +106,9 @@ pub fn run() {
                 128_000,
             ));
 
+            // Clone for the adapter callback so it can persist each exchange.
+            let plures_lm_for_capture = Arc::clone(&plures_lm);
+
             // Build the Agent with a Cerebellum wired in so every message
             // flows through autorecall and routing before being handled.
             let agent = Arc::new(Agent::with_cerebellum(
@@ -126,6 +130,7 @@ pub fn run() {
                         let mcp_tools = Arc::clone(&mcp_tools_for_cb);
                         let mcp_clients = Arc::clone(&mcp_clients_for_cb);
                         let app_handle = app_handle_for_cb.clone();
+                        let plures_lm = Arc::clone(&plures_lm_for_capture);
                         Box::pin(async move {
                             // Extract message fields before consuming the event — avoids
                             // cloning the entire Event payload.
@@ -196,12 +201,14 @@ pub fn run() {
                                         Ok(stream) => {
                                             drop(router_guard);
                                             let mut stream = std::pin::pin!(stream);
+                                            let mut full_response = String::new();
                                             while let Some(chunk) = stream.next().await {
                                                 match chunk {
                                                     Ok(c) => {
                                                         if let Some(choice) = c.choices.first() {
                                                             if let Some(ref delta) = choice.delta.content {
                                                                 if !delta.is_empty() {
+                                                                    full_response.push_str(delta);
                                                                     // Token chunks: silently drop on emit failure —
                                                                     // individual tokens are non-critical and logging
                                                                     // each would be noisy on a transient disconnect.
@@ -245,6 +252,8 @@ pub fn run() {
                                             ) {
                                                 error!(error = %emit_err, "failed to emit final model-chunk done event");
                                             }
+                                            // Persist the exchange so future autorecall can surface it.
+                                            capture_exchange(&plures_lm, &content, &full_response).await;
                                             // Return None — the streaming events carry the content.
                                             return None;
                                         }
@@ -392,6 +401,9 @@ pub fn run() {
                                     }
                                 }
 
+                                // Persist the exchange so future autorecall can surface it.
+                                capture_exchange(&plures_lm, &content, &final_reply).await;
+
                                 Some(Event::ModelResponse {
                                     request_id: id,
                                     model,
@@ -523,5 +535,24 @@ fn format_model_error(raw: &str, model: &str) -> String {
         )
     } else {
         format!("Model request to `{model}` failed: {raw}")
+    }
+}
+
+/// Persist a conversation exchange in PluresLm memory.
+///
+/// Both the streaming and tool-call paths call this after obtaining the full
+/// assistant response so the exchange is durably written to PluresDB.
+/// Quality-gate filtering (noise rejection, echo deduplication) is handled
+/// inside `PluresLm::capture`, so callers may pass any non-empty response.
+async fn capture_exchange(plures_lm: &PluresLm, user: &str, assistant: &str) {
+    if assistant.is_empty() {
+        return;
+    }
+    let exchange = Exchange {
+        user: user.to_string(),
+        assistant: assistant.to_string(),
+    };
+    if let Err(e) = plures_lm.capture(&exchange).await {
+        tracing::error!(error = %e, "failed to capture conversation in PluresLm");
     }
 }
