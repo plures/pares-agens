@@ -299,15 +299,20 @@
         }
         // Refresh local provider list after mutation.
         providers = await invoke('list_providers');
-      } catch { /* non-fatal — proceed to set_settings */ }
+      } catch (err) {
+        console.warn('Failed to update ollama provider entry:', err);
+        /* non-fatal — proceed to set_settings */
+      }
 
       // ── Build routing object from UI state ─────────────────────────────
-      // The Ollama quick-config provides routing.interactive as a baseline;
-      // explicit routing-tab selections override it when both provider and
-      // model are filled in.
+      // Start with the Ollama quick-config as the interactive baseline.
+      // If the routing tab has explicit values for both provider and model,
+      // those take precedence over the Ollama quick-config.
       const routing = {
         interactive: { provider: 'ollama', model: ollamaModelVal },
       };
+      // Routing-tab selections override the Ollama baseline when both fields
+      // are filled in (provider name alone is not enough).
       if (routingInteractiveProvider && routingInteractiveModel) {
         routing.interactive = { provider: routingInteractiveProvider, model: routingInteractiveModel };
       }
