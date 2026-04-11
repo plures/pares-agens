@@ -242,7 +242,7 @@ jobs:
                   }
                 }
                 const existing = await github.rest.issues.listForRepo({
-                  owner, repo, state: 'open', labels: 'ci-failure', per_page: 20
+                  owner, repo, state: 'open', labels: 'ci-failure', per_page: 100
                 });
                 // Scope dedup to this specific PR (use word-boundary regex to avoid e.g. #12 matching #123)
                 const prNumPattern = new RegExp(`PR #${pr.number}\\b`);
