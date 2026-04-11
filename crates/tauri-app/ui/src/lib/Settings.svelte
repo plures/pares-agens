@@ -30,6 +30,12 @@
   /** @type {string|null} editProviderName is set when editing an existing provider */
   let editProviderName = $state(null);
 
+  // ── Ollama quick-config state ────────────────────────────────────────────
+  /** Ollama server base URL (without /v1 — the HTTP client appends that). */
+  let ollamaUrl   = $state('http://localhost:11434');
+  /** Model name to use for interactive chat. */
+  let ollamaModel = $state('llama3');
+
   // ── Routing state ────────────────────────────────────────────────────────
   /**
    * @typedef {{ provider: string, model: string }} ModelRef
@@ -113,6 +119,12 @@
     } catch {
       providers = [];
     }
+
+    // Ollama quick config — read from the "ollama" provider entry when
+    // present, otherwise fall back to the legacy endpoint/model fields.
+    const ollamaProv = providers.find(p => p.name === 'ollama');
+    ollamaUrl   = ollamaProv?.baseUrl ?? s.endpoint ?? 'http://localhost:11434';
+    ollamaModel = s.routing?.interactive?.model ?? s.model ?? 'llama3';
 
     // Routing
     const r = s.routing ?? {};
@@ -258,8 +270,49 @@
       // CRUD commands) and any other fields the UI doesn't manage.
       const fresh = await invoke('get_settings');
 
-      // Build routing object from UI state.
-      const routing = {};
+      // ── Persist Ollama quick-config ────────────────────────────────────
+      // Update (or add) the "ollama" provider entry with the URL the user
+      // entered, so the model router picks up the change immediately.
+      const ollamaBaseUrl   = ollamaUrl.trim()   || 'http://localhost:11434';
+      const ollamaModelVal  = ollamaModel.trim()  || 'llama3';
+      const existingOllama  = providers.find(p => p.name === 'ollama');
+      try {
+        if (existingOllama) {
+          await invoke('update_provider', {
+            name: 'ollama',
+            provider: {
+              name:    'ollama',
+              baseUrl: ollamaBaseUrl,
+              apiKey:  null,
+              models:  existingOllama.models ?? [ollamaModelVal],
+            },
+          });
+        } else {
+          await invoke('add_provider', {
+            provider: {
+              name:    'ollama',
+              baseUrl: ollamaBaseUrl,
+              apiKey:  null,
+              models:  [ollamaModelVal],
+            },
+          });
+        }
+        // Refresh local provider list after mutation.
+        providers = await invoke('list_providers');
+      } catch (err) {
+        console.warn('Failed to update ollama provider entry:', err);
+        /* non-fatal — proceed to set_settings */
+      }
+
+      // ── Build routing object from UI state ─────────────────────────────
+      // Start with the Ollama quick-config as the interactive baseline.
+      // If the routing tab has explicit values for both provider and model,
+      // those take precedence over the Ollama quick-config.
+      const routing = {
+        interactive: { provider: 'ollama', model: ollamaModelVal },
+      };
+      // Routing-tab selections override the Ollama baseline when both fields
+      // are filled in (provider name alone is not enough).
       if (routingInteractiveProvider && routingInteractiveModel) {
         routing.interactive = { provider: routingInteractiveProvider, model: routingInteractiveModel };
       }
@@ -273,9 +326,12 @@
       // Single set_settings call: routing, channel_adapters, preferences, and
       // startup/system-prompt are all written atomically.  Provider CRUD was
       // already applied to the backend state; `fresh` carries those changes.
+      // `model` and `endpoint` are also updated for legacy / wizard compat.
       await invoke('set_settings', {
         settings: {
           ...fresh,
+          model:           ollamaModelVal,
+          endpoint:        ollamaBaseUrl,
           autoStart:       prefAutoStart,
           systemPrompt:    prefSystemPrompt,
           routing,
@@ -418,6 +474,33 @@
       class="settings-panel"
       hidden={activeTab !== 'providers'}>
 
+      <!-- Ollama quick configure — visible immediately when Settings opens -->
+      <div class="pref-section ollama-section">
+        <p class="pref-section-title">Ollama</p>
+        <label>
+          Endpoint URL
+          <input
+            type="url"
+            bind:value={ollamaUrl}
+            placeholder="http://localhost:11434"
+            aria-label="Ollama endpoint URL" />
+        </label>
+        <label>
+          Model
+          <input
+            type="text"
+            bind:value={ollamaModel}
+            placeholder="llama3"
+            aria-label="Ollama model name" />
+        </label>
+        <p class="pref-hint">
+          Changes are applied on Save. Run <code>ollama pull {ollamaModel || 'llama3'}</code> to
+          ensure the model is available locally.
+        </p>
+      </div>
+
+      <hr class="section-divider" aria-hidden="true" />
+
       {#if showProviderForm}
         <div class="provider-form">
           <h3 class="pref-section-title">{editProviderName === null ? 'Add Provider' : 'Edit Provider'}</h3>
@@ -429,7 +512,7 @@
           <label>
             Base URL
             <input type="url" bind:value={providerFormUrl}
-              placeholder="http://localhost:11434/v1" />
+              placeholder="http://localhost:11434" />
           </label>
           <label>
             API Key <span class="pref-hint">{editProviderName !== null ? '(leave blank to keep existing)' : '(leave blank for local models)'}</span>
@@ -439,7 +522,7 @@
           <label>
             Models <span class="pref-hint">(comma-separated)</span>
             <input type="text" bind:value={providerFormModels}
-              placeholder="qwen3:235b, llama3.1:8b" />
+              placeholder="llama3, llama3.1:8b" />
           </label>
           <div class="provider-form-actions">
             <button type="button" class="btn-secondary"

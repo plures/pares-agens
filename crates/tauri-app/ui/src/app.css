@@ -422,6 +422,12 @@ body {
 }
 
 /* ── Provider table ──────────────────────────────────────────────────────── */
+.section-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 4px 0;
+}
+
 .provider-table {
   width: 100%;
   border-collapse: collapse;
@@ -662,6 +668,7 @@ body {
 }
 
 .pref-section input[type="text"],
+.pref-section input[type="url"],
 .pref-section textarea {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
@@ -676,6 +683,7 @@ body {
 }
 
 .pref-section input[type="text"]:focus,
+.pref-section input[type="url"]:focus,
 .pref-section textarea:focus { border-color: var(--accent); }
 
 .pref-toggle-row {
