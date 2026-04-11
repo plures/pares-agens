@@ -78,6 +78,7 @@ jobs:
             let copilotPRBusy = false;
 
             for (const pr of allPRs) {
+              try {
               const isCopilotPR = pr.user.login === 'Copilot' || pr.user.type === 'Bot';
 
               // ── Draft handling: mark Copilot draft PRs ready ──
@@ -233,10 +234,20 @@ jobs:
 
                 // Second+ failure — create feedback issue
                 console.log(`❌ PR #${pr.number}: CI failed ${failedAttempts}x (${failNames}) — creating feedback issue`);
+                // Ensure labels exist before creating the issue
+                for (const lbl of ['ci-failure', 'bug']) {
+                  try { await github.rest.issues.getLabel({ owner, repo, name: lbl }); } catch (_) {
+                    await github.rest.issues.createLabel({ owner, repo, name: lbl, color: lbl === 'bug' ? 'd73a4a' : 'e4e669' })
+                      .catch((e) => core.warning(`Could not create label '${lbl}': ${e.message}`));
+                  }
+                }
                 const existing = await github.rest.issues.listForRepo({
-                  owner, repo, state: 'open', labels: 'ci-failure', per_page: 1
+                  owner, repo, state: 'open', labels: 'ci-failure', per_page: 100
                 });
-                if (existing.data.length === 0) {
+                // Scope dedup to this specific PR (use word-boundary regex to avoid e.g. #12 matching #123)
+                const prNumPattern = new RegExp(`PR #${pr.number}\\b`);
+                const existingForPR = existing.data.find(i => prNumPattern.test(i.title));
+                if (!existingForPR) {
                   const issue = await github.rest.issues.create({
                     owner, repo,
                     title: `[ci-feedback] Fix CI failures on PR #${pr.number}`,
@@ -251,21 +262,17 @@ jobs:
                   console.log(`🐛 Created ci-feedback issue #${issue.data.number}`);
                 }
 
-                // MERGE ANYWAY — CI failure is infrastructure, not code.
-                // The code was written by Copilot and compiled. Merge it,
-                // fix CI separately. Development doesn't halt for infra.
-                console.log(`🔀 Merging PR #${pr.number} despite CI failures (${failedAttempts} attempts exhausted)`);
-                try {
-                  await github.rest.pulls.merge({
-                    owner, repo, pull_number: pr.number,
-                    merge_method: 'squash',
-                    commit_title: `${pr.title} (#${pr.number})`,
-                    commit_message: `Auto-merged despite CI failure (${failNames}).\nCI failed ${failedAttempts}x — likely infrastructure issue, not code.\nCI fix tracked separately.`
-                  });
-                  console.log(`✅ Force-merged PR #${pr.number}`);
-                } catch (mergeErr) {
-                  console.log(`⚠️ Force-merge failed: ${mergeErr.message}`);
+                // Close stale PR (failing > 24 h) so the queue advances to the feedback issue.
+                // 24 h gives Copilot time to self-fix on a first auto-rerun; beyond that the
+                // PR is unlikely to fix itself and blocking the queue serves no purpose.
+                const prAgeHours = (Date.now() - new Date(pr.created_at).getTime()) / 3600000;
+                if (prAgeHours > 24) {
+                  console.log(`🗑️ PR #${pr.number} stale (${Math.round(prAgeHours)}h, ${failedAttempts} CI failures) — closing to unblock queue`);
+                  await github.rest.pulls.update({ owner, repo, pull_number: pr.number, state: 'closed' });
+                  // Do NOT set copilotPRBusy — let Phase 2 pick up the ci-feedback issue
+                  continue;
                 }
+
                 copilotPRBusy = true;
                 continue;
               }
@@ -285,6 +292,9 @@ jobs:
 
               // ── Path F: No path matched — log state for debugging ──
               console.log(`❓ PR #${pr.number} (${pr.user.login}) unhandled: CI done=${allDone}, green=${allGreen}, reviewed=${reviewComplete}, failing=${failing.length}`);
+              } catch (prErr) {
+                core.error(`❌ Error processing PR #${pr.number}: ${prErr.message}\n${prErr.stack}`);
+              }
             }
 
             // ── Phase 2: No blocking Copilot PRs → assign next issue ──
