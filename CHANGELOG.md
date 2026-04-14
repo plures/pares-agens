@@ -1,3 +1,7 @@
+## [0.7.0] — 2026-04-14
+
+- feat: encode task decomposition as praxis constraint (ADR-0013) (#493) (d37c40c)
+
 ## [0.6.1] — 2026-04-14
 
 - fix: upgrade teloxide 0.13 → 0.17 (90e8218)
