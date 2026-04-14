@@ -1,3 +1,7 @@
+## [0.6.1] — 2026-04-14
+
+- fix: upgrade teloxide 0.13 → 0.17 (90e8218)
+
 ## [0.6.0] — 2026-04-14
 
 - feat: add headless 'serve' command with Telegram adapter (1ead4f2)
