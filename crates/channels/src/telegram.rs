@@ -188,10 +188,9 @@ impl ChannelAdapter for TelegramAdapter {
             async move {
                 if let Some(fut) = response {
                     if let Some(Event::ModelResponse { content, .. }) = fut.await {
-                        let escaped = TelegramAdapter::escape_markdown_v2(&content);
+                        // Send as plain text — LLM markdown conflicts with Telegram MarkdownV2
                         if let Err(e) = bot
-                            .send_message(msg.chat.id, escaped)
-                            .parse_mode(ParseMode::MarkdownV2)
+                            .send_message(msg.chat.id, &content)
                             .await
                         {
                             error!("Failed to send Telegram reply: {e}");
