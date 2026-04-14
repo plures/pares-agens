@@ -25,6 +25,8 @@
 //! 4. User calls [`Ledger::resolve_gate`] with `Approved` or `Rejected`.
 //! 5. Procedure continues or aborts based on the resolved status.
 
+/// Task-decomposition size constraint (ADR-0013).
+pub mod constraints;
 /// Guidance service — stores and retrieves Praxis coprocessor guidance entries.
 pub mod guidance;
 /// Decision ledger — append-only audit trail with optional approval gates.
@@ -32,6 +34,9 @@ pub mod ledger;
 /// PluresDB-backed praxis gate for native constraint evaluation.
 pub mod pluresdb_gate;
 
+pub use constraints::{
+    TaskSizeConstraint, TaskSizeViolation, MAX_DESCRIPTION_WORD_COUNT, MAX_OUTPUT_CHARS,
+};
 pub use guidance::{AnalysisEvent, GuidanceCategory, GuidanceEntry, GuidanceService, SourceSpan};
 pub use ledger::{
     GateStatus, InMemoryLedgerStore, Ledger, LedgerContext, LedgerEntry, LedgerStore,
