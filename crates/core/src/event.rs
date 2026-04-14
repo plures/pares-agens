@@ -83,6 +83,20 @@ pub enum Event {
         /// Semicolon-separated remediation instructions from every violated constraint.
         fix: String,
     },
+    /// A sub-agent task exceeded the size limits defined in ADR-0013.
+    ///
+    /// Emitted when a task description exceeds 200 words or an expected text
+    /// output exceeds 2 000 characters.  The receiver should split the task
+    /// into `suggested_splits` smaller sub-tasks before re-dispatching.
+    TaskDecompositionRequired {
+        /// Word count of the task description that triggered the violation.
+        word_count: usize,
+        /// Estimated character count of the expected text output, if the
+        /// output type is `"text"` and it exceeded the limit.
+        output_chars: Option<usize>,
+        /// Suggested number of sub-tasks to decompose the original task into.
+        suggested_splits: usize,
+    },
 }
 
 impl Event {
@@ -96,6 +110,7 @@ impl Event {
             Event::ToolResult { .. } => "tool_result",
             Event::PreActionConstraint { .. } => "pre_action_constraint",
             Event::ConstraintViolation { .. } => "constraint_violation",
+            Event::TaskDecompositionRequired { .. } => "task_decomposition_required",
         }
     }
 }

@@ -195,6 +195,54 @@ pub fn seed_constraints(store: &mut PraxisStore) {
         evidence: vec!["ADR-0004".into()],
         severity: Severity::Error,
     });
+
+    // C-0009 — task description word count ≤ 200 (ADR-0013)
+    store.upsert_constraint(Constraint {
+        id: "C-0009".into(),
+        description: "Sub-agent task descriptions must not exceed 200 words (ADR-0013).".into(),
+        when: Condition::FieldGt {
+            field: "task_description_word_count".into(),
+            threshold: 200.0,
+        },
+        require: Condition::FieldLt {
+            field: "task_description_word_count".into(),
+            threshold: 200.0,
+        },
+        fix: "Decompose the task into sub-tasks each with ≤ 200-word descriptions. \
+              Emit task_decomposition_required with suggested split points."
+            .into(),
+        evidence: vec!["ADR-0013".into()],
+        severity: Severity::Error,
+    });
+
+    // C-0010 — expected text output ≤ 2 000 chars (ADR-0013)
+    store.upsert_constraint(Constraint {
+        id: "C-0010".into(),
+        description: "Sub-agent tasks expecting text output must not exceed 2000 estimated chars \
+                      (ADR-0013)."
+            .into(),
+        when: Condition::All {
+            conditions: vec![
+                Condition::FieldEq {
+                    field: "expected_output_type".into(),
+                    value: json!("text"),
+                },
+                Condition::FieldGt {
+                    field: "expected_output_chars".into(),
+                    threshold: 2000.0,
+                },
+            ],
+        },
+        require: Condition::FieldLt {
+            field: "expected_output_chars".into(),
+            threshold: 2000.0,
+        },
+        fix: "Decompose the task so each sub-task produces ≤ 2000 chars of text output. \
+              Emit task_decomposition_required with suggested split points."
+            .into(),
+        evidence: vec!["ADR-0013".into()],
+        severity: Severity::Error,
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +286,14 @@ pub fn seed_adrs(store: &mut PraxisStore) {
             "EV-ADR0004-SCHEMA-DEFINED".into(),
             "EV-ADR0004-CI".into(),
         ],
+    });
+
+    // ADR-0013 — Task decomposition size limits
+    store.upsert_adr(Adr {
+        id: "ADR-0013".into(),
+        title: "Sub-agent task descriptions ≤ 200 words; text output ≤ 2000 chars".into(),
+        status: AdrStatus::Accepted,
+        evidence: vec!["EV-ADR0013-TASK-SIZE".into()],
     });
 }
 
@@ -342,6 +398,23 @@ pub fn seed_evidence(store: &mut PraxisStore) {
         result: EvidenceResult::Unknown,
         reference: "https://github.com/plures/pares-agens/issues/344".into(),
     });
+
+    // ── ADR-0013 evidence ────────────────────────────────────────────────────
+
+    // 2026-04-10 sub-agent test results that proved the size limits
+    store.upsert_evidence(Evidence {
+        id: "EV-ADR0013-TASK-SIZE".into(),
+        tested_at: Utc::now(),
+        condition: [
+            ("max_description_words".into(), json!(200)),
+            ("max_output_chars".into(), json!(2000)),
+            ("test_date".into(), json!("2026-04-10")),
+        ]
+        .into_iter()
+        .collect(),
+        result: EvidenceResult::Passed,
+        reference: "https://github.com/plures/pares-agens/issues/396".into(),
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -374,18 +447,22 @@ mod tests {
     fn default_store_has_constraints() {
         let store = default_store();
         assert!(
-            store.constraint_count() >= 8,
-            "expected at least 8 seeded constraints"
+            store.constraint_count() >= 10,
+            "expected at least 10 seeded constraints"
         );
     }
 
     #[test]
     fn default_store_has_adrs() {
         let store = default_store();
-        assert!(store.adr_count() >= 4, "expected at least 4 seeded ADRs");
+        assert!(store.adr_count() >= 5, "expected at least 5 seeded ADRs");
         assert!(
             store.get_adr("ADR-0004").is_some(),
             "ADR-0004 must be present"
+        );
+        assert!(
+            store.get_adr("ADR-0013").is_some(),
+            "ADR-0013 must be present"
         );
     }
 
@@ -393,8 +470,8 @@ mod tests {
     fn default_store_has_evidence() {
         let store = default_store();
         assert!(
-            store.evidence_count() >= 7,
-            "expected at least 7 evidence records"
+            store.evidence_count() >= 8,
+            "expected at least 8 evidence records"
         );
     }
 
