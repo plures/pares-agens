@@ -1,4 +1,20 @@
-//! Task-decomposition size constraint (ADR-0013).
+//! Authorization gate (ADR-0012) and task-decomposition size constraint (ADR-0013).
+//!
+//! # Authorization gate — [`AuthorizationGate`]
+//!
+//! Implements the 5-level brain-first authorization gate from ADR-0012.  Every
+//! action dispatched to a subagent (conscious or subconscious) must pass through
+//! this gate in order:
+//!
+//! | Level | Trigger | Outcome |
+//! |-------|---------|---------|
+//! | 1 | `blocked_by_constraint: true` | [`RuleResult::Fail`] — block |
+//! | 2 | `completed_recently: true` | [`RuleResult::Warning`] — skip (duplicate) |
+//! | 3 | `known_failure: true` | [`RuleResult::Warning`] — warn |
+//! | 4 | `is_destructive: true` or `is_external: true` | [`RuleResult::Gate`] — require approval |
+//! | 5 | (none of the above) | [`RuleResult::Pass`] — auto-approve |
+//!
+//! # Task-decomposition size constraint — [`TaskSizeConstraint`]
 //!
 //! Enforces the task size limits proven by the 2026-04-10 sub-agent tests:
 //!
@@ -26,11 +42,127 @@
 //!    | `expected_output_chars` | number | Estimated output character count |
 
 use crate::event::Event;
-use pares_agens_praxis::db::{
-    schema::{Condition, Constraint, Severity},
-    store::PraxisStore,
+use pares_agens_praxis::{
+    db::{
+        schema::{Condition, Constraint, Severity},
+        store::PraxisStore,
+    },
+    rule::{Rule, RuleCategory, RuleContext, RuleResult},
 };
 use serde_json::json;
+
+// ---------------------------------------------------------------------------
+// AuthorizationGate
+// ---------------------------------------------------------------------------
+
+/// ADR-0012 five-level brain-first authorization gate.
+///
+/// Evaluates actions in strict priority order.  The first matching level wins.
+///
+/// ## Payload fields
+///
+/// The caller populates `RuleContext::payload` with the relevant boolean flags:
+///
+/// | Field | Type | Level triggered |
+/// |-------|------|----------------|
+/// | `blocked_by_constraint` | bool | 1 — hard block |
+/// | `completed_recently` | bool | 2 — skip duplicate |
+/// | `known_failure` | bool | 3 — warn |
+/// | `is_destructive` | bool | 4 — gate (approval) |
+/// | `is_external` | bool | 4 — gate (approval) |
+///
+/// Missing or `null` fields are treated as `false`.
+///
+/// # Example
+///
+/// ```rust
+/// use pares_agens_core::praxis::constraints::AuthorizationGate;
+/// use pares_agens_praxis::rule::{Rule, RuleContext, RuleResult};
+/// use serde_json::json;
+///
+/// let gate = AuthorizationGate;
+///
+/// // Level 5: auto-approve
+/// let ctx = RuleContext::new("query_db", json!({}));
+/// assert_eq!(gate.evaluate(&ctx), RuleResult::Pass);
+///
+/// // Level 1: hard block
+/// let ctx = RuleContext::new("restricted_op", json!({"blocked_by_constraint": true}));
+/// assert!(matches!(gate.evaluate(&ctx), RuleResult::Fail { .. }));
+/// ```
+pub struct AuthorizationGate;
+
+impl Rule for AuthorizationGate {
+    fn name(&self) -> &str {
+        "authorization_gate"
+    }
+
+    fn category(&self) -> RuleCategory {
+        RuleCategory::State
+    }
+
+    fn evaluate(&self, ctx: &RuleContext) -> RuleResult {
+        // ── Level 1: hard constraint check → block ────────────────────────
+        if payload_bool(&ctx.payload, "blocked_by_constraint") {
+            return RuleResult::Fail {
+                reason: format!(
+                    "action `{}` is blocked by a hard constraint (ADR-0012 level 1)",
+                    ctx.action
+                ),
+            };
+        }
+
+        // ── Level 2: duplicate check → skip ──────────────────────────────
+        if payload_bool(&ctx.payload, "completed_recently") {
+            return RuleResult::Warning {
+                message: format!(
+                    "skip: action `{}` was completed recently — \
+                     duplicate work suppressed (ADR-0012 level 2)",
+                    ctx.action
+                ),
+            };
+        }
+
+        // ── Level 3: known failure check → warn ───────────────────────────
+        if payload_bool(&ctx.payload, "known_failure") {
+            return RuleResult::Warning {
+                message: format!(
+                    "known_failure: action `{}` has previously failed — \
+                     proceed with caution (ADR-0012 level 3)",
+                    ctx.action
+                ),
+            };
+        }
+
+        // ── Level 4: destructive or external → require approval ───────────
+        let is_destructive = payload_bool(&ctx.payload, "is_destructive");
+        let is_external = payload_bool(&ctx.payload, "is_external");
+        if is_destructive || is_external {
+            let kind = match (is_destructive, is_external) {
+                (true, true) => "destructive and external",
+                (true, false) => "destructive",
+                (false, true) => "external",
+                (false, false) => unreachable!(),
+            };
+            return RuleResult::Gate {
+                action: ctx.action.clone(),
+                rationale: format!(
+                    "{kind} action `{}` requires explicit human approval \
+                     before dispatch (ADR-0012 level 4)",
+                    ctx.action
+                ),
+            };
+        }
+
+        // ── Level 5: auto-approve ─────────────────────────────────────────
+        RuleResult::Pass
+    }
+}
+
+/// Extract a boolean field from a JSON payload.  Missing / non-bool → `false`.
+fn payload_bool(payload: &serde_json::Value, key: &str) -> bool {
+    payload.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -399,5 +531,161 @@ mod tests {
         TaskSizeConstraint::register(&mut store);
         let c = store.get_constraint("C-0010").expect("C-0010 must be registered");
         assert_eq!(c.severity, Severity::Error);
+    }
+
+    // ── AuthorizationGate ─────────────────────────────────────────────────────
+
+    use pares_agens_praxis::rule::{RuleCategory as RC, RuleContext, RuleResult};
+
+    fn gate() -> AuthorizationGate {
+        AuthorizationGate
+    }
+
+    // Level 5: no flags set → auto-approve
+    #[test]
+    fn gate_level5_auto_approve() {
+        let ctx = RuleContext::new("query_db", json!({}));
+        assert_eq!(gate().evaluate(&ctx), RuleResult::Pass);
+    }
+
+    // Level 1: blocked_by_constraint → Fail
+    #[test]
+    fn gate_level1_hard_constraint_blocks() {
+        let ctx = RuleContext::new("restricted_op", json!({"blocked_by_constraint": true}));
+        assert!(
+            matches!(gate().evaluate(&ctx), RuleResult::Fail { .. }),
+            "level 1 must block"
+        );
+    }
+
+    // Level 1 message contains ADR reference
+    #[test]
+    fn gate_level1_reason_references_adr0012() {
+        let ctx = RuleContext::new("op", json!({"blocked_by_constraint": true}));
+        let RuleResult::Fail { reason } = gate().evaluate(&ctx) else {
+            panic!("expected Fail");
+        };
+        assert!(reason.contains("ADR-0012"), "reason should reference ADR-0012; got: {reason}");
+    }
+
+    // Level 2: completed_recently → Warning (skip)
+    #[test]
+    fn gate_level2_duplicate_skips() {
+        let ctx = RuleContext::new("fetch_data", json!({"completed_recently": true}));
+        let result = gate().evaluate(&ctx);
+        assert!(
+            matches!(&result, RuleResult::Warning { message } if message.starts_with("skip:")),
+            "level 2 must produce a skip warning; got: {result:?}"
+        );
+    }
+
+    // Level 2 does not fire when blocked_by_constraint is also true (level 1 wins)
+    #[test]
+    fn gate_level1_takes_priority_over_level2() {
+        let ctx = RuleContext::new(
+            "op",
+            json!({"blocked_by_constraint": true, "completed_recently": true}),
+        );
+        assert!(matches!(gate().evaluate(&ctx), RuleResult::Fail { .. }));
+    }
+
+    // Level 3: known_failure → Warning (not "skip:")
+    #[test]
+    fn gate_level3_known_failure_warns() {
+        let ctx = RuleContext::new("risky_op", json!({"known_failure": true}));
+        let result = gate().evaluate(&ctx);
+        assert!(
+            matches!(&result, RuleResult::Warning { message } if message.starts_with("known_failure:")),
+            "level 3 must produce a known_failure warning; got: {result:?}"
+        );
+    }
+
+    // Level 3 does not fire when level 2 is triggered
+    #[test]
+    fn gate_level2_takes_priority_over_level3() {
+        let ctx = RuleContext::new(
+            "op",
+            json!({"completed_recently": true, "known_failure": true}),
+        );
+        let result = gate().evaluate(&ctx);
+        assert!(matches!(&result, RuleResult::Warning { message } if message.starts_with("skip:")));
+    }
+
+    // Level 4: is_destructive → Gate
+    #[test]
+    fn gate_level4_destructive_action_requires_approval() {
+        let ctx = RuleContext::new("delete_records", json!({"is_destructive": true}));
+        assert!(
+            matches!(gate().evaluate(&ctx), RuleResult::Gate { .. }),
+            "level 4 must require approval for destructive actions"
+        );
+    }
+
+    // Level 4: is_external → Gate
+    #[test]
+    fn gate_level4_external_action_requires_approval() {
+        let ctx = RuleContext::new("post_webhook", json!({"is_external": true}));
+        assert!(
+            matches!(gate().evaluate(&ctx), RuleResult::Gate { .. }),
+            "level 4 must require approval for external actions"
+        );
+    }
+
+    // Level 4 gate carries action name and ADR reference
+    #[test]
+    fn gate_level4_gate_references_action_and_adr() {
+        let ctx = RuleContext::new("send_email", json!({"is_external": true}));
+        let RuleResult::Gate { action, rationale } = gate().evaluate(&ctx) else {
+            panic!("expected Gate");
+        };
+        assert_eq!(action, "send_email");
+        assert!(rationale.contains("ADR-0012"), "rationale should reference ADR-0012; got: {rationale}");
+    }
+
+    // Level 4 does not fire when level 3 is triggered
+    #[test]
+    fn gate_level3_takes_priority_over_level4() {
+        let ctx = RuleContext::new(
+            "op",
+            json!({"known_failure": true, "is_destructive": true}),
+        );
+        let result = gate().evaluate(&ctx);
+        assert!(matches!(&result, RuleResult::Warning { message } if message.starts_with("known_failure:")));
+    }
+
+    // Level 4: both is_destructive and is_external → Gate with "destructive and external"
+    #[test]
+    fn gate_level4_both_flags_set_shows_combined_kind() {
+        let ctx = RuleContext::new(
+            "nuke_external_resource",
+            json!({"is_destructive": true, "is_external": true}),
+        );
+        let RuleResult::Gate { rationale, .. } = gate().evaluate(&ctx) else {
+            panic!("expected Gate");
+        };
+        assert!(
+            rationale.contains("destructive and external"),
+            "rationale should mention both; got: {rationale}"
+        );
+    }
+
+    // Gate is in State category
+    #[test]
+    fn gate_category_is_state() {
+        assert_eq!(gate().category(), RC::State);
+    }
+
+    // Gate name is stable
+    #[test]
+    fn gate_name_is_authorization_gate() {
+        assert_eq!(gate().name(), "authorization_gate");
+    }
+
+    // Missing flags default to false (do not trigger)
+    #[test]
+    fn gate_missing_flags_treated_as_false() {
+        // Only is_destructive missing; is_external absent → should not gate
+        let ctx = RuleContext::new("action", json!({"is_destructive": false}));
+        assert_eq!(gate().evaluate(&ctx), RuleResult::Pass);
     }
 }

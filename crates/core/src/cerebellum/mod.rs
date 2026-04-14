@@ -31,10 +31,12 @@ pub mod router;
 use crate::cerebellum::bridge::PluresDbBridge;
 use crate::event::Event;
 use crate::memory::PluresLm;
+use crate::praxis::constraints::AuthorizationGate;
 use crate::procedure::{Procedure, ProcedureRegistry};
 
 use async_trait::async_trait;
-use tracing::{debug, info, instrument};
+use pares_agens_praxis::rule::{Rule, RuleContext, RuleResult};
+use tracing::{debug, info, instrument, warn};
 
 // ── routing decision ─────────────────────────────────────────────────────────
 
@@ -96,6 +98,18 @@ impl Default for CerebellumConfig {
 
 // ── cerebellum context ───────────────────────────────────────────────────────
 
+/// Approval required for a destructive or external action (ADR-0012 level 4).
+///
+/// When this is `Some` in [`CerebellumContext`], the caller **must** obtain
+/// explicit human approval before dispatching the action to a subagent.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ApprovalRequest {
+    /// The action requiring approval (maps to the event kind).
+    pub action: String,
+    /// Human-readable rationale presented to the approver.
+    pub rationale: String,
+}
+
 /// The enriched context the cerebellum produces for downstream agents.
 #[derive(Debug, Clone)]
 pub struct CerebellumContext {
@@ -107,6 +121,9 @@ pub struct CerebellumContext {
     pub route: Route,
     /// Praxis ledger guidance entries, if any.
     pub guidance: Vec<String>,
+    /// When `Some`, the authorization gate (ADR-0012 level 4) requires explicit
+    /// human approval before this action may be dispatched.
+    pub approval_required: Option<ApprovalRequest>,
 }
 
 // ── cerebellum ───────────────────────────────────────────────────────────────
@@ -148,8 +165,9 @@ impl Cerebellum {
     /// Main entry point: preprocess an event into an enriched context.
     ///
     /// 1. Autorecall — retrieve + compress memories
-    /// 2. Route — decide conscious / deep / procedural / drop
-    /// 3. Package context for downstream agents
+    /// 2. Authorization gate (ADR-0012) — evaluate 5-level gate
+    /// 3. Route — decide conscious / deep / procedural / drop
+    /// 4. Package context for downstream agents
     #[instrument(skip(self, memory, _registry))]
     pub async fn preprocess(
         &self,
@@ -175,17 +193,56 @@ impl Cerebellum {
             "autorecall complete"
         );
 
-        // 2. Route
-        let route = router::decide(event, &learned_context, &self.config);
+        // 2. Authorization gate (ADR-0012)
+        let gate_ctx = build_authorization_context(event);
+        let gate_result = AuthorizationGate.evaluate(&gate_ctx);
+
+        // Level 1: hard constraint → block immediately
+        if let RuleResult::Fail { reason } = &gate_result {
+            return Err(CerebellumError::AuthorizationBlocked {
+                reason: reason.clone(),
+            });
+        }
+
+        // 3. Route (may be overridden by gate levels 2–4)
+        let mut route = router::decide(event, &learned_context, &self.config);
+        let mut guidance: Vec<String> = vec![];
+        let mut approval_required: Option<ApprovalRequest> = None;
+
+        match gate_result {
+            // Level 2: skip duplicate — override route to Drop
+            RuleResult::Warning { ref message } if message.starts_with("skip:") => {
+                debug!(message, "authorization gate: duplicate action suppressed");
+                route = Route::Drop;
+                guidance.push(message.clone());
+            }
+            // Level 3: known failure — warn, keep original route
+            RuleResult::Warning { ref message } => {
+                warn!(message, "authorization gate: known failure warning");
+                guidance.push(message.clone());
+            }
+            // Level 4: destructive/external → require approval
+            RuleResult::Gate { ref action, ref rationale } => {
+                debug!(action, rationale, "authorization gate: approval required");
+                approval_required = Some(ApprovalRequest {
+                    action: action.clone(),
+                    rationale: rationale.clone(),
+                });
+                guidance.push(format!("approval_required: {rationale}"));
+            }
+            // Level 5: auto-approve (Pass) or already handled (Fail above)
+            _ => {}
+        }
 
         debug!(?route, "routing decision");
 
-        // 3. Package
+        // 4. Package
         Ok(CerebellumContext {
             event: event.clone(),
             learned_context,
             route,
-            guidance: vec![],
+            guidance,
+            approval_required,
         })
     }
 }
@@ -199,6 +256,12 @@ pub enum CerebellumError {
     /// A procedure execution step failed.
     #[error("procedure error: {0}")]
     Procedure(String),
+    /// The authorization gate (ADR-0012 level 1) blocked the action.
+    #[error("authorization blocked: {reason}")]
+    AuthorizationBlocked {
+        /// Human-readable reason returned by the gate.
+        reason: String,
+    },
 }
 
 // ── cerebellum as a Procedure ────────────────────────────────────────────────
@@ -243,9 +306,54 @@ fn extract_query(event: &Event) -> Option<String> {
     }
 }
 
+/// Build an [`RuleContext`] for the authorization gate from an event.
+///
+/// The cerebellum derives gate payload flags from what it can observe in the
+/// event.  Flags that would require external queries (e.g. `completed_recently`,
+/// `known_failure`) default to `false` here; the orchestration layer may enrich
+/// the context further before re-evaluating the gate directly.
+///
+/// | Payload field | Source |
+/// |---------------|--------|
+/// | `blocked_by_constraint` | always `false` (handled by executor's PraxisGate) |
+/// | `completed_recently` | always `false` (no dedup log in cerebellum) |
+/// | `known_failure` | always `false` (no failure log in cerebellum) |
+/// | `is_destructive` | `true` for `ToolResult` with destructive tool prefixes |
+/// | `is_external` | `true` for `ToolResult` whose name suggests an external call |
+fn build_authorization_context(event: &Event) -> RuleContext {
+    let (is_destructive, is_external) = match event {
+        Event::ToolResult { tool_name, .. } => {
+            let destructive = tool_name.starts_with("delete_")
+                || tool_name.starts_with("write_")
+                || tool_name.starts_with("update_")
+                || tool_name.starts_with("create_")
+                || tool_name.starts_with("publish_");
+            let external = tool_name.starts_with("send_")
+                || tool_name.starts_with("post_")
+                || tool_name.starts_with("email_")
+                || tool_name.starts_with("webhook_")
+                || tool_name.starts_with("http_");
+            (destructive, external)
+        }
+        _ => (false, false),
+    };
+
+    RuleContext::new(
+        event.kind(),
+        serde_json::json!({
+            "blocked_by_constraint": false,
+            "completed_recently":    false,
+            "known_failure":         false,
+            "is_destructive":        is_destructive,
+            "is_external":           is_external,
+        }),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pares_agens_praxis::rule::{RuleContext, RuleResult};
 
     #[test]
     fn extract_query_from_message() {
@@ -288,5 +396,115 @@ mod tests {
         assert_eq!(cfg.recall_limit, 10);
         assert!(cfg.enable_subconscious);
         assert!((cfg.complexity_threshold - 0.7).abs() < f32::EPSILON);
+    }
+
+    // ── build_authorization_context ───────────────────────────────────────────
+
+    #[test]
+    fn auth_ctx_message_is_not_destructive_or_external() {
+        let event = Event::Message {
+            id: "1".into(),
+            channel: "c".into(),
+            sender: "u".into(),
+            content: "hello".into(),
+        };
+        let ctx = build_authorization_context(&event);
+        assert!(!ctx.payload["is_destructive"].as_bool().unwrap_or(true));
+        assert!(!ctx.payload["is_external"].as_bool().unwrap_or(true));
+    }
+
+    #[test]
+    fn auth_ctx_destructive_tool_sets_is_destructive() {
+        let event = Event::ToolResult {
+            tool_call_id: "tc1".into(),
+            tool_name: "delete_file".into(),
+            content: "ok".into(),
+            is_error: false,
+        };
+        let ctx = build_authorization_context(&event);
+        assert!(ctx.payload["is_destructive"].as_bool().unwrap_or(false));
+        assert!(!ctx.payload["is_external"].as_bool().unwrap_or(true));
+    }
+
+    #[test]
+    fn auth_ctx_external_tool_sets_is_external() {
+        let event = Event::ToolResult {
+            tool_call_id: "tc2".into(),
+            tool_name: "send_email".into(),
+            content: "ok".into(),
+            is_error: false,
+        };
+        let ctx = build_authorization_context(&event);
+        assert!(ctx.payload["is_external"].as_bool().unwrap_or(false));
+        assert!(!ctx.payload["is_destructive"].as_bool().unwrap_or(true));
+    }
+
+    #[test]
+    fn auth_ctx_read_tool_is_neither_destructive_nor_external() {
+        let event = Event::ToolResult {
+            tool_call_id: "tc3".into(),
+            tool_name: "read_config".into(),
+            content: "{}".into(),
+            is_error: false,
+        };
+        let ctx = build_authorization_context(&event);
+        assert!(!ctx.payload["is_destructive"].as_bool().unwrap_or(true));
+        assert!(!ctx.payload["is_external"].as_bool().unwrap_or(true));
+    }
+
+    // ── gate-level integration via build_authorization_context ─────────────
+
+    #[test]
+    fn gate_level5_for_message_event() {
+        let event = Event::Message {
+            id: "1".into(),
+            channel: "c".into(),
+            sender: "u".into(),
+            content: "tell me a joke".into(),
+        };
+        let ctx = build_authorization_context(&event);
+        assert_eq!(AuthorizationGate.evaluate(&ctx), RuleResult::Pass);
+    }
+
+    #[test]
+    fn gate_level4_for_destructive_tool_result() {
+        let event = Event::ToolResult {
+            tool_call_id: "tc".into(),
+            tool_name: "delete_record".into(),
+            content: "ok".into(),
+            is_error: false,
+        };
+        let ctx = build_authorization_context(&event);
+        assert!(
+            matches!(AuthorizationGate.evaluate(&ctx), RuleResult::Gate { .. }),
+            "destructive tool should trigger approval gate"
+        );
+    }
+
+    #[test]
+    fn gate_level4_for_external_tool_result() {
+        let event = Event::ToolResult {
+            tool_call_id: "tc".into(),
+            tool_name: "post_to_slack".into(),
+            content: "ok".into(),
+            is_error: false,
+        };
+        let ctx = build_authorization_context(&event);
+        assert!(
+            matches!(AuthorizationGate.evaluate(&ctx), RuleResult::Gate { .. }),
+            "external tool should trigger approval gate"
+        );
+    }
+
+    // ── CerebellumError display ───────────────────────────────────────────────
+
+    #[test]
+    fn authorization_blocked_error_displays_reason() {
+        let err = CerebellumError::AuthorizationBlocked {
+            reason: "hard constraint C-9999 violated".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("authorization blocked"), "got: {msg}");
+        assert!(msg.contains("hard constraint C-9999"), "got: {msg}");
     }
 }
