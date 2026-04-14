@@ -7,7 +7,7 @@ members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client
 # already include the Tauri/GTK/WebKit dependencies for locked builds to work.
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 license = "BSL-1.1"
 repository = "https://github.com/plures/pares-agens"
@@ -21,6 +21,7 @@ thiserror = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
 teloxide = { version = "0.13", features = ["macros", "throttle"] }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }

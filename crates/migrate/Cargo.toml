@@ -23,7 +23,9 @@ thiserror.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true
 pares-agens-core = { path = "../core" }
+pares-agens-channels = { path = "../channels" }
 
 [dev-dependencies]
 tempfile = "3"
