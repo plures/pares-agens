@@ -3090,6 +3090,7 @@ dependencies = [
  "clap",
  "pares-agens-channels",
  "pares-agens-core",
+ "pares-models",
  "serde",
  "serde_json",
  "tempfile",
