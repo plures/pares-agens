@@ -242,6 +242,59 @@ impl PluresLm {
         Ok(Some(id))
     }
 
+    /// Store a procedure candidate derived from a conversation.
+    pub async fn capture_procedure_candidate(
+        &self,
+        description: &str,
+        tags: Vec<String>,
+    ) -> Result<Option<String>, Error> {
+        if !passes_quality_gate(description) {
+            debug!("capture_procedure_candidate rejected: quality gate");
+            return Ok(None);
+        }
+
+        let embedding = self
+            .embedder
+            .embed(description)
+            .await
+            .map_err(|e| Error::Embed(e.to_string()))?;
+
+        let all = self
+            .store
+            .all()
+            .await
+            .map_err(|e| Error::Store(e.to_string()))?;
+
+        let refs: Vec<&MemoryEntry> = all.iter().collect();
+        if quality::is_echo(&embedding, &refs) {
+            debug!("capture_procedure_candidate rejected: echo");
+            return Ok(None);
+        }
+
+        let id = Uuid::new_v4().to_string();
+        let created_at = chrono::Utc::now().to_rfc3339();
+
+        let mut tagged = tags;
+        tagged.push("procedure:candidate".into());
+
+        let entry = MemoryEntry {
+            id: id.clone(),
+            content: description.to_string(),
+            category: MemoryCategory::Procedure,
+            tags: tagged,
+            embedding,
+            score: 0.0,
+            created_at,
+        };
+
+        self.store
+            .insert(entry)
+            .await
+            .map_err(|e| Error::Store(e.to_string()))?;
+
+        Ok(Some(id))
+    }
+
     /// Return all stored memory entries (unordered).
     ///
     /// Used by maintenance procedures such as `cerebellum-sweep` that need to

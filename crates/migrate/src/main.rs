@@ -21,6 +21,7 @@ use pares_agens_channels::adapter::ChannelAdapter;
 use pares_agens_channels::telegram::{TelegramAdapter, TelegramConfig};
 use pares_agens_core::agent::{Agent, Memory};
 use pares_agens_core::cerebellum::{Cerebellum, CerebellumConfig};
+use pares_agens_core::delegation::{broker::DelegationBroker, registry::AgentRegistry};
 use pares_agens_core::memory::{
     embed::{EmbeddingProvider, MockEmbedder, OllamaEmbedder},
     entry::Exchange,
@@ -905,17 +906,26 @@ async fn main() {
             procedure_registry.register(Box::new(RunCommandProcedure));
             let procedure_registry = Arc::new(procedure_registry);
 
-            let model_client = Arc::new(RouterModelClient {
+            let model_client: Arc<dyn ModelClient> = Arc::new(RouterModelClient {
                 router: model_router.clone(),
                 model: model.clone(),
             });
-            let deep_model_client = Arc::new(RouterModelClient {
+            let deep_model_client: Arc<dyn ModelClient> = Arc::new(RouterModelClient {
                 router: deep_model_router.clone(),
                 model: deep_model.clone(),
             });
-            let tool_dispatcher = Arc::new(ProcedureToolDispatcher {
+            let tool_dispatcher: Arc<dyn ToolDispatcher> = Arc::new(ProcedureToolDispatcher {
                 registry: Arc::clone(&procedure_registry),
             });
+
+            let mut registry = AgentRegistry::new();
+            registry.register_builtins();
+            let registry = Arc::new(registry);
+            let delegation_broker = DelegationBroker::new(
+                Arc::clone(&registry),
+                Arc::clone(&model_client),
+                Arc::clone(&tool_dispatcher),
+            );
 
             let agent = Arc::new(Agent::with_cerebellum(
                 memory,
@@ -923,7 +933,8 @@ async fn main() {
                 Arc::clone(&plures_lm),
             )
             .with_model(model_client, tool_dispatcher, system_prompt)
-            .with_deep_model(deep_model_client));
+            .with_deep_model(deep_model_client)
+            .with_delegation(delegation_broker));
 
             // Set up Telegram adapter
             let config = TelegramConfig::new(telegram_token);

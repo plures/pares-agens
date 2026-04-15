@@ -1,6 +1,7 @@
 //! Routing logic — decides where an event goes after autorecall.
 
 use super::{CerebellumConfig, Route};
+use crate::delegation::broker::SubTask;
 use crate::event::Event;
 
 /// Complexity signals extracted from an event.
@@ -11,6 +12,12 @@ struct Signals {
     analytical: bool,
     /// Whether the message is a simple command or acknowledgement.
     simple: bool,
+    /// Whether the message includes code or implementation intent.
+    code: bool,
+    /// Whether the message suggests research or external lookup.
+    research: bool,
+    /// Whether the request should be decomposed into sub-tasks.
+    decomposable: bool,
 }
 
 /// Decide routing for an event.
@@ -27,7 +34,7 @@ pub fn decide(event: &Event, learned_context: &str, config: &CerebellumConfig) -
     }
 }
 
-fn decide_message(content: &str, _learned_context: &str, config: &CerebellumConfig) -> Route {
+fn decide_message(content: &str, learned_context: &str, config: &CerebellumConfig) -> Route {
     let signals = analyze(content);
 
     // Drop noise (exact single-word acks like "ok", "yes", "no")
@@ -38,6 +45,16 @@ fn decide_message(content: &str, _learned_context: &str, config: &CerebellumConf
     // Short commands go to conscious
     if signals.simple && !signals.analytical {
         return Route::Conscious;
+    }
+
+    if signals.decomposable {
+        let tasks = build_subtasks(content, learned_context, &signals);
+        if !tasks.is_empty() {
+            return Route::Delegate {
+                reason: "decomposition signals detected (multi-part or cross-domain request)".into(),
+                tasks,
+            };
+        }
     }
 
     // Deep reasoning path
@@ -72,8 +89,42 @@ fn analyze(content: &str) -> Signals {
         "think through",
         "deep dive",
         "investigate",
+        "plan",
     ];
     let analytical = analytical_keywords.iter().any(|kw| lower.contains(kw));
+
+    let code_keywords = [
+        "code",
+        "implement",
+        "build",
+        "create",
+        "refactor",
+        "fix",
+        "compile",
+        "cargo",
+        "rust",
+        "typescript",
+        "javascript",
+        "python",
+        "module",
+        "crate",
+        "function",
+    ];
+    let code = code_keywords.iter().any(|kw| lower.contains(kw));
+
+    let research_keywords = [
+        "research",
+        "search",
+        "find",
+        "look up",
+        "documentation",
+        "docs",
+        "source",
+        "citation",
+        "paper",
+        "web",
+    ];
+    let research = research_keywords.iter().any(|kw| lower.contains(kw));
 
     let simple_patterns = [
         "yes",
@@ -91,10 +142,36 @@ fn analyze(content: &str) -> Signals {
     let simple =
         simple_patterns.iter().any(|p| lower.trim() == *p) || (token_estimate <= 3 && !analytical);
 
+    let mentions_multiple_files = count_file_mentions(&lower) >= 2;
+    let multi_part_keywords = [
+        "multiple",
+        "components",
+        "modules",
+        "parts",
+        "files",
+        "directories",
+        "across",
+        "integrate",
+        "wire",
+    ];
+    let multi_part_request = multi_part_keywords.iter().any(|kw| lower.contains(kw));
+    let multi_verb_request = ["create", "build", "implement", "wire", "integrate"]
+        .iter()
+        .any(|kw| lower.contains(kw))
+        && (lower.contains(" and ") || multi_part_request);
+
+    let decomposable = token_estimate > 200
+        || mentions_multiple_files
+        || multi_verb_request
+        || (analytical && code);
+
     Signals {
         token_estimate,
         analytical,
         simple,
+        code,
+        research,
+        decomposable,
     }
 }
 
@@ -114,6 +191,72 @@ fn estimate_complexity(signals: &Signals) -> f32 {
     }
 
     score.min(1.0)
+}
+
+fn count_file_mentions(lower: &str) -> usize {
+    let extensions = [
+        ".rs", ".ts", ".js", ".py", ".go", ".java", ".toml", ".json", ".yml", ".yaml",
+        ".md",
+    ];
+    extensions
+        .iter()
+        .filter(|ext| lower.contains(*ext))
+        .count()
+        + ["/src/", "crates/", "modules/"]
+            .iter()
+            .filter(|segment| lower.contains(*segment))
+            .count()
+}
+
+fn build_subtasks(content: &str, learned_context: &str, signals: &Signals) -> Vec<SubTask> {
+    let mut tasks = Vec::new();
+    let mut context = String::new();
+    if !learned_context.trim().is_empty() {
+        context = learned_context.trim().to_string();
+    }
+
+    if signals.analytical {
+        let mut task = SubTask::new(
+            "analyst",
+            format!("Analyze and outline the plan for: {content}"),
+        );
+        if !context.is_empty() {
+            task = task.with_parent_context(context.clone());
+        }
+        tasks.push(task);
+    }
+
+    if signals.code {
+        let mut task = SubTask::new("coder", format!("Implement or patch: {content}"));
+        if !context.is_empty() {
+            task = task.with_parent_context(context.clone());
+        }
+        tasks.push(task);
+    }
+
+    if signals.research {
+        let mut task = SubTask::new(
+            "researcher",
+            format!("Research supporting details for: {content}"),
+        );
+        if !context.is_empty() {
+            task = task.with_parent_context(context.clone());
+        }
+        tasks.push(task);
+    }
+
+    if tasks.is_empty() && signals.decomposable {
+        let mut task = SubTask::new(
+            "analyst",
+            format!("Decompose this request into actionable steps: {content}"),
+        );
+        if !context.is_empty() {
+            task = task.with_parent_context(context);
+        }
+        tasks.push(task);
+    }
+
+    tasks
 }
 
 #[cfg(test)]
@@ -155,6 +298,18 @@ mod tests {
         };
         let route = decide(&event, "", &config());
         assert!(matches!(route, Route::Deep { .. }));
+    }
+
+    #[test]
+    fn multi_part_request_routes_delegate() {
+        let event = Event::Message {
+            id: "1".into(),
+            channel: "c".into(),
+            sender: "u".into(),
+            content: "Implement updates in src/main.rs and src/lib.rs, then analyze the design trade-offs for the new module".into(),
+        };
+        let route = decide(&event, "", &config());
+        assert!(matches!(route, Route::Delegate { .. }));
     }
 
     #[test]

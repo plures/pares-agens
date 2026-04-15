@@ -25,7 +25,7 @@ use crate::model::{ChatOptions, ModelClient, ToolDefinition, ToolDispatcher};
 // ── SubTask ──────────────────────────────────────────────────────────────────
 
 /// A single unit of work to be delegated to a named agent.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubTask {
     /// Name of the agent that should execute this task (must be registered in
     /// the [`AgentRegistry`]).

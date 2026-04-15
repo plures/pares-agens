@@ -21,6 +21,8 @@ use tokio::sync::Mutex as TokioMutex;
 use tracing::{debug, error, info, warn};
 
 use crate::cerebellum::{Cerebellum, Route};
+use crate::delegation::aggregator::ResultAggregator;
+use crate::delegation::broker::DelegationBroker;
 use crate::event::Event;
 use crate::memory::entry::Exchange;
 use crate::memory::{passes_quality_gate, PluresLm};
@@ -134,6 +136,8 @@ pub struct Agent {
     system_prompt: String,
     /// Per-channel conversation history (last 20 messages).
     conversation_history: Mutex<HashMap<String, Vec<ChatMessage>>>,
+    /// Optional delegation broker for decomposed tasks.
+    delegation_broker: Option<DelegationBroker>,
 }
 
 impl Agent {
@@ -149,6 +153,7 @@ impl Agent {
             tool_dispatcher: None,
             system_prompt: String::new(),
             conversation_history: Mutex::new(HashMap::new()),
+            delegation_broker: None,
         }
     }
 
@@ -173,6 +178,7 @@ impl Agent {
             tool_dispatcher: None,
             system_prompt: String::new(),
             conversation_history: Mutex::new(HashMap::new()),
+            delegation_broker: None,
         }
     }
 
@@ -192,6 +198,12 @@ impl Agent {
     /// Attach a deep model client used for low-confidence escalation.
     pub fn with_deep_model(mut self, client: Arc<dyn ModelClient>) -> Self {
         self.deep_model_client = Some(client);
+        self
+    }
+
+    /// Attach a delegation broker for decomposed tasks.
+    pub fn with_delegation(mut self, broker: DelegationBroker) -> Self {
+        self.delegation_broker = Some(broker);
         self
     }
 
@@ -246,116 +258,20 @@ impl Agent {
                     })
                     .await
                 }
+                Route::Delegate { reason, tasks } => {
+                    let delegated = self
+                        .handle_delegation(id, channel, content, &learned_context, &reason, tasks)
+                        .await;
+                    if delegated.is_some() {
+                        delegated
+                    } else {
+                        self.handle_model_message(id, channel, content, &learned_context)
+                            .await
+                    }
+                }
                 Route::Conscious | Route::Deep { .. } => {
-                    let model_client = match &self.model_client {
-                        Some(client) => client,
-                        None => {
-                            warn!("agent: model client not configured");
-                            return Some(Event::ModelResponse {
-                                request_id: id.clone(),
-                                model: "unconfigured".into(),
-                                content: "⚠️ Model client not configured.".into(),
-                            });
-                        }
-                    };
-                    let tool_dispatcher = match &self.tool_dispatcher {
-                        Some(dispatcher) => dispatcher,
-                        None => {
-                            warn!("agent: tool dispatcher not configured");
-                            return Some(Event::ModelResponse {
-                                request_id: id.clone(),
-                                model: "unconfigured".into(),
-                                content: "⚠️ Tool dispatcher not configured.".into(),
-                            });
-                        }
-                    };
-
-                    let history_snapshot = {
-                        let guard = self.conversation_history.lock().unwrap();
-                        guard.get(channel).cloned().unwrap_or_default()
-                    };
-
-                    let base_system_text = self.build_system_prompt(&learned_context, false);
-                    let options = ChatOptions {
-                        temperature: None,
-                        logprobs: true,
-                    };
-
-                    let (mut reply, logprobs, mut messages) = match self
-                        .run_model_loop(
-                            model_client,
-                            tool_dispatcher,
-                            base_system_text,
-                            &history_snapshot,
-                            content,
-                            &options,
-                        )
+                    self.handle_model_message(id, channel, content, &learned_context)
                         .await
-                    {
-                        Ok(result) => result,
-                        Err(e) => {
-                            error!(error = %e, "model completion failed");
-                            return Some(Event::ModelResponse {
-                                request_id: id.clone(),
-                                model: "error".into(),
-                                content: format!("⚠️ Model error: {e}"),
-                            });
-                        }
-                    };
-
-                    let mut model_label = "model";
-                    if self.is_low_confidence(logprobs.as_deref()) {
-                        if let Some(deep_client) = &self.deep_model_client {
-                            let deep_system_text = self.build_system_prompt(&learned_context, true);
-                            let deep_options = ChatOptions {
-                                temperature: None,
-                                logprobs: false,
-                            };
-                            match self
-                                .run_model_loop(
-                                    deep_client,
-                                    tool_dispatcher,
-                                    deep_system_text,
-                                    &history_snapshot,
-                                    content,
-                                    &deep_options,
-                                )
-                                .await
-                            {
-                                Ok((deep_reply, _deep_logprobs, deep_messages)) => {
-                                    reply = deep_reply;
-                                    messages = deep_messages;
-                                    model_label = "deep-model";
-                                }
-                                Err(e) => {
-                                    warn!(error = %e, "deep model completion failed, using conscious reply");
-                                }
-                            }
-                        } else {
-                            debug!("low confidence detected, but no deep model configured");
-                        }
-                    }
-
-                    info!(input_len = content.len(), output_len = reply.len(), "LLM response generated");
-
-                    let start = 1 + history_snapshot.len();
-                    if messages.len() > start {
-                        let mut guard = self.conversation_history.lock().unwrap();
-                        let history = guard.entry(channel.clone()).or_default();
-                        history.extend(messages[start..].iter().cloned());
-                        if history.len() > 20 {
-                            let drain = history.len() - 20;
-                            history.drain(0..drain);
-                        }
-                    }
-
-                    self.capture_exchange(content, &reply).await;
-
-                    Some(Event::ModelResponse {
-                        request_id: id.clone(),
-                        model: model_label.into(),
-                        content: reply,
-                    })
                 }
                 Route::Drop => None,
             },
@@ -368,6 +284,244 @@ impl Agent {
             }
             _ => None,
         }
+    }
+
+    async fn handle_model_message(
+        &self,
+        id: &str,
+        channel: &str,
+        content: &str,
+        learned_context: &str,
+    ) -> Option<Event> {
+        let model_client = match &self.model_client {
+            Some(client) => client,
+            None => {
+                warn!("agent: model client not configured");
+                return Some(Event::ModelResponse {
+                    request_id: id.to_string(),
+                    model: "unconfigured".into(),
+                    content: "⚠️ Model client not configured.".into(),
+                });
+            }
+        };
+        let tool_dispatcher = match &self.tool_dispatcher {
+            Some(dispatcher) => dispatcher,
+            None => {
+                warn!("agent: tool dispatcher not configured");
+                return Some(Event::ModelResponse {
+                    request_id: id.to_string(),
+                    model: "unconfigured".into(),
+                    content: "⚠️ Tool dispatcher not configured.".into(),
+                });
+            }
+        };
+
+        let history_snapshot = {
+            let guard = self.conversation_history.lock().unwrap();
+            guard.get(channel).cloned().unwrap_or_default()
+        };
+
+        let base_system_text = self.build_system_prompt(learned_context, false);
+        let options = ChatOptions {
+            temperature: None,
+            logprobs: true,
+        };
+
+        let (mut reply, logprobs, mut messages) = match self
+            .run_model_loop(
+                model_client,
+                tool_dispatcher,
+                base_system_text,
+                &history_snapshot,
+                content,
+                &options,
+            )
+            .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                error!(error = %e, "model completion failed");
+                return Some(Event::ModelResponse {
+                    request_id: id.to_string(),
+                    model: "error".into(),
+                    content: format!("⚠️ Model error: {e}"),
+                });
+            }
+        };
+
+        let mut model_label = "model";
+        if self.is_low_confidence(logprobs.as_deref()) {
+            if let Some(deep_client) = &self.deep_model_client {
+                let deep_system_text = self.build_system_prompt(learned_context, true);
+                let deep_options = ChatOptions {
+                    temperature: None,
+                    logprobs: false,
+                };
+                match self
+                    .run_model_loop(
+                        deep_client,
+                        tool_dispatcher,
+                        deep_system_text,
+                        &history_snapshot,
+                        content,
+                        &deep_options,
+                    )
+                    .await
+                {
+                    Ok((deep_reply, _deep_logprobs, deep_messages)) => {
+                        reply = deep_reply;
+                        messages = deep_messages;
+                        model_label = "deep-model";
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "deep model completion failed, using conscious reply");
+                    }
+                }
+            } else {
+                debug!("low confidence detected, but no deep model configured");
+            }
+        }
+
+        info!(input_len = content.len(), output_len = reply.len(), "LLM response generated");
+
+        let start = 1 + history_snapshot.len();
+        if messages.len() > start {
+            let mut guard = self.conversation_history.lock().unwrap();
+            let history = guard.entry(channel.to_string()).or_default();
+            history.extend(messages[start..].iter().cloned());
+            if history.len() > 20 {
+                let drain = history.len() - 20;
+                history.drain(0..drain);
+            }
+        }
+
+        self.capture_exchange(content, &reply).await;
+        self.spawn_procedure_writer(content, &reply);
+
+        Some(Event::ModelResponse {
+            request_id: id.to_string(),
+            model: model_label.into(),
+            content: reply,
+        })
+    }
+
+    async fn handle_delegation(
+        &self,
+        id: &str,
+        channel: &str,
+        content: &str,
+        learned_context: &str,
+        reason: &str,
+        tasks: Vec<crate::delegation::broker::SubTask>,
+    ) -> Option<Event> {
+        let broker = match &self.delegation_broker {
+            Some(broker) => broker,
+            None => {
+                warn!("agent: delegation broker not configured");
+                return None;
+            }
+        };
+
+        let enriched_tasks = if learned_context.trim().is_empty() {
+            tasks
+        } else {
+            tasks
+                .into_iter()
+                .map(|task| {
+                    if task.parent_context.is_none() {
+                        task.with_parent_context(learned_context.trim().to_string())
+                    } else {
+                        task
+                    }
+                })
+                .collect()
+        };
+
+        info!(
+            request_id = %id,
+            agent_count = enriched_tasks.len(),
+            %channel,
+            %reason,
+            "delegating task"
+        );
+
+        let results = broker.delegate(enriched_tasks).await;
+        let aggregated = ResultAggregator::new().aggregate(results);
+        if !aggregated.has_output() {
+            warn!(request_id = %id, "delegation returned no output; falling back");
+            return None;
+        }
+
+        let mut content_out = aggregated.content;
+        if !aggregated.failed.is_empty() {
+            content_out.push_str("\n\n## Delegation failures\n");
+            for (agent, err) in aggregated.failed {
+                content_out.push_str(&format!("- {agent}: {err}\n"));
+            }
+        }
+
+        self.spawn_procedure_writer(content, &content_out);
+
+        Some(Event::ModelResponse {
+            request_id: id.to_string(),
+            model: "delegated".into(),
+            content: content_out,
+        })
+    }
+
+    fn spawn_procedure_writer(&self, user: &str, assistant: &str) {
+        let Some(plures_lm) = &self.plures_lm else {
+            return;
+        };
+
+        let Some(candidate) = self.extract_procedure_candidate(user, assistant) else {
+            return;
+        };
+
+        let tags = self.extract_domain_tags(user);
+        let plures_lm = Arc::clone(plures_lm);
+        tokio::spawn(async move {
+            if let Err(e) = plures_lm
+                .capture_procedure_candidate(&candidate, tags)
+                .await
+            {
+                error!(error = %e, "agent: failed to capture procedure candidate");
+            }
+        });
+    }
+
+    fn extract_procedure_candidate(&self, user: &str, assistant: &str) -> Option<String> {
+        let lower = assistant.to_lowercase();
+        let triggers = [
+            "steps:",
+            "procedure:",
+            "workflow:",
+            "runbook:",
+            "playbook:",
+            "checklist:",
+        ];
+        let has_steps = triggers.iter().any(|t| lower.contains(t))
+            || (lower.contains("step 1") && lower.contains("step 2"))
+            || (assistant.contains("1.") && assistant.contains("2."));
+
+        if !has_steps {
+            return None;
+        }
+
+        let summary = assistant
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .take(12)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        if summary.trim().is_empty() {
+            return None;
+        }
+
+        Some(format!(
+            "Procedure candidate derived from user request:\nUser: {user}\n\n{summary}"
+        ))
     }
 
     fn build_system_prompt(&self, learned_context: &str, deep: bool) -> String {

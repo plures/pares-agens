@@ -137,6 +137,7 @@ impl RetentionPolicy {
         )
         .set_rule(MemoryCategory::Preference, RetentionRule::keep_forever())
         .set_rule(MemoryCategory::Decision, RetentionRule::keep_forever())
+        .set_rule(MemoryCategory::Procedure, RetentionRule::keep_forever())
         .set_rule(
             MemoryCategory::Fact,
             RetentionRule::expire_and_limit(365, 1_000),

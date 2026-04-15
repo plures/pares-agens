@@ -29,6 +29,7 @@ pub mod pipeline;
 pub mod router;
 
 use crate::cerebellum::bridge::PluresDbBridge;
+use crate::delegation::broker::SubTask;
 use crate::event::Event;
 use crate::memory::PluresLm;
 use crate::procedure::{Procedure, ProcedureRegistry};
@@ -48,6 +49,13 @@ pub enum Route {
     Deep {
         /// Human-readable explanation of why the subconscious is being invoked.
         reason: String,
+    },
+    /// Delegate to specialist sub-agents via the delegation broker.
+    Delegate {
+        /// Human-readable explanation of why the task is decomposed.
+        reason: String,
+        /// Sub-tasks created by the cerebellum for specialist agents.
+        tasks: Vec<SubTask>,
     },
     /// Pure procedure — no LLM needed, cerebellum handles it directly.
     Procedural,

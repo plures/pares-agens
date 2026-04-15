@@ -97,6 +97,7 @@ fn parse_category(s: &str) -> MemoryCategory {
         "error-fix" => MemoryCategory::ErrorFix,
         "preference" => MemoryCategory::Preference,
         "decision" => MemoryCategory::Decision,
+        "procedure" => MemoryCategory::Procedure,
         "ui-interaction" => MemoryCategory::UiInteraction,
         "app-state" => MemoryCategory::AppState,
         "screen-capture" => MemoryCategory::ScreenCapture,
@@ -276,6 +277,7 @@ mod tests {
         assert_eq!(parse_category("error-fix"), MemoryCategory::ErrorFix);
         assert_eq!(parse_category("preference"), MemoryCategory::Preference);
         assert_eq!(parse_category("decision"), MemoryCategory::Decision);
+        assert_eq!(parse_category("procedure"), MemoryCategory::Procedure);
         assert_eq!(parse_category("conversation"), MemoryCategory::Conversation);
     }
 
