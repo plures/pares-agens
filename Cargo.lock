@@ -3086,6 +3086,7 @@ dependencies = [
 name = "pares-agens"
 version = "0.6.1"
 dependencies = [
+ "async-trait",
  "chrono",
  "clap",
  "pares-agens-channels",

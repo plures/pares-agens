@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 use super::Error;
 
@@ -50,6 +51,101 @@ impl EmbeddingProvider for MockEmbedder {
             v.iter_mut().for_each(|x| *x /= norm);
         }
         Ok(v)
+    }
+
+    fn dimensions(&self) -> usize {
+        EMBEDDING_DIM
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ollama/OpenAI-compatible embedder
+// ---------------------------------------------------------------------------
+
+/// OpenAI-compatible embedding client (works with Ollama or cloud providers).
+pub struct OllamaEmbedder {
+    base_url: String,
+    model: String,
+    api_key: Option<String>,
+    client: reqwest::Client,
+}
+
+impl OllamaEmbedder {
+    /// Create a new OpenAI-compatible embedding client.
+    pub fn new(base_url: impl Into<String>, model: impl Into<String>, api_key: Option<String>) -> Self {
+        Self {
+            base_url: base_url.into().trim_end_matches('/').to_string(),
+            model: model.into(),
+            api_key,
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct EmbeddingRequest<'a> {
+    model: &'a str,
+    input: &'a str,
+}
+
+#[derive(Debug, Deserialize)]
+struct EmbeddingResponse {
+    data: Vec<EmbeddingData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EmbeddingData {
+    embedding: Vec<f32>,
+}
+
+#[async_trait]
+impl EmbeddingProvider for OllamaEmbedder {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, Error> {
+        let url = format!("{}/v1/embeddings", self.base_url);
+        let mut req = self
+            .client
+            .post(&url)
+            .json(&EmbeddingRequest {
+                model: &self.model,
+                input: text,
+            });
+
+        if let Some(key) = &self.api_key {
+            req = req.bearer_auth(key);
+        }
+
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| Error::Embed(format!("embeddings request failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(Error::Embed(format!(
+                "embeddings request failed: {status} {body}"
+            )));
+        }
+
+        let parsed: EmbeddingResponse = resp
+            .json()
+            .await
+            .map_err(|e| Error::Embed(format!("invalid embeddings response: {e}")))?;
+
+        let mut embedding = parsed
+            .data
+            .into_iter()
+            .next()
+            .map(|d| d.embedding)
+            .ok_or_else(|| Error::Embed("embeddings response missing data".into()))?;
+
+        // L2 normalise for cosine similarity.
+        let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if norm > 0.0 {
+            embedding.iter_mut().for_each(|x| *x /= norm);
+        }
+
+        Ok(embedding)
     }
 
     fn dimensions(&self) -> usize {
