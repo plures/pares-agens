@@ -1,24 +1,23 @@
 use std::sync::Arc;
 
-use futures_util::StreamExt;
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 use tokio::sync::{Mutex, RwLock};
-use tracing::{error, info};
+use tracing::info;
 
 use pares_agens_channels::adapter::ChannelAdapter;
 use pares_agens_channels::tauri_ipc::tauri_ipc_channel;
 use pares_agens_core::agent::{Agent, InMemory};
 use pares_agens_core::cerebellum::{Cerebellum, CerebellumConfig};
 use pares_agens_core::memory::embed::MockEmbedder;
-use pares_agens_core::memory::entry::Exchange;
 use pares_agens_core::memory::store::PluresDbStore;
 use pares_agens_core::memory::store::{InMemoryStore, MemoryStore};
 use pares_agens_core::memory::PluresLm;
+use pares_agens_core::model::{ChatMessage, ModelClient, ModelCompletion, ToolDefinition, ToolDispatcher};
 use pares_agens_core::optimization::OptimizationSafetyGate;
 use pares_agens_core::praxis::GuidanceService;
 use pares_agens_core::secrets::InMemorySecretStore;
 use pares_agens_core::Event;
-use pares_models::types::{ChatCompletionRequest, ChatMessage, Role};
+use pares_models::types::{ChatCompletionRequest, Role, Tool};
 use pares_models::ModelRouter;
 
 use crate::state::{build_router_config, rebuild_model_router, AppState, Settings};
@@ -31,6 +30,152 @@ mod settings;
 mod state;
 pub mod tray;
 mod wizard;
+
+struct AppModelClient {
+    router: Arc<RwLock<ModelRouter>>,
+    settings: Arc<Mutex<Settings>>,
+}
+
+#[async_trait::async_trait]
+impl ModelClient for AppModelClient {
+    async fn complete(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolDefinition],
+    ) -> Result<ModelCompletion, String> {
+        let model = {
+            let settings = self.settings.lock().await;
+            settings
+                .routing
+                .interactive
+                .as_ref()
+                .map(|r| r.model.clone())
+                .unwrap_or_else(|| settings.model.clone())
+        };
+
+        let converted_messages = messages
+            .iter()
+            .map(|m| {
+                let role = match m.role.as_str() {
+                    "system" => Role::System,
+                    "user" => Role::User,
+                    "assistant" => Role::Assistant,
+                    "tool" => Role::Tool,
+                    _ => Role::User,
+                };
+                pares_models::types::ChatMessage {
+                    role,
+                    content: Some(m.content.clone()),
+                    tool_calls: m.tool_calls.clone().map(|calls| {
+                        calls
+                            .into_iter()
+                            .map(|call| pares_models::types::ToolCall {
+                                id: call.id,
+                                kind: "function".into(),
+                                function: pares_models::types::FunctionCall {
+                                    name: call.name,
+                                    arguments: call.arguments.to_string(),
+                                },
+                            })
+                            .collect()
+                    }),
+                    tool_call_id: m.tool_call_id.clone(),
+                    name: None,
+                }
+            })
+            .collect();
+
+        let mut request = ChatCompletionRequest::new(&model, converted_messages);
+        if !tools.is_empty() {
+            request.tools = Some(
+                tools
+                    .iter()
+                    .map(|tool| Tool::function(tool.name.clone(), tool.description.clone(), tool.parameters.clone()))
+                    .collect(),
+            );
+        }
+
+        let router_guard = self.router.read().await;
+        let response = router_guard.chat(&request).await.map_err(|e| e.to_string())?;
+        drop(router_guard);
+
+        let choice = response
+            .choices
+            .first()
+            .ok_or_else(|| "model returned no choices".to_string())?;
+
+        let tool_calls = choice
+            .message
+            .tool_calls
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|call| pares_agens_core::model::ToolCall {
+                id: call.id,
+                name: call.function.name,
+                arguments: serde_json::from_str(&call.function.arguments)
+                    .unwrap_or_else(|_| serde_json::Value::String(call.function.arguments)),
+            })
+            .collect();
+
+        Ok(ModelCompletion {
+            content: choice.message.content.clone(),
+            tool_calls,
+        })
+    }
+}
+
+struct McpToolDispatcher {
+    mcp_tools: Arc<RwLock<Vec<(String, mcp_client::protocol::Tool)>>>,
+    mcp_clients: Arc<Mutex<std::collections::HashMap<String, mcp_client::McpClient>>>,
+}
+
+#[async_trait::async_trait]
+impl ToolDispatcher for McpToolDispatcher {
+    async fn available_tools(&self) -> Vec<ToolDefinition> {
+        let tool_list = self.mcp_tools.read().await;
+        tool_list
+            .iter()
+            .map(|(_, tool)| ToolDefinition {
+                name: tool.name.clone(),
+                description: tool.description.clone(),
+                parameters: serde_json::to_value(&tool.input_schema).unwrap_or_default(),
+            })
+            .collect()
+    }
+
+    async fn call_tool(&self, name: &str, arguments: serde_json::Value) -> String {
+        let server_name = {
+            let tool_list = self.mcp_tools.read().await;
+            tool_list
+                .iter()
+                .find(|(_, tool)| tool.name == name)
+                .map(|(server, _)| server.clone())
+        };
+
+        let mut clients = self.mcp_clients.lock().await;
+        if let Some(server) = server_name {
+            if let Some(client) = clients.get_mut(&server) {
+                match client.call_tool(name, Some(arguments)).await {
+                    Ok(result) => result
+                        .content
+                        .into_iter()
+                        .filter_map(|c| match c {
+                            mcp_client::protocol::ToolContent::Text { text } => Some(text),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    Err(e) => format!("Error: {e}"),
+                }
+            } else {
+                format!("MCP server '{server}' not connected")
+            }
+        } else {
+            format!("No MCP server provides tool '{name}'")
+        }
+    }
+}
 
 /// Entry point called from `main.rs`.
 ///
@@ -83,17 +228,11 @@ pub fn run() {
             let model_router: Arc<RwLock<ModelRouter>> =
                 Arc::new(RwLock::new(ModelRouter::new(router_config)));
 
-            // Clones captured by the adapter callback.
-            let settings_for_cb = Arc::clone(&settings);
-            let router_for_cb = Arc::clone(&model_router);
-
             // MCP state shared between AppState and the adapter callback.
             let mcp_clients: Arc<Mutex<std::collections::HashMap<String, mcp_client::McpClient>>> =
                 Arc::new(Mutex::new(std::collections::HashMap::new()));
             let mcp_tools: Arc<RwLock<Vec<(String, mcp_client::protocol::Tool)>>> =
                 Arc::new(RwLock::new(Vec::new()));
-            let mcp_tools_for_cb = Arc::clone(&mcp_tools);
-            let mcp_clients_for_cb = Arc::clone(&mcp_clients);
 
             // ── IPC bridge ────────────────────────────────────────────────
             let (adapter, handle) = tauri_ipc_channel("user");
@@ -106,313 +245,35 @@ pub fn run() {
                 128_000,
             ));
 
-            // Clone for the adapter callback so it can persist each exchange.
-            let plures_lm_for_capture = Arc::clone(&plures_lm);
+            let system_prompt = default_settings.system_prompt.clone();
+
+            let model_client = Arc::new(AppModelClient {
+                router: Arc::clone(&model_router),
+                settings: Arc::clone(&settings),
+            });
+            let tool_dispatcher = Arc::new(McpToolDispatcher {
+                mcp_tools: Arc::clone(&mcp_tools),
+                mcp_clients: Arc::clone(&mcp_clients),
+            });
 
             // Build the Agent with a Cerebellum wired in so every message
             // flows through autorecall and routing before being handled.
-            let agent = Arc::new(Agent::with_cerebellum(
-                Arc::new(InMemory::new()),
-                Cerebellum::new(CerebellumConfig::default()),
-                plures_lm,
-            ));
+            let agent = Arc::new(
+                Agent::with_cerebellum(
+                    Arc::new(InMemory::new()),
+                    Cerebellum::new(CerebellumConfig::default()),
+                    plures_lm,
+                )
+                .with_model(model_client, tool_dispatcher, system_prompt),
+            );
 
             // Spawn the adapter run-loop, routing all events through the agent
-            // and then through the model router for real LLM responses.
-            let app_handle_for_cb = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                info!("Tauri IPC adapter starting (cerebellum + model router enabled)");
+                info!("Tauri IPC adapter starting (cerebellum + model client enabled)");
                 adapter
                     .run(move |event: Event| {
                         let agent = Arc::clone(&agent);
-                        let router = Arc::clone(&router_for_cb);
-                        let settings = Arc::clone(&settings_for_cb);
-                        let mcp_tools = Arc::clone(&mcp_tools_for_cb);
-                        let mcp_clients = Arc::clone(&mcp_clients_for_cb);
-                        let app_handle = app_handle_for_cb.clone();
-                        let plures_lm = Arc::clone(&plures_lm_for_capture);
-                        Box::pin(async move {
-                            // Extract message fields before consuming the event — avoids
-                            // cloning the entire Event payload.
-                            let msg_fields = if let Event::Message { ref id, ref content, .. } = event {
-                                Some((id.clone(), content.clone()))
-                            } else {
-                                None
-                            };
-
-                            // Let the agent run cerebellum preprocessing (autorecall,
-                            // routing, drop filtering) and capture the message in memory.
-                            let preprocessed = agent.handle_event(event).await;
-
-                            // If the cerebellum dropped the event, respect that.
-                            preprocessed.as_ref()?;
-
-                            // For message events, replace the echo response with a real
-                            // model call via the ModelRouter.
-                            if let Some((id, content)) = msg_fields {
-                                // Prefer routing.interactive.model when configured
-                                // (set by the Settings routing tab); fall back to the
-                                // legacy settings.model field.
-                                let (model, system_prompt) = {
-                                    let s = settings.lock().await;
-                                    let model = s.routing.interactive
-                                        .as_ref()
-                                        .map(|r| r.model.clone())
-                                        .unwrap_or_else(|| s.model.clone());
-                                    (model, s.system_prompt.clone())
-                                };
-
-                                let mut messages = vec![
-                                    ChatMessage::text(Role::System, &system_prompt),
-                                    ChatMessage::text(Role::User, &content),
-                                ];
-
-                                // Inject MCP tools into the request if any are available.
-                                let tools_json: Option<Vec<pares_models::types::Tool>> = {
-                                    let tool_list = mcp_tools.read().await;
-                                    if tool_list.is_empty() {
-                                        None
-                                    } else {
-                                        let converted: Vec<pares_models::types::Tool> = tool_list
-                                            .iter()
-                                            .map(|(_, t)| pares_models::types::Tool {
-                                                kind: "function".to_string(),
-                                                function: pares_models::types::FunctionDefinition {
-                                                    name: t.name.clone(),
-                                                    description: t.description.clone(),
-                                                    parameters: Some(serde_json::to_value(&t.input_schema)
-                                                        .unwrap_or_default()),
-                                                },
-                                            })
-                                            .collect();
-                                        Some(converted)
-                                    }
-                                };
-
-                                // ── Streaming path (no MCP tools) ─────────────────────────────
-                                //
-                                // When no tools are configured, stream tokens directly to the UI
-                                // via `model-chunk` Tauri events.  The `request_id` in each event
-                                // matches the placeholder message ID created by the frontend.
-                                if tools_json.is_none() {
-                                    let request = ChatCompletionRequest::new(&model, messages);
-                                    let router_guard = router.read().await;
-                                    match router_guard.chat_stream(&request).await {
-                                        Ok(stream) => {
-                                            drop(router_guard);
-                                            let mut stream = std::pin::pin!(stream);
-                                            let mut full_response = String::new();
-                                            while let Some(chunk) = stream.next().await {
-                                                match chunk {
-                                                    Ok(c) => {
-                                                        if let Some(choice) = c.choices.first() {
-                                                            if let Some(ref delta) = choice.delta.content {
-                                                                if !delta.is_empty() {
-                                                                    full_response.push_str(delta);
-                                                                    // Token chunks: silently drop on emit failure —
-                                                                    // individual tokens are non-critical and logging
-                                                                    // each would be noisy on a transient disconnect.
-                                                                    let _ = app_handle.emit(
-                                                                        "model-chunk",
-                                                                        serde_json::json!({
-                                                                            "request_id": &id,
-                                                                            "content": delta,
-                                                                            "done": false,
-                                                                        }),
-                                                                    );
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                    Err(e) => {
-                                                        error!(error = %e, model = %model, "streaming chunk error");
-                                                        if let Err(emit_err) = app_handle.emit(
-                                                            "model-error",
-                                                            serde_json::json!({
-                                                                "request_id": &id,
-                                                                "error": format_model_error(&e.to_string(), &model),
-                                                            }),
-                                                        ) {
-                                                            error!(error = %emit_err, "failed to emit model-error event");
-                                                        }
-                                                        return None;
-                                                    }
-                                                }
-                                            }
-                                            // Signal the frontend that streaming is complete.
-                                            // Log if this critical done signal fails — a stuck
-                                            // placeholder will result if it is lost.
-                                            if let Err(emit_err) = app_handle.emit(
-                                                "model-chunk",
-                                                serde_json::json!({
-                                                    "request_id": &id,
-                                                    "content": "",
-                                                    "done": true,
-                                                }),
-                                            ) {
-                                                error!(error = %emit_err, "failed to emit final model-chunk done event");
-                                            }
-                                            // Persist the exchange so future autorecall can surface it.
-                                            capture_exchange(&plures_lm, &content, &full_response).await;
-                                            // Return None — the streaming events carry the content.
-                                            return None;
-                                        }
-                                        Err(e) => {
-                                            drop(router_guard);
-                                            error!(error = %e, model = %model, "model router stream failed");
-                                            if let Err(emit_err) = app_handle.emit(
-                                                "model-error",
-                                                serde_json::json!({
-                                                    "request_id": &id,
-                                                    "error": format_model_error(&e.to_string(), &model),
-                                                }),
-                                            ) {
-                                                error!(error = %emit_err, "failed to emit model-error event");
-                                            }
-                                            return None;
-                                        }
-                                    }
-                                }
-
-                                // ── Non-streaming path (MCP tools present) ─────────────────────
-                                //
-                                // When MCP tools are configured, use the tool-call loop with
-                                // non-streaming requests so we can inspect tool_calls in each
-                                // response before deciding whether to continue or return.
-                                let mut request = ChatCompletionRequest::new(&model, messages.clone());
-                                request.tools = tools_json;
-
-                                // Tool call loop: model may return tool_calls instead of content.
-                                // Execute tools, feed results back, repeat until we get content.
-                                let max_tool_rounds = 5;
-                                let mut final_reply = String::new();
-
-                                for _round in 0..max_tool_rounds {
-                                    let router_guard = router.read().await;
-                                    match router_guard.chat(&request).await {
-                                        Ok(response) => {
-                                            drop(router_guard);
-                                            let choice = match response.choices.first() {
-                                                Some(c) => c,
-                                                None => break,
-                                            };
-
-                                            // Check for tool calls
-                                            if let Some(ref tool_calls) = choice.message.tool_calls {
-                                                if !tool_calls.is_empty() {
-                                                    // Add assistant message with tool calls to conversation
-                                                    messages.push(ChatMessage {
-                                                        role: Role::Assistant,
-                                                        content: choice.message.content.clone(),
-                                                        tool_calls: Some(tool_calls.clone()),
-                                                        tool_call_id: None,
-                                                        name: None,
-                                                    });
-
-                                                    // Execute each tool call
-                                                    for tc in tool_calls {
-                                                        let args: Option<serde_json::Value> =
-                                                            serde_json::from_str(&tc.function.arguments).ok();
-
-                                                        let result = {
-                                                            let mut clients = mcp_clients.lock().await;
-                                                            // Find which server owns this tool
-                                                            let server_name = {
-                                                                let tl = mcp_tools.read().await;
-                                                                tl.iter()
-                                                                    .find(|(_, t)| t.name == tc.function.name)
-                                                                    .map(|(n, _)| n.clone())
-                                                            };
-                                                            if let Some(ref sn) = server_name {
-                                                                if let Some(client) = clients.get_mut(sn) {
-                                                                    match client.call_tool(&tc.function.name, args).await {
-                                                                        Ok(r) => {
-                                                                            let text = r.content.iter().filter_map(|c| {
-                                                                                match c {
-                                                                                    mcp_client::protocol::ToolContent::Text { text } => Some(text.clone()),
-                                                                                    _ => None,
-                                                                                }
-                                                                            }).collect::<Vec<_>>().join("\n");
-                                                                            text
-                                                                        }
-                                                                        Err(e) => format!("Error: {e}"),
-                                                                    }
-                                                                } else {
-                                                                    format!("MCP server '{}' not connected", sn)
-                                                                }
-                                                            } else {
-                                                                format!("No MCP server provides tool '{}'", tc.function.name)
-                                                            }
-                                                        };
-
-                                                        // Add tool result to conversation
-                                                        messages.push(ChatMessage {
-                                                            role: Role::Tool,
-                                                            content: Some(result),
-                                                            tool_calls: None,
-                                                            tool_call_id: Some(tc.id.clone()),
-                                                            name: None,
-                                                        });
-                                                    }
-
-                                                    // Update request for next round
-                                                    request = ChatCompletionRequest::new(&model, messages.clone());
-                                                    request.tools = {
-                                                        let tl = mcp_tools.read().await;
-                                                        if tl.is_empty() {
-                                                            None
-                                                        } else {
-                                                            Some(tl.iter().map(|(_, t)| pares_models::types::Tool {
-                                                                kind: "function".to_string(),
-                                                                function: pares_models::types::FunctionDefinition {
-                                                                    name: t.name.clone(),
-                                                                    description: t.description.clone(),
-                                                                    parameters: Some(serde_json::to_value(&t.input_schema)
-                                                                        .unwrap_or_default()),
-                                                                },
-                                                            }).collect())
-                                                        }
-                                                    };
-                                                    continue; // Next round
-                                                }
-                                            }
-
-                                            // No tool calls — we have the final response
-                                            final_reply = choice.message.content
-                                                .as_ref()
-                                                .cloned()
-                                                .unwrap_or_default();
-                                            break;
-                                        }
-                                        Err(e) => {
-                                            drop(router_guard);
-                                            error!(error = %e, model = %model, "model router call failed");
-                                            if let Err(emit_err) = app_handle.emit(
-                                                "model-error",
-                                                serde_json::json!({
-                                                    "request_id": &id,
-                                                    "error": format_model_error(&e.to_string(), &model),
-                                                }),
-                                            ) {
-                                                error!(error = %emit_err, "failed to emit model-error event");
-                                            }
-                                            return None;
-                                        }
-                                    }
-                                }
-
-                                // Persist the exchange so future autorecall can surface it.
-                                capture_exchange(&plures_lm, &content, &final_reply).await;
-
-                                Some(Event::ModelResponse {
-                                    request_id: id,
-                                    model,
-                                    content: final_reply,
-                                })
-                            } else {
-                                preprocessed
-                            }
-                        })
+                        Box::pin(async move { agent.handle_event(event).await })
                     })
                     .await
                     .ok();
@@ -506,53 +367,3 @@ pub fn run() {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-/// Produce a user-friendly error message for model/stream failures.
-///
-/// Detects common connectivity and availability errors and provides
-/// actionable guidance.  Includes Ollama-specific hints when relevant
-/// (the default local provider), but remains useful for any endpoint.
-fn format_model_error(raw: &str, model: &str) -> String {
-    let lower = raw.to_lowercase();
-    if lower.contains("connection refused")
-        || lower.contains("failed to connect")
-        || lower.contains("error sending request")
-        || lower.contains("tcp connect")
-        || lower.contains("no route to host")
-        || lower.contains("os error 111")
-    {
-        format!(
-            "Cannot reach the model endpoint. Is the model server running?\n\n\
-             If you are using Ollama locally:\n\
-             • ollama serve\n\
-             • ollama pull {model}\n\n\
-             Otherwise, verify the endpoint URL in Settings and try again."
-        )
-    } else if lower.contains("model") && (lower.contains("not found") || lower.contains("404")) {
-        format!(
-            "Model `{model}` was not found on the configured endpoint.\n\n\
-             If you are using Ollama, pull it with: ollama pull {model}\n\
-             Otherwise, check the model name in Settings."
-        )
-    } else {
-        format!("Model request to `{model}` failed: {raw}")
-    }
-}
-
-/// Persist a conversation exchange in PluresLm memory.
-///
-/// Both the streaming and tool-call paths call this after obtaining the full
-/// assistant response so the exchange is durably written to PluresDB.
-/// Quality-gate filtering (noise rejection, echo deduplication) is handled
-/// inside `PluresLm::capture`, so callers may pass any non-empty response.
-async fn capture_exchange(plures_lm: &PluresLm, user: &str, assistant: &str) {
-    if assistant.is_empty() {
-        return;
-    }
-    let exchange = Exchange {
-        user: user.to_string(),
-        assistant: assistant.to_string(),
-    };
-    if let Err(e) = plures_lm.capture(&exchange).await {
-        tracing::error!(error = %e, "failed to capture conversation in PluresLm");
-    }
-}

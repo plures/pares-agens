@@ -7,13 +7,13 @@
 //! pares-agens serve --telegram-token <TOKEN> [--model-url <URL>] [--model <MODEL>]
 //! ```
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
+use uuid::Uuid;
 
 use pares_agens_channels::adapter::ChannelAdapter;
 use pares_agens_channels::telegram::{TelegramAdapter, TelegramConfig};
@@ -25,12 +25,13 @@ use pares_agens_core::memory::{
     store::PluresDbStore,
     PluresLm,
 };
+use pares_agens_core::model::{ChatMessage as CoreChatMessage, ModelClient, ToolDefinition, ToolDispatcher};
 use pares_agens_core::procedure::{Procedure, ProcedureRegistry};
 use pares_agens_core::Event;
 use pares_agens_migrate::{migrate, openclaw};
 use pares_models::config::{ProviderConfig, RouterConfig};
 use pares_models::router::ModelRouter;
-use pares_models::types::{ChatCompletionRequest, ChatMessage, Role, Tool, ToolCall};
+use pares_models::types::{ChatCompletionRequest, ChatMessage, Role, Tool};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -44,22 +45,136 @@ struct Cli {
     command: Commands,
 }
 
-#[derive(Debug, Clone)]
-struct SystemPromptConfig {
-    base: String,
+struct RouterModelClient {
+    router: Arc<ModelRouter>,
+    model: String,
 }
 
-impl SystemPromptConfig {
-    fn with_context(&self, learned_context: &str) -> String {
-        if learned_context.trim().is_empty() {
-            self.base.clone()
-        } else {
-            format!(
-                "{}\n\n## Recalled Context\n{}",
-                self.base,
-                learned_context.trim()
-            )
+#[async_trait]
+impl ModelClient for RouterModelClient {
+    async fn complete(
+        &self,
+        messages: &[CoreChatMessage],
+        tools: &[ToolDefinition],
+    ) -> Result<pares_agens_core::model::ModelCompletion, String> {
+        let converted_messages = messages
+            .iter()
+            .map(|m| {
+                let role = match m.role.as_str() {
+                    "system" => Role::System,
+                    "user" => Role::User,
+                    "assistant" => Role::Assistant,
+                    "tool" => Role::Tool,
+                    _ => Role::User,
+                };
+                ChatMessage {
+                    role,
+                    content: Some(m.content.clone()),
+                    tool_calls: m.tool_calls.clone().map(|calls| {
+                        calls
+                            .into_iter()
+                            .map(|call| pares_models::types::ToolCall {
+                                id: call.id,
+                                kind: "function".into(),
+                                function: pares_models::types::FunctionCall {
+                                    name: call.name,
+                                    arguments: call.arguments.to_string(),
+                                },
+                            })
+                            .collect()
+                    }),
+                    tool_call_id: m.tool_call_id.clone(),
+                    name: None,
+                }
+            })
+            .collect();
+
+        let mut request = ChatCompletionRequest::new(&self.model, converted_messages);
+        if !tools.is_empty() {
+            request.tools = Some(
+                tools
+                    .iter()
+                    .map(|tool| {
+                        Tool::function(tool.name.clone(), tool.description.clone(), tool.parameters.clone())
+                    })
+                    .collect(),
+            );
         }
+
+        let response = self
+            .router
+            .chat(&request)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let choice = response
+            .choices
+            .first()
+            .ok_or_else(|| "model returned no choices".to_string())?;
+
+        let tool_calls = choice
+            .message
+            .tool_calls
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|call| pares_agens_core::model::ToolCall {
+                id: call.id,
+                name: call.function.name,
+                arguments: serde_json::from_str(&call.function.arguments)
+                    .unwrap_or_else(|_| serde_json::Value::String(call.function.arguments)),
+            })
+            .collect();
+
+        Ok(pares_agens_core::model::ModelCompletion {
+            content: choice.message.content.clone(),
+            tool_calls,
+        })
+    }
+}
+
+struct ProcedureToolDispatcher {
+    registry: Arc<ProcedureRegistry>,
+}
+
+#[async_trait]
+impl ToolDispatcher for ProcedureToolDispatcher {
+    async fn available_tools(&self) -> Vec<ToolDefinition> {
+        tool_definitions()
+    }
+
+    async fn call_tool(&self, name: &str, arguments: serde_json::Value) -> String {
+        let mut handler = None;
+        for proc in self.registry.matching(name) {
+            handler = Some(proc);
+            break;
+        }
+        let handler = match handler {
+            Some(h) => h,
+            None => return format!("no procedure registered for {name}"),
+        };
+
+        let event = Event::Message {
+            id: Uuid::new_v4().to_string(),
+            channel: "tool".into(),
+            sender: "model".into(),
+            content: arguments.to_string(),
+        };
+
+        let results = handler.execute(&event).await;
+        for result in results {
+            if let Event::ToolResult {
+                content, is_error, ..
+            } = result
+            {
+                if is_error {
+                    return format!("tool error: {content}");
+                }
+                return content;
+            }
+        }
+
+        format!("procedure {name} returned no tool result")
     }
 }
 
@@ -230,23 +345,23 @@ fn parse_tool_args(raw: &str) -> Result<serde_json::Value, String> {
     serde_json::from_str(raw).map_err(|e| format!("invalid tool arguments: {e}"))
 }
 
-fn tool_definitions() -> Vec<Tool> {
+fn tool_definitions() -> Vec<ToolDefinition> {
     vec![
-        Tool::function(
-            "read_file",
-            "Read a UTF-8 text file from disk",
-            serde_json::json!({
+        ToolDefinition {
+            name: "read_file".into(),
+            description: "Read a UTF-8 text file from disk".into(),
+            parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "path": {"type": "string"}
                 },
                 "required": ["path"]
             }),
-        ),
-        Tool::function(
-            "write_file",
-            "Write a UTF-8 text file to disk",
-            serde_json::json!({
+        },
+        ToolDefinition {
+            name: "write_file".into(),
+            description: "Write a UTF-8 text file to disk".into(),
+            parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "path": {"type": "string"},
@@ -254,74 +369,29 @@ fn tool_definitions() -> Vec<Tool> {
                 },
                 "required": ["path", "content"]
             }),
-        ),
-        Tool::function(
-            "run_command",
-            "Run a shell command and return stdout/stderr",
-            serde_json::json!({
+        },
+        ToolDefinition {
+            name: "run_command".into(),
+            description: "Run a shell command and return stdout/stderr".into(),
+            parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "command": {"type": "string"}
                 },
                 "required": ["command"]
             }),
-        ),
+        },
     ]
 }
 
-async fn dispatch_tool_call(
-    registry: &Arc<ProcedureRegistry>,
-    tool_call: &ToolCall,
-) -> Result<String, String> {
-    let tool_name = tool_call.function.name.as_str();
-    let event = Event::Message {
-        id: tool_call.id.clone(),
-        channel: "tool".into(),
-        sender: "model".into(),
-        content: tool_call.function.arguments.clone(),
-    };
-
-    let mut handler = None;
-    for proc in registry.matching(tool_name) {
-        handler = Some(proc);
-        break;
-    }
-
-    let handler = handler.ok_or_else(|| format!("no procedure registered for {tool_name}"))?;
-    let results = handler.execute(&event).await;
-
-    for result in results {
-        if let Event::ToolResult {
-            content,
-            is_error,
-            ..
-        } = result
-        {
-            return if is_error { Err(content) } else { Ok(content) };
-        }
-    }
-
-    Err(format!("procedure {tool_name} returned no tool result"))
-}
-
-fn extract_recalled_context(event: &Event) -> String {
-    if let Event::ModelResponse { content, .. } = event {
-        let marker = "## Recalled Context";
-        if let Some(idx) = content.find(marker) {
-            return content[idx + marker.len()..].trim().to_string();
-        }
-    }
-    String::new()
-}
-
-fn build_system_prompt(path: Option<PathBuf>) -> Result<SystemPromptConfig, String> {
+fn build_system_prompt(path: Option<PathBuf>) -> Result<String, String> {
     let base = if let Some(path) = path {
         std::fs::read_to_string(&path)
             .map_err(|e| format!("failed to read system prompt {}: {e}", path.display()))?
     } else {
         "You are Praxis, an AI agent built on the Pares Agens framework. You are helpful, concise, and knowledgeable about software engineering.".to_string()
     };
-    Ok(SystemPromptConfig { base })
+    Ok(base)
 }
 
 #[derive(Debug, Subcommand)]
@@ -438,7 +508,6 @@ async fn main() {
             let provider_config = ProviderConfig::new(&model_url, api_key.clone());
             let router_config = RouterConfig::single("default", provider_config);
             let model_router = Arc::new(ModelRouter::new(router_config));
-            let model_name = model.clone();
 
             // Set up PluresDB memory store + PluresLM (native)
             let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
@@ -475,11 +544,6 @@ async fn main() {
                 plures_lm: Arc::clone(&plures_lm),
             });
             let cerebellum = Cerebellum::new(CerebellumConfig::default());
-            let agent = Arc::new(tokio::sync::Mutex::new(Agent::with_cerebellum(
-                memory,
-                cerebellum,
-                Arc::clone(&plures_lm),
-            )));
 
             // Register native tool procedures
             let mut procedure_registry = ProcedureRegistry::new();
@@ -488,6 +552,21 @@ async fn main() {
             procedure_registry.register(Box::new(RunCommandProcedure));
             let procedure_registry = Arc::new(procedure_registry);
 
+            let model_client = Arc::new(RouterModelClient {
+                router: model_router.clone(),
+                model: model.clone(),
+            });
+            let tool_dispatcher = Arc::new(ProcedureToolDispatcher {
+                registry: Arc::clone(&procedure_registry),
+            });
+
+            let agent = Arc::new(Agent::with_cerebellum(
+                memory,
+                cerebellum,
+                Arc::clone(&plures_lm),
+            )
+            .with_model(model_client, tool_dispatcher, system_prompt));
+
             // Set up Telegram adapter
             let config = TelegramConfig::new(telegram_token);
             let adapter = TelegramAdapter::new(config);
@@ -495,133 +574,11 @@ async fn main() {
             tracing::info!("Telegram adapter starting — bot is live");
 
             let agent_clone = agent.clone();
-            let router_clone = model_router.clone();
-            let model_for_closure = model_name.clone();
-            let histories: Arc<tokio::sync::Mutex<HashMap<String, Vec<ChatMessage>>>> =
-                Arc::new(tokio::sync::Mutex::new(HashMap::new()));
-            let histories_clone = histories.clone();
-            let prompt_clone = system_prompt.clone();
-            let registry_clone = procedure_registry.clone();
 
             if let Err(e) = adapter
                 .run(move |event: Event| {
                     let agent = agent_clone.clone();
-                    let router = router_clone.clone();
-                    let model = model_for_closure.clone();
-                    let histories = histories_clone.clone();
-                    let system_prompt = prompt_clone.clone();
-                    let registry = registry_clone.clone();
-                    Box::pin(async move {
-                        // Extract message content
-                        let (request_id, content, chat_key) = match &event {
-                            Event::Message {
-                                id,
-                                content,
-                                channel,
-                                sender,
-                            } => (id.clone(), content.clone(), format!("{channel}:{sender}")),
-                            _ => return None,
-                        };
-
-                        // Autorecall + capture via agent
-                        let learned_context = {
-                            let agent = agent.lock().await;
-                            match agent.handle_event(event.clone()).await {
-                                Some(response) => extract_recalled_context(&response),
-                                None => return None,
-                            }
-                        };
-
-                        let system_text = system_prompt.with_context(&learned_context);
-
-                        let tools = tool_definitions();
-                        let mut history_guard = histories.lock().await;
-                        let history = history_guard.entry(chat_key.clone()).or_default();
-                        let history_len = history.len();
-
-                        let mut messages = Vec::with_capacity(history.len() + 2);
-                        messages.push(ChatMessage::text(Role::System, system_text));
-                        messages.extend(history.iter().cloned());
-                        messages.push(ChatMessage::text(Role::User, &content));
-
-                        let mut final_reply = None;
-
-                        for _ in 0..10 {
-                            let mut request = ChatCompletionRequest::new(&model, messages.clone());
-                            request.tools = Some(tools.clone());
-
-                            let response = match router.chat(&request).await {
-                                Ok(r) => r,
-                                Err(e) => {
-                                    tracing::error!(error = %e, "LLM call failed");
-                                    return Some(Event::ModelResponse {
-                                        request_id,
-                                        model: "error".into(),
-                                        content: format!("⚠️ Model error: {e}"),
-                                    });
-                                }
-                            };
-
-                            let choice = match response.choices.first() {
-                                Some(choice) => choice,
-                                None => {
-                                    final_reply = Some("(no response from model)".to_string());
-                                    break;
-                                }
-                            };
-
-                            let message = choice.message.clone();
-                            if let Some(tool_calls) = message.tool_calls.clone() {
-                                messages.push(message);
-                                for tool_call in tool_calls {
-                                    let tool_result = dispatch_tool_call(&registry, &tool_call)
-                                        .await
-                                        .unwrap_or_else(|e| format!("tool error: {e}"));
-                                    messages.push(ChatMessage {
-                                        role: Role::Tool,
-                                        content: Some(tool_result),
-                                        tool_calls: None,
-                                        tool_call_id: Some(tool_call.id),
-                                        name: None,
-                                    });
-                                }
-                                continue;
-                            }
-
-                            if let Some(content) = message.content.clone() {
-                                final_reply = Some(content.clone());
-                                messages.push(message);
-                                break;
-                            }
-
-                            final_reply = Some("(empty response from model)".to_string());
-                            break;
-                        }
-
-                        let reply = final_reply.unwrap_or_else(|| "(no response from model)".into());
-
-                        tracing::info!(
-                            model = %model,
-                            input_len = content.len(),
-                            output_len = reply.len(),
-                            "LLM response generated"
-                        );
-
-                        let start = 1 + history_len;
-                        if messages.len() > start {
-                            history.extend_from_slice(&messages[start..]);
-                            if history.len() > 20 {
-                                let drain = history.len() - 20;
-                                history.drain(0..drain);
-                            }
-                        }
-
-                        Some(Event::ModelResponse {
-                            request_id,
-                            model,
-                            content: reply,
-                        })
-                    })
+                    Box::pin(async move { agent.handle_event(event).await })
                 })
                 .await
             {

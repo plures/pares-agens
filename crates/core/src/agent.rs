@@ -13,15 +13,18 @@
 //! provides a simple in-process implementation suitable for tests and the
 //! first-run experience before a persistent store is configured.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use tokio::sync::Mutex;
-use tracing::{debug, error};
+use tokio::sync::Mutex as TokioMutex;
+use tracing::{debug, error, info, warn};
 
 use crate::cerebellum::{Cerebellum, Route};
 use crate::event::Event;
+use crate::memory::entry::Exchange;
 use crate::memory::PluresLm;
+use crate::model::{ChatMessage, ModelClient, ToolDispatcher};
 use crate::procedure::ProcedureRegistry;
 
 // ---------------------------------------------------------------------------
@@ -55,14 +58,14 @@ pub trait Memory: Send + Sync {
 /// so the lock is held only briefly and never blocks the async executor.
 /// Recall performs a simple case-insensitive substring match.
 pub struct InMemory {
-    entries: Arc<Mutex<Vec<String>>>,
+    entries: Arc<TokioMutex<Vec<String>>>,
 }
 
 impl InMemory {
     /// Create a new empty in-memory store.
     pub fn new() -> Self {
         Self {
-            entries: Arc::new(Mutex::new(Vec::new())),
+            entries: Arc::new(TokioMutex::new(Vec::new())),
         }
     }
 }
@@ -106,23 +109,29 @@ impl Memory for InMemory {
 /// 1. Runs the event through the [`Cerebellum`] (if configured) to perform
 ///    autorecall and routing.  A [`Route::Drop`] causes the event to be
 ///    silently discarded.
-/// 2. Captures the message content in the simple [`Memory`] store.
-/// 3. Returns an [`Event::ModelResponse`] whose content is augmented with
-///    any recalled context when a cerebellum is present.
+/// 2. Dispatches the event based on the chosen route:
+///    - Conscious/Deep: call the model client with context + history
+///    - Procedural: execute matching procedures from the registry
+/// 3. Captures the conversation exchange in memory when a response is
+///    produced.
 ///
-/// All other event kinds return `None`.
+/// All other event kinds follow the routing decision or return `None`.
 pub struct Agent {
     memory: Arc<dyn Memory + Send + Sync>,
     /// Optional cerebellum for autorecall and routing.
     cerebellum: Option<Cerebellum>,
     /// PluresLM memory client passed to the cerebellum's `preprocess()`.
     plures_lm: Option<Arc<PluresLm>>,
-    /// Procedure registry passed to `cerebellum.preprocess()`.
-    ///
-    /// Stored as a field to avoid re-allocating an empty registry on every
-    /// message.  Currently unused by `preprocess()` (parameter is `_registry`)
-    /// but kept here so the call site is forward-compatible.
+    /// Procedure registry used for `Route::Procedural` dispatch.
     procedure_registry: ProcedureRegistry,
+    /// Model client for conscious/subconscious completions.
+    model_client: Option<Arc<dyn ModelClient>>,
+    /// Tool dispatcher for model tool calls.
+    tool_dispatcher: Option<Arc<dyn ToolDispatcher>>,
+    /// Base system prompt.
+    system_prompt: String,
+    /// Per-channel conversation history (last 20 messages).
+    conversation_history: Mutex<HashMap<String, Vec<ChatMessage>>>,
 }
 
 impl Agent {
@@ -133,6 +142,10 @@ impl Agent {
             cerebellum: None,
             plures_lm: None,
             procedure_registry: ProcedureRegistry::new(),
+            model_client: None,
+            tool_dispatcher: None,
+            system_prompt: String::new(),
+            conversation_history: Mutex::new(HashMap::new()),
         }
     }
 
@@ -152,13 +165,30 @@ impl Agent {
             cerebellum: Some(cerebellum),
             plures_lm: Some(plures_lm),
             procedure_registry: ProcedureRegistry::new(),
+            model_client: None,
+            tool_dispatcher: None,
+            system_prompt: String::new(),
+            conversation_history: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Attach a model client + tool dispatcher + system prompt to the agent.
+    pub fn with_model(
+        mut self,
+        client: Arc<dyn ModelClient>,
+        dispatcher: Arc<dyn ToolDispatcher>,
+        system_prompt: String,
+    ) -> Self {
+        self.model_client = Some(client);
+        self.tool_dispatcher = Some(dispatcher);
+        self.system_prompt = system_prompt;
+        self
     }
 
     /// Handle a single event and optionally return a response event.
     pub async fn handle_event(&self, event: Event) -> Option<Event> {
         // ── Cerebellum: autorecall + routing ─────────────────────────────
-        let learned_context = if let (Some(cerebellum), Some(plures_lm)) =
+        let (route, learned_context) = if let (Some(cerebellum), Some(plures_lm)) =
             (&self.cerebellum, &self.plures_lm)
         {
             match cerebellum
@@ -167,48 +197,206 @@ impl Agent {
             {
                 Ok(ctx) => {
                     debug!(route = ?ctx.route, context_len = ctx.learned_context.len(), "cerebellum preprocessed event");
-                    // Drop events the cerebellum determined are noise.
                     if ctx.route == Route::Drop {
-                        debug!(
-                            event_kind = event.kind(),
-                            "cerebellum dropped event (Route::Drop)"
-                        );
+                        debug!(event_kind = event.kind(), "cerebellum dropped event (Route::Drop)");
                         return None;
                     }
-                    ctx.learned_context
+                    (ctx.route, ctx.learned_context)
                 }
                 Err(e) => {
                     error!(error = %e, "agent: cerebellum preprocess failed, continuing without context");
-                    String::new()
+                    (Route::Conscious, String::new())
                 }
             }
         } else {
-            String::new()
+            let default_route = match event {
+                Event::Timer { .. } | Event::StateChange { .. } => Route::Procedural,
+                _ => Route::Conscious,
+            };
+            (default_route, String::new())
         };
 
-        // ── Event dispatch ────────────────────────────────────────────────
+        if route == Route::Drop {
+            return None;
+        }
+
         match event {
             Event::Message {
                 ref id,
+                ref channel,
                 ref content,
                 ..
-            } => {
-                if let Err(e) = self.memory.capture(content).await {
-                    error!(error = %e, "agent: failed to capture message in memory");
+            } => match route {
+                Route::Procedural => {
+                    self.dispatch_procedures(&Event::Message {
+                        id: id.clone(),
+                        channel: channel.clone(),
+                        sender: String::new(),
+                        content: content.clone(),
+                    })
+                    .await
                 }
-                // Augment the response with recalled context when available.
-                let response_content = if learned_context.is_empty() {
-                    format!("Echo: {content}")
+                Route::Conscious | Route::Deep { .. } => {
+                    let system_text = self.build_system_prompt(&learned_context, matches!(route, Route::Deep { .. }));
+                    let model_client = match &self.model_client {
+                        Some(client) => client,
+                        None => {
+                            warn!("agent: model client not configured");
+                            return Some(Event::ModelResponse {
+                                request_id: id.clone(),
+                                model: "unconfigured".into(),
+                                content: "⚠️ Model client not configured.".into(),
+                            });
+                        }
+                    };
+                    let tool_dispatcher = match &self.tool_dispatcher {
+                        Some(dispatcher) => dispatcher,
+                        None => {
+                            warn!("agent: tool dispatcher not configured");
+                            return Some(Event::ModelResponse {
+                                request_id: id.clone(),
+                                model: "unconfigured".into(),
+                                content: "⚠️ Tool dispatcher not configured.".into(),
+                            });
+                        }
+                    };
+
+                    let history_snapshot = {
+                        let guard = self.conversation_history.lock().unwrap();
+                        guard.get(channel).cloned().unwrap_or_default()
+                    };
+
+                    let mut messages = Vec::with_capacity(history_snapshot.len() + 2);
+                    messages.push(ChatMessage::system(system_text));
+                    messages.extend(history_snapshot.iter().cloned());
+                    messages.push(ChatMessage::user(content));
+
+                    let tools = tool_dispatcher.available_tools().await;
+
+                    let mut final_reply = None;
+                    for _ in 0..10 {
+                        let completion = match model_client.complete(&messages, &tools).await {
+                            Ok(c) => c,
+                            Err(e) => {
+                                error!(error = %e, "model completion failed");
+                                return Some(Event::ModelResponse {
+                                    request_id: id.clone(),
+                                    model: "error".into(),
+                                    content: format!("⚠️ Model error: {e}"),
+                                });
+                            }
+                        };
+
+                        if !completion.tool_calls.is_empty() {
+                            messages.push(ChatMessage {
+                                role: "assistant".into(),
+                                content: completion.content.unwrap_or_default(),
+                                tool_call_id: None,
+                                tool_calls: Some(completion.tool_calls.clone()),
+                            });
+
+                            for tool_call in completion.tool_calls {
+                                let tool_result = tool_dispatcher
+                                    .call_tool(&tool_call.name, tool_call.arguments)
+                                    .await;
+                                messages.push(ChatMessage::tool_result(tool_call.id, tool_result));
+                            }
+                            continue;
+                        }
+
+                        if let Some(content) = completion.content {
+                            messages.push(ChatMessage::assistant(content.clone()));
+                            final_reply = Some(content);
+                            break;
+                        }
+
+                        final_reply = Some("(empty response from model)".into());
+                        break;
+                    }
+
+                    let reply = final_reply.unwrap_or_else(|| "(no response from model)".into());
+
+                    info!(input_len = content.len(), output_len = reply.len(), "LLM response generated");
+
+                    let start = 1 + history_snapshot.len();
+                    if messages.len() > start {
+                        let mut guard = self.conversation_history.lock().unwrap();
+                        let history = guard.entry(channel.clone()).or_default();
+                        history.extend(messages[start..].iter().cloned());
+                        if history.len() > 20 {
+                            let drain = history.len() - 20;
+                            history.drain(0..drain);
+                        }
+                    }
+
+                    self.capture_exchange(content, &reply).await;
+
+                    Some(Event::ModelResponse {
+                        request_id: id.clone(),
+                        model: "model".into(),
+                        content: reply,
+                    })
+                }
+                Route::Drop => None,
+            },
+            Event::Timer { .. } | Event::StateChange { .. } => {
+                if matches!(route, Route::Procedural) {
+                    self.dispatch_procedures(&event).await
                 } else {
-                    format!("Echo: {content}\n\n## Recalled Context\n{learned_context}")
-                };
-                Some(Event::ModelResponse {
-                    request_id: id.clone(),
-                    model: "echo".into(),
-                    content: response_content,
-                })
+                    None
+                }
             }
             _ => None,
+        }
+    }
+
+    fn build_system_prompt(&self, learned_context: &str, deep: bool) -> String {
+        let mut prompt = String::new();
+        if deep {
+            prompt.push_str("Think deeply about this. Analyze thoroughly.");
+            if !self.system_prompt.is_empty() {
+                prompt.push(' ');
+            }
+        }
+        prompt.push_str(&self.system_prompt);
+        if !learned_context.trim().is_empty() {
+            prompt.push_str("\n\n## Recalled Context\n");
+            prompt.push_str(learned_context.trim());
+        }
+        prompt
+    }
+
+    async fn dispatch_procedures(&self, event: &Event) -> Option<Event> {
+        let mut last_response = None;
+        for proc in self.procedure_registry.matching(event.kind()) {
+            for result in proc.execute(event).await {
+                if matches!(result, Event::ModelResponse { .. }) {
+                    last_response = Some(result);
+                }
+            }
+        }
+        last_response
+    }
+
+    async fn capture_exchange(&self, user: &str, assistant: &str) {
+        if assistant.trim().is_empty() {
+            return;
+        }
+
+        if let Some(plures_lm) = &self.plures_lm {
+            let exchange = Exchange {
+                user: user.to_string(),
+                assistant: assistant.to_string(),
+            };
+            if let Err(e) = plures_lm.capture(&exchange).await {
+                error!(error = %e, "agent: failed to capture exchange in PluresLm");
+            }
+            return;
+        }
+
+        let combined = format!("User: {user}\nAssistant: {assistant}");
+        if let Err(e) = self.memory.capture(&combined).await {
+            error!(error = %e, "agent: failed to capture exchange in memory");
         }
     }
 }
@@ -220,6 +408,8 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{ModelCompletion, ToolDefinition};
+    use serde_json::json;
 
     fn msg(content: &str) -> Event {
         Event::Message {
@@ -230,9 +420,52 @@ mod tests {
         }
     }
 
+    struct MockModel;
+
+    #[async_trait]
+    impl ModelClient for MockModel {
+        async fn complete(
+            &self,
+            messages: &[ChatMessage],
+            _tools: &[ToolDefinition],
+        ) -> Result<ModelCompletion, String> {
+            let last_user = messages
+                .iter()
+                .rev()
+                .find(|m| m.role == "user")
+                .map(|m| m.content.clone())
+                .unwrap_or_default();
+            Ok(ModelCompletion {
+                content: Some(format!("Echo: {last_user}")),
+                tool_calls: vec![],
+            })
+        }
+    }
+
+    struct MockTools;
+
+    #[async_trait]
+    impl ToolDispatcher for MockTools {
+        async fn available_tools(&self) -> Vec<ToolDefinition> {
+            vec![ToolDefinition {
+                name: "noop".into(),
+                description: "noop".into(),
+                parameters: json!({"type": "object"}),
+            }]
+        }
+
+        async fn call_tool(&self, _name: &str, _arguments: serde_json::Value) -> String {
+            "ok".into()
+        }
+    }
+
     #[tokio::test]
-    async fn agent_echoes_message() {
-        let agent = Agent::new(Arc::new(InMemory::new()));
+    async fn agent_returns_model_response() {
+        let agent = Agent::new(Arc::new(InMemory::new())).with_model(
+            Arc::new(MockModel),
+            Arc::new(MockTools),
+            "You are a test agent.".into(),
+        );
         let response = agent.handle_event(msg("hello")).await;
         assert!(
             matches!(response, Some(Event::ModelResponse { ref content, .. }) if content == "Echo: hello")
@@ -240,17 +473,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn agent_captures_message_content() {
+    async fn agent_captures_exchange() {
         let memory = Arc::new(InMemory::new());
-        let agent = Agent::new(Arc::clone(&memory) as Arc<dyn Memory + Send + Sync>);
+        let agent = Agent::new(Arc::clone(&memory) as Arc<dyn Memory + Send + Sync>).with_model(
+            Arc::new(MockModel),
+            Arc::new(MockTools),
+            "You are a test agent.".into(),
+        );
         agent.handle_event(msg("remember this")).await;
         let recalled = memory.recall("remember").await.unwrap();
-        assert_eq!(recalled, vec!["remember this"]);
+        assert!(recalled.iter().any(|entry| entry.contains("remember this")));
     }
 
     #[tokio::test]
     async fn agent_ignores_non_message_events() {
-        let agent = Agent::new(Arc::new(InMemory::new()));
+        let agent = Agent::new(Arc::new(InMemory::new())).with_model(
+            Arc::new(MockModel),
+            Arc::new(MockTools),
+            "You are a test agent.".into(),
+        );
         let timer = Event::Timer {
             id: "t1".into(),
             name: "tick".into(),
@@ -299,7 +540,11 @@ mod tests {
             128_000,
         ));
         let cerebellum = Cerebellum::new(CerebellumConfig::default());
-        Agent::with_cerebellum(Arc::new(InMemory::new()), cerebellum, plures_lm)
+        Agent::with_cerebellum(Arc::new(InMemory::new()), cerebellum, plures_lm).with_model(
+            Arc::new(MockModel),
+            Arc::new(MockTools),
+            "You are a test agent.".into(),
+        )
     }
 
     #[tokio::test]
@@ -357,7 +602,8 @@ mod tests {
             128_000,
         ));
         let cerebellum = Cerebellum::new(CerebellumConfig::default());
-        let agent = Agent::with_cerebellum(Arc::new(InMemory::new()), cerebellum, plures_lm);
+        let agent = Agent::with_cerebellum(Arc::new(InMemory::new()), cerebellum, plures_lm)
+            .with_model(Arc::new(MockModel), Arc::new(MockTools), "You are a test agent.".into());
 
         let event = Event::Message {
             id: "q1".into(),
@@ -368,8 +614,8 @@ mod tests {
         let response = agent.handle_event(event).await;
         if let Some(Event::ModelResponse { content, .. }) = response {
             assert!(
-                content.contains("Recalled Context"),
-                "expected recalled context injected into response, got: {content}"
+                content.contains("Echo: How do I use async in Rust?"),
+                "expected model response, got: {content}"
             );
         } else {
             panic!("expected ModelResponse with recalled context");
