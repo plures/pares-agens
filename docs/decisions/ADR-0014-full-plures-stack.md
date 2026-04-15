@@ -163,3 +163,43 @@ This ADR is considered implemented when:
 - [ ] plures-vault stores all secrets (no env vars in production)
 - [ ] PluresDB is the ONLY persistence layer
 - [ ] Cerebellum routes every event through 3-consciousness
+
+## Amendment: PluresDB IS the Nervous System (2026-04-15)
+
+PluresDB is not just storage. On every `put()`:
+1. **CRDT merge** — conflict-free replication
+2. **Auto-embed** — fastembed BAAI/bge-small-en-v1.5 (native ONNX, zero config)
+3. **HNSW index update** — vector search immediately available
+4. **P2P sync** — Hyperswarm replication to peers (automatic)
+5. **Procedure triggers** — reactive data-driven execution
+6. **State diff** — write metadata = Chronos audit trail
+
+### What pares-agens MUST NOT reinvent:
+- **Embeddings** — DELETE MockEmbedder, OllamaEmbedder. Use `PluresDB::FastEmbedder`
+- **Sync** — Use PluresDB Hyperswarm, not custom sync layer
+- **Procedures** — Use `pluresdb-procedures` DSL, not manual `ProcedureRegistry`
+- **Audit** — PluresDB write metadata IS chronos. Query it, don't rebuild it.
+
+### Correct PluresDbStore initialization:
+```rust
+let embedder = FastEmbedder::new("BAAI/bge-small-en-v1.5")?;
+let store = Arc::new(
+    CrdtStore::open(path)?
+        .with_embedder(Arc::new(embedder))
+);
+CrdtStore::spawn_embedding_worker(Arc::clone(&store));
+// Every put() now auto-embeds. Vector search works. P2P syncs.
+```
+
+### Praxis → PluresDB mapping:
+| Praxis Concept | PluresDB Implementation |
+|---|---|
+| Facts | PluresDB nodes (auto-embedded, searchable) |
+| Rules | PluresDB procedures (reactive, data-driven) |
+| Constraints | Pre-write hooks on CrdtStore |
+| Events | Write events from CrdtStore |
+| Decision Ledger | Nodes with approval gate metadata |
+| Chronos audit | Write metadata (actor, timestamp, causal links) |
+
+### The only external call: LLM API
+Everything else — memory, embeddings, search, procedures, sync, audit — is PluresDB native.
