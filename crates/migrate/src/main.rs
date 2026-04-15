@@ -443,11 +443,20 @@ async fn main() {
             // Set up PluresDB memory store + PluresLM (native)
             let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
             let memory_path = PathBuf::from(home).join(".pares-agens/memory");
-            let store = match PluresDbStore::open(&memory_path) {
-                Ok(store) => Arc::new(store),
+            let store = match PluresDbStore::open_with_embeddings(&memory_path) {
+                Ok(store) => {
+                    tracing::info!("PluresDB with native fastembed (auto-embed on every write)");
+                    Arc::new(store)
+                }
                 Err(e) => {
-                    tracing::error!("failed to open memory store: {e}");
-                    std::process::exit(1);
+                    tracing::warn!("fastembed unavailable ({e}), falling back to basic store");
+                    match PluresDbStore::open(&memory_path) {
+                        Ok(store) => Arc::new(store),
+                        Err(e2) => {
+                            tracing::error!("failed to open memory store: {e2}");
+                            std::process::exit(1);
+                        }
+                    }
                 }
             };
 

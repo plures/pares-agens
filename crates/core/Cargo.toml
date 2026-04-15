@@ -15,6 +15,11 @@ repository.workspace = true
 ## transitive dependency tree.
 vault = ["dep:vault-core"]
 
+## Enable native fastembed embeddings via PluresDB.
+## When active, `PluresDbStore::open_with_embeddings()` is available.
+## Requires the `embeddings` feature on the `pluresdb` dependency.
+embeddings = []
+
 [dependencies]
 tokio.workspace = true
 serde.workspace = true
@@ -28,7 +33,7 @@ reqwest.workspace = true
 subtle = "2"
 pares-agens-privacy = { path = "../privacy" }
 pares-agens-praxis = { path = "../praxis" }
-pluresdb = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3" }
+pluresdb = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3", features = ["embeddings"] }
 pluresdb-procedures = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3" }
 vault-core = { git = "https://github.com/plures/plures-vault", rev = "d4e4783ddd14f63af2699ea97f29ca5895ef6590", package = "vault-core", optional = true }
 

@@ -83,7 +83,7 @@ const ACTOR: &str = "pares-agens";
 /// [`CrdtStore::put_with_embedding`]) so that future vector-search queries can
 /// leverage the index directly.
 pub struct PluresDbStore {
-    store: CrdtStore,
+    store: Arc<CrdtStore>,
 }
 
 impl PluresDbStore {
@@ -97,7 +97,40 @@ impl PluresDbStore {
             SledStorage::open(path).map_err(|e| Error::Store(format!("open failed: {e}")))?,
         );
         let store = CrdtStore::default().with_persistence(storage);
-        Ok(Self { store })
+        Ok(Self { store: Arc::new(store) })
+    }
+
+    /// Open a PluresDB store with native fastembed embeddings.
+    ///
+    /// Every `put()` call automatically generates embeddings via
+    /// BAAI/bge-small-en-v1.5 (384-dim, ONNX Runtime) and indexes them
+    /// in HNSW for vector search.  A background worker processes the
+    /// embedding queue.
+    ///
+    /// This is the recommended way to open a store for production use.
+    #[cfg(feature = "embeddings")]
+    pub fn open_with_embeddings(path: impl AsRef<Path>) -> Result<Self, Error> {
+        use pluresdb::FastEmbedder;
+
+        let storage: Arc<dyn StorageEngine> = Arc::new(
+            SledStorage::open(&path).map_err(|e| Error::Store(format!("open failed: {e}")))?,
+        );
+        let embedder = FastEmbedder::new("BAAI/bge-small-en-v1.5")
+            .map_err(|e| Error::Store(format!("embedder init failed: {e}")))?;
+        let store = CrdtStore::default()
+            .with_persistence(storage)
+            .with_embedder(Arc::new(embedder));
+        // Spawn the background embedding worker.
+        // We need an Arc temporarily for the worker, then clone for our store.
+        let arc_store = Arc::new(store);
+        CrdtStore::spawn_embedding_worker(Arc::clone(&arc_store));
+        tracing::info!(
+            path = %path.as_ref().display(),
+            "PluresDB opened with native fastembed (BAAI/bge-small-en-v1.5, 384-dim)"
+        );
+        // The worker holds an Arc, and we hold a clone of the CrdtStore.
+        // CrdtStore is Clone — both share the same underlying data via Arc internals.
+        Ok(Self { store: arc_store })
     }
 
     /// Open a PluresDB store with Hyperswarm peer sync enabled.
@@ -132,7 +165,7 @@ impl PluresDbStore {
     pub fn in_memory() -> Self {
         let storage: Arc<dyn StorageEngine> = Arc::new(MemoryStorage::default());
         let store = CrdtStore::default().with_persistence(storage);
-        Self { store }
+        Self { store: Arc::new(store) }
     }
 }
 
