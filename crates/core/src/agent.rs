@@ -23,8 +23,8 @@ use tracing::{debug, error, info, warn};
 use crate::cerebellum::{Cerebellum, Route};
 use crate::event::Event;
 use crate::memory::entry::Exchange;
-use crate::memory::PluresLm;
-use crate::model::{ChatMessage, ModelClient, ToolDispatcher};
+use crate::memory::{passes_quality_gate, PluresLm};
+use crate::model::{ChatMessage, ChatOptions, ModelClient, ToolDispatcher};
 use crate::procedure::ProcedureRegistry;
 
 // ---------------------------------------------------------------------------
@@ -126,6 +126,8 @@ pub struct Agent {
     procedure_registry: ProcedureRegistry,
     /// Model client for conscious/subconscious completions.
     model_client: Option<Arc<dyn ModelClient>>,
+    /// Optional deep model client for low-confidence escalation.
+    deep_model_client: Option<Arc<dyn ModelClient>>,
     /// Tool dispatcher for model tool calls.
     tool_dispatcher: Option<Arc<dyn ToolDispatcher>>,
     /// Base system prompt.
@@ -143,6 +145,7 @@ impl Agent {
             plures_lm: None,
             procedure_registry: ProcedureRegistry::new(),
             model_client: None,
+            deep_model_client: None,
             tool_dispatcher: None,
             system_prompt: String::new(),
             conversation_history: Mutex::new(HashMap::new()),
@@ -166,6 +169,7 @@ impl Agent {
             plures_lm: Some(plures_lm),
             procedure_registry: ProcedureRegistry::new(),
             model_client: None,
+            deep_model_client: None,
             tool_dispatcher: None,
             system_prompt: String::new(),
             conversation_history: Mutex::new(HashMap::new()),
@@ -182,6 +186,12 @@ impl Agent {
         self.model_client = Some(client);
         self.tool_dispatcher = Some(dispatcher);
         self.system_prompt = system_prompt;
+        self
+    }
+
+    /// Attach a deep model client used for low-confidence escalation.
+    pub fn with_deep_model(mut self, client: Arc<dyn ModelClient>) -> Self {
+        self.deep_model_client = Some(client);
         self
     }
 
@@ -237,7 +247,6 @@ impl Agent {
                     .await
                 }
                 Route::Conscious | Route::Deep { .. } => {
-                    let system_text = self.build_system_prompt(&learned_context, matches!(route, Route::Deep { .. }));
                     let model_client = match &self.model_client {
                         Some(client) => client,
                         None => {
@@ -266,55 +275,66 @@ impl Agent {
                         guard.get(channel).cloned().unwrap_or_default()
                     };
 
-                    let mut messages = Vec::with_capacity(history_snapshot.len() + 2);
-                    messages.push(ChatMessage::system(system_text));
-                    messages.extend(history_snapshot.iter().cloned());
-                    messages.push(ChatMessage::user(content));
+                    let base_system_text = self.build_system_prompt(&learned_context, false);
+                    let options = ChatOptions {
+                        temperature: None,
+                        logprobs: true,
+                    };
 
-                    let tools = tool_dispatcher.available_tools().await;
-
-                    let mut final_reply = None;
-                    for _ in 0..10 {
-                        let completion = match model_client.complete(&messages, &tools).await {
-                            Ok(c) => c,
-                            Err(e) => {
-                                error!(error = %e, "model completion failed");
-                                return Some(Event::ModelResponse {
-                                    request_id: id.clone(),
-                                    model: "error".into(),
-                                    content: format!("⚠️ Model error: {e}"),
-                                });
-                            }
-                        };
-
-                        if !completion.tool_calls.is_empty() {
-                            messages.push(ChatMessage {
-                                role: "assistant".into(),
-                                content: completion.content.unwrap_or_default(),
-                                tool_call_id: None,
-                                tool_calls: Some(completion.tool_calls.clone()),
+                    let (mut reply, logprobs, mut messages) = match self
+                        .run_model_loop(
+                            model_client,
+                            tool_dispatcher,
+                            base_system_text,
+                            &history_snapshot,
+                            content,
+                            &options,
+                        )
+                        .await
+                    {
+                        Ok(result) => result,
+                        Err(e) => {
+                            error!(error = %e, "model completion failed");
+                            return Some(Event::ModelResponse {
+                                request_id: id.clone(),
+                                model: "error".into(),
+                                content: format!("⚠️ Model error: {e}"),
                             });
+                        }
+                    };
 
-                            for tool_call in completion.tool_calls {
-                                let tool_result = tool_dispatcher
-                                    .call_tool(&tool_call.name, tool_call.arguments)
-                                    .await;
-                                messages.push(ChatMessage::tool_result(tool_call.id, tool_result));
+                    let mut model_label = "model";
+                    if self.is_low_confidence(logprobs.as_deref()) {
+                        if let Some(deep_client) = &self.deep_model_client {
+                            let deep_system_text = self.build_system_prompt(&learned_context, true);
+                            let deep_options = ChatOptions {
+                                temperature: None,
+                                logprobs: false,
+                            };
+                            match self
+                                .run_model_loop(
+                                    deep_client,
+                                    tool_dispatcher,
+                                    deep_system_text,
+                                    &history_snapshot,
+                                    content,
+                                    &deep_options,
+                                )
+                                .await
+                            {
+                                Ok((deep_reply, _deep_logprobs, deep_messages)) => {
+                                    reply = deep_reply;
+                                    messages = deep_messages;
+                                    model_label = "deep-model";
+                                }
+                                Err(e) => {
+                                    warn!(error = %e, "deep model completion failed, using conscious reply");
+                                }
                             }
-                            continue;
+                        } else {
+                            debug!("low confidence detected, but no deep model configured");
                         }
-
-                        if let Some(content) = completion.content {
-                            messages.push(ChatMessage::assistant(content.clone()));
-                            final_reply = Some(content);
-                            break;
-                        }
-
-                        final_reply = Some("(empty response from model)".into());
-                        break;
                     }
-
-                    let reply = final_reply.unwrap_or_else(|| "(no response from model)".into());
 
                     info!(input_len = content.len(), output_len = reply.len(), "LLM response generated");
 
@@ -333,7 +353,7 @@ impl Agent {
 
                     Some(Event::ModelResponse {
                         request_id: id.clone(),
-                        model: "model".into(),
+                        model: model_label.into(),
                         content: reply,
                     })
                 }
@@ -366,6 +386,75 @@ impl Agent {
         prompt
     }
 
+    async fn run_model_loop(
+        &self,
+        model_client: &Arc<dyn ModelClient>,
+        tool_dispatcher: &Arc<dyn ToolDispatcher>,
+        system_text: String,
+        history_snapshot: &[ChatMessage],
+        content: &str,
+        options: &ChatOptions,
+    ) -> Result<(String, Option<Vec<f64>>, Vec<ChatMessage>), String> {
+        let mut messages = Vec::with_capacity(history_snapshot.len() + 2);
+        messages.push(ChatMessage::system(system_text));
+        messages.extend(history_snapshot.iter().cloned());
+        messages.push(ChatMessage::user(content));
+
+        let tools = tool_dispatcher.available_tools().await;
+
+        let mut final_reply = None;
+        let mut final_logprobs = None;
+        for _ in 0..10 {
+            let completion = model_client.complete(&messages, &tools, options).await?;
+
+            if !completion.tool_calls.is_empty() {
+                let tool_calls = completion.tool_calls.clone();
+                messages.push(ChatMessage {
+                    role: "assistant".into(),
+                    content: completion.content.unwrap_or_default(),
+                    tool_call_id: None,
+                    tool_calls: Some(tool_calls.clone()),
+                });
+
+                for tool_call in tool_calls {
+                    let tool_result = tool_dispatcher
+                        .call_tool(&tool_call.name, tool_call.arguments)
+                        .await;
+                    messages.push(ChatMessage::tool_result(tool_call.id, tool_result));
+                }
+                continue;
+            }
+
+            if let Some(content) = completion.content {
+                messages.push(ChatMessage::assistant(content.clone()));
+                final_reply = Some(content);
+                final_logprobs = completion.logprobs;
+                break;
+            }
+
+            final_reply = Some("(empty response from model)".into());
+            break;
+        }
+
+        let reply = final_reply.unwrap_or_else(|| "(no response from model)".into());
+        Ok((reply, final_logprobs, messages))
+    }
+
+    fn is_low_confidence(&self, logprobs: Option<&[f64]>) -> bool {
+        let Some(logprobs) = logprobs else {
+            return false;
+        };
+        if logprobs.is_empty() {
+            return false;
+        }
+        let avg_logprob = logprobs.iter().sum::<f64>() / logprobs.len() as f64;
+        let min_prob = logprobs
+            .iter()
+            .map(|lp| lp.exp())
+            .fold(1.0_f64, |acc, p| acc.min(p));
+        avg_logprob < -1.0 || min_prob < 0.6
+    }
+
     async fn dispatch_procedures(&self, event: &Event) -> Option<Event> {
         let mut last_response = None;
         for proc in self.procedure_registry.matching(event.kind()) {
@@ -378,12 +467,62 @@ impl Agent {
         last_response
     }
 
+    fn extract_domain_tags(&self, question: &str) -> Vec<String> {
+        let lower = question.to_lowercase();
+        let mut tags = Vec::new();
+
+        for lang in ["rust", "python", "typescript", "javascript", "go", "c#", "java"] {
+            if lower.contains(lang) {
+                tags.push(format!("lang:{lang}"));
+            }
+        }
+        for tool in ["cargo", "tokio", "serde", "git", "docker", "kubernetes", "sql"] {
+            if lower.contains(tool) {
+                tags.push(format!("tool:{tool}"));
+            }
+        }
+
+        tags
+    }
+
+    fn looks_like_correction(&self, sentence: &str) -> bool {
+        let lower = sentence.to_lowercase();
+        lower.contains("you were wrong")
+            || lower.contains("that's wrong")
+            || lower.contains("that is wrong")
+            || lower.contains("incorrect")
+            || lower.contains("mistake")
+            || lower.contains("sorry")
+            || lower.contains("apologize")
+    }
+
+    fn extract_facts(&self, response: &str) -> Vec<String> {
+        response
+            .lines()
+            .flat_map(|line| line.split(|c| c == '.' || c == '!' || c == '?'))
+            .map(|s| s.trim().trim_start_matches(|c: char| c == '-' || c == '*' || c == '•'))
+            .filter(|s| !s.is_empty())
+            .filter(|s| !self.looks_like_correction(s))
+            .map(|s| s.to_string())
+            .collect()
+    }
+
     async fn capture_exchange(&self, user: &str, assistant: &str) {
         if assistant.trim().is_empty() {
             return;
         }
 
         if let Some(plures_lm) = &self.plures_lm {
+            let tags = self.extract_domain_tags(user);
+            for fact in self.extract_facts(assistant) {
+                if !passes_quality_gate(&fact) {
+                    continue;
+                }
+                if let Err(e) = plures_lm.capture_fact(&fact, tags.clone()).await {
+                    error!(error = %e, "agent: failed to capture fact in PluresLm");
+                }
+            }
+
             let exchange = Exchange {
                 user: user.to_string(),
                 assistant: assistant.to_string(),
@@ -408,7 +547,7 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ModelCompletion, ToolDefinition};
+    use crate::model::{ChatOptions, ModelCompletion, ToolDefinition};
     use serde_json::json;
 
     fn msg(content: &str) -> Event {
@@ -428,6 +567,7 @@ mod tests {
             &self,
             messages: &[ChatMessage],
             _tools: &[ToolDefinition],
+            _options: &ChatOptions,
         ) -> Result<ModelCompletion, String> {
             let last_user = messages
                 .iter()
@@ -438,6 +578,7 @@ mod tests {
             Ok(ModelCompletion {
                 content: Some(format!("Echo: {last_user}")),
                 tool_calls: vec![],
+                logprobs: None,
             })
         }
     }

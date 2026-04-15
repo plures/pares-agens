@@ -20,7 +20,7 @@ use tokio::task::JoinSet;
 use tracing::{debug, instrument, warn};
 
 use crate::delegation::{context::AgentContext, registry::AgentRegistry, DelegationError};
-use crate::model::{ModelClient, ToolDefinition, ToolDispatcher};
+use crate::model::{ChatOptions, ModelClient, ToolDefinition, ToolDispatcher};
 
 // ── SubTask ──────────────────────────────────────────────────────────────────
 
@@ -179,7 +179,10 @@ async fn run_sub_task(
     // 4. Agentic model loop — up to max_turns iterations.
     let max_turns = definition.capabilities.max_turns;
     for turn in 0..max_turns {
-        let completion = match model.complete(context.as_messages(), &allowed).await {
+        let completion = match model
+            .complete(context.as_messages(), &allowed, &ChatOptions::default())
+            .await
+        {
             Ok(c) => c,
             Err(e) => {
                 return SubTaskResult {
@@ -244,7 +247,7 @@ async fn run_sub_task(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ChatMessage, ModelCompletion, ToolDefinition};
+    use crate::model::{ChatMessage, ChatOptions, ModelCompletion, ToolDefinition};
     use async_trait::async_trait;
     use serde_json::Value;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -259,6 +262,7 @@ mod tests {
             &self,
             messages: &[ChatMessage],
             _tools: &[ToolDefinition],
+            _options: &ChatOptions,
         ) -> Result<ModelCompletion, String> {
             let last_user = messages
                 .iter()
@@ -269,6 +273,7 @@ mod tests {
             Ok(ModelCompletion {
                 content: Some(format!("echo:{last_user}")),
                 tool_calls: vec![],
+                logprobs: None,
             })
         }
     }
@@ -283,6 +288,7 @@ mod tests {
             &self,
             _messages: &[ChatMessage],
             _tools: &[ToolDefinition],
+            _options: &ChatOptions,
         ) -> Result<ModelCompletion, String> {
             Err("connection refused".into())
         }
@@ -314,6 +320,7 @@ mod tests {
             &self,
             messages: &[ChatMessage],
             _tools: &[ToolDefinition],
+            _options: &ChatOptions,
         ) -> Result<ModelCompletion, String> {
             let n = self.calls.fetch_add(1, Ordering::SeqCst);
             if n == 0 {
@@ -325,6 +332,7 @@ mod tests {
                         name: "read_file".into(),
                         arguments: serde_json::json!({"path": "foo.txt"}),
                     }],
+                    logprobs: None,
                 })
             } else {
                 // Second call — produce the final answer
@@ -332,6 +340,7 @@ mod tests {
                 Ok(ModelCompletion {
                     content: Some("final answer after tool".into()),
                     tool_calls: vec![],
+                    logprobs: None,
                 })
             }
         }
@@ -480,6 +489,7 @@ mod tests {
                 &self,
                 messages: &[ChatMessage],
                 _tools: &[ToolDefinition],
+                _options: &ChatOptions,
             ) -> Result<ModelCompletion, String> {
                 let system_content: String = messages
                     .iter()
@@ -490,6 +500,7 @@ mod tests {
                 Ok(ModelCompletion {
                     content: Some(system_content),
                     tool_calls: vec![],
+                    logprobs: None,
                 })
             }
         }

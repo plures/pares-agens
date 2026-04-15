@@ -26,7 +26,7 @@ use pares_agens_privacy::PrivacyFilter;
 use tokio::time::{timeout, Duration};
 use tracing::info;
 
-use crate::model::{ChatMessage, ModelClient};
+use crate::model::{ChatMessage, ChatOptions, ModelClient};
 use crate::procedure::Procedure;
 
 // ── InvokeConfig ─────────────────────────────────────────────────────────────
@@ -235,7 +235,10 @@ impl AgentInvoke {
 
         // ── Call the model with timeout ───────────────────────────────────────
         let duration = Duration::from_millis(self.config.timeout_ms);
-        let call = self.model_client.complete(&messages, &[]);
+        let options = ChatOptions::default();
+        let call = self
+            .model_client
+            .complete(&messages, &[], &options);
 
         let completion = timeout(duration, call)
             .await
@@ -280,7 +283,7 @@ pub trait InvokableProcedure: Procedure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ModelCompletion, ToolDefinition};
+    use crate::model::{ChatOptions, ModelCompletion, ToolDefinition};
     use std::time::Duration as StdDuration;
     use tokio::time::sleep;
 
@@ -305,10 +308,12 @@ mod tests {
             &self,
             _messages: &[ChatMessage],
             _tools: &[ToolDefinition],
+            _options: &ChatOptions,
         ) -> Result<ModelCompletion, String> {
             Ok(ModelCompletion {
                 content: Some(self.response.clone()),
                 tool_calls: vec![],
+                logprobs: None,
             })
         }
     }
@@ -324,11 +329,13 @@ mod tests {
             &self,
             _messages: &[ChatMessage],
             _tools: &[ToolDefinition],
+            _options: &ChatOptions,
         ) -> Result<ModelCompletion, String> {
             sleep(self.delay).await;
             Ok(ModelCompletion {
                 content: Some("late response".into()),
                 tool_calls: vec![],
+                logprobs: None,
             })
         }
     }
@@ -342,6 +349,7 @@ mod tests {
             &self,
             _messages: &[ChatMessage],
             _tools: &[ToolDefinition],
+            _options: &ChatOptions,
         ) -> Result<ModelCompletion, String> {
             Err("upstream unavailable".into())
         }
@@ -357,10 +365,12 @@ mod tests {
             &self,
             _messages: &[ChatMessage],
             _tools: &[ToolDefinition],
+            _options: &ChatOptions,
         ) -> Result<ModelCompletion, String> {
             Ok(ModelCompletion {
                 content: None,
                 tool_calls: vec![],
+                logprobs: None,
             })
         }
     }
@@ -621,6 +631,7 @@ mod tests {
             &self,
             messages: &[ChatMessage],
             _tools: &[ToolDefinition],
+            _options: &ChatOptions,
         ) -> Result<ModelCompletion, String> {
             // Return the last user message content so we can assert on it.
             let user_msg = messages
@@ -631,6 +642,7 @@ mod tests {
             Ok(ModelCompletion {
                 content: Some(user_msg),
                 tool_calls: vec![],
+                logprobs: None,
             })
         }
     }
@@ -648,10 +660,12 @@ mod tests {
             &self,
             _messages: &[ChatMessage],
             _tools: &[ToolDefinition],
+            _options: &ChatOptions,
         ) -> Result<ModelCompletion, String> {
             Ok(ModelCompletion {
                 content: Some(self.response.clone()),
                 tool_calls: vec![],
+                logprobs: None,
             })
         }
     }

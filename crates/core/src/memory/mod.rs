@@ -196,6 +196,52 @@ impl PluresLm {
         Ok(vec![id])
     }
 
+    /// Store a single factual statement as a memory entry.
+    pub async fn capture_fact(&self, fact: &str, tags: Vec<String>) -> Result<Option<String>, Error> {
+        if !passes_quality_gate(fact) {
+            debug!("capture_fact rejected: quality gate");
+            return Ok(None);
+        }
+
+        let embedding = self
+            .embedder
+            .embed(fact)
+            .await
+            .map_err(|e| Error::Embed(e.to_string()))?;
+
+        let all = self
+            .store
+            .all()
+            .await
+            .map_err(|e| Error::Store(e.to_string()))?;
+
+        let refs: Vec<&MemoryEntry> = all.iter().collect();
+        if quality::is_echo(&embedding, &refs) {
+            debug!("capture_fact rejected: echo");
+            return Ok(None);
+        }
+
+        let id = Uuid::new_v4().to_string();
+        let created_at = chrono::Utc::now().to_rfc3339();
+
+        let entry = MemoryEntry {
+            id: id.clone(),
+            content: fact.to_string(),
+            category: MemoryCategory::Fact,
+            tags,
+            embedding,
+            score: 0.0,
+            created_at,
+        };
+
+        self.store
+            .insert(entry)
+            .await
+            .map_err(|e| Error::Store(e.to_string()))?;
+
+        Ok(Some(id))
+    }
+
     /// Return all stored memory entries (unordered).
     ///
     /// Used by maintenance procedures such as `cerebellum-sweep` that need to
@@ -257,7 +303,7 @@ fn format_exchange(exchange: &Exchange) -> String {
 }
 
 /// Heuristic category detection based on content keywords.
-fn detect_category(text: &str) -> MemoryCategory {
+pub fn detect_category(text: &str) -> MemoryCategory {
     let lower = text.to_lowercase();
 
     // Derive a user-only segment for correction detection so assistant phrasing
@@ -309,8 +355,36 @@ fn detect_category(text: &str) -> MemoryCategory {
     }
 }
 
+/// Return true if `content` passes the basic quality gate.
+///
+/// Rejects noise, heartbeat pings, and obvious git output.
+pub fn passes_quality_gate(content: &str) -> bool {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed.eq_ignore_ascii_case("HEARTBEAT_OK") {
+        return false;
+    }
+    if quality::is_noise(trimmed) {
+        return false;
+    }
+    if is_git_noise(trimmed) {
+        return false;
+    }
+    true
+}
+
+fn is_git_noise(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    (lower.contains("commit ") && lower.contains("author:") && lower.contains("date:"))
+        || lower.contains("diff --git")
+        || lower.contains("index ") && lower.contains("+++")
+}
+
 /// Extract simple keyword tags from the exchange.
 fn extract_tags(exchange: &Exchange) -> Vec<String> {
+
     let combined = format!("{} {}", exchange.user, exchange.assistant).to_lowercase();
     let mut tags = Vec::new();
 

@@ -25,7 +25,7 @@ use pares_agens_core::memory::{
     store::PluresDbStore,
     PluresLm,
 };
-use pares_agens_core::model::{ChatMessage as CoreChatMessage, ModelClient, ToolDefinition, ToolDispatcher};
+use pares_agens_core::model::{ChatMessage as CoreChatMessage, ChatOptions, ModelClient, ToolDefinition, ToolDispatcher};
 use pares_agens_core::procedure::{Procedure, ProcedureRegistry};
 use pares_agens_core::Event;
 use pares_agens_migrate::{migrate, openclaw};
@@ -56,6 +56,7 @@ impl ModelClient for RouterModelClient {
         &self,
         messages: &[CoreChatMessage],
         tools: &[ToolDefinition],
+        options: &ChatOptions,
     ) -> Result<pares_agens_core::model::ModelCompletion, String> {
         let converted_messages = messages
             .iter()
@@ -100,6 +101,12 @@ impl ModelClient for RouterModelClient {
                     .collect(),
             );
         }
+        if let Some(temp) = options.temperature {
+            request.temperature = Some(temp as f32);
+        }
+        if options.logprobs {
+            request.logprobs = Some(true);
+        }
 
         let response = self
             .router
@@ -126,9 +133,17 @@ impl ModelClient for RouterModelClient {
             })
             .collect();
 
+        let logprobs = choice
+            .logprobs
+            .as_ref()
+            .and_then(|lp| lp.content.as_ref())
+            .map(|tokens| tokens.iter().filter_map(|t| t.logprob).collect::<Vec<_>>())
+            .filter(|vals| !vals.is_empty());
+
         Ok(pares_agens_core::model::ModelCompletion {
             content: choice.message.content.clone(),
             tool_calls,
+            logprobs,
         })
     }
 }
@@ -429,6 +444,14 @@ enum Commands {
         #[arg(long, env = "PARES_MODEL", default_value = "gpt-4o")]
         model: String,
 
+        /// Deep model name used for low-confidence escalation.
+        #[arg(long, env = "PARES_DEEP_MODEL", default_value = "gpt-4.1")]
+        deep_model: String,
+
+        /// Deep model API URL (defaults to --model-url).
+        #[arg(long, env = "PARES_DEEP_MODEL_URL")]
+        deep_model_url: Option<String>,
+
         /// API key for the model provider.
         #[arg(long, env = "PARES_API_KEY")]
         api_key: Option<String>,
@@ -488,6 +511,8 @@ async fn main() {
             telegram_token,
             model_url,
             model,
+            deep_model,
+            deep_model_url,
             api_key,
             embed_url,
             embed_model,
@@ -508,6 +533,11 @@ async fn main() {
             let provider_config = ProviderConfig::new(&model_url, api_key.clone());
             let router_config = RouterConfig::single("default", provider_config);
             let model_router = Arc::new(ModelRouter::new(router_config));
+
+            let deep_model_url = deep_model_url.unwrap_or_else(|| model_url.clone());
+            let deep_provider_config = ProviderConfig::new(&deep_model_url, api_key.clone());
+            let deep_router_config = RouterConfig::single("deep", deep_provider_config);
+            let deep_model_router = Arc::new(ModelRouter::new(deep_router_config));
 
             // Set up PluresDB memory store + PluresLM (native)
             let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
@@ -556,6 +586,10 @@ async fn main() {
                 router: model_router.clone(),
                 model: model.clone(),
             });
+            let deep_model_client = Arc::new(RouterModelClient {
+                router: deep_model_router.clone(),
+                model: deep_model.clone(),
+            });
             let tool_dispatcher = Arc::new(ProcedureToolDispatcher {
                 registry: Arc::clone(&procedure_registry),
             });
@@ -565,7 +599,8 @@ async fn main() {
                 cerebellum,
                 Arc::clone(&plures_lm),
             )
-            .with_model(model_client, tool_dispatcher, system_prompt));
+            .with_model(model_client, tool_dispatcher, system_prompt)
+            .with_deep_model(deep_model_client));
 
             // Set up Telegram adapter
             let config = TelegramConfig::new(telegram_token);

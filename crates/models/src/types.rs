@@ -141,6 +141,9 @@ pub struct ChatCompletionRequest {
     /// Sampling temperature (0–2).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
+    /// Request token-level log probabilities when supported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logprobs: Option<bool>,
     /// Whether to stream the response.  Set by the client when streaming.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
@@ -156,6 +159,7 @@ impl ChatCompletionRequest {
             tool_choice: None,
             max_tokens: None,
             temperature: None,
+            logprobs: None,
             stream: None,
         }
     }
@@ -186,8 +190,27 @@ pub struct Choice {
     pub index: u32,
     /// The generated message.
     pub message: ChatMessage,
+    /// Token-level log probability data (if requested).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logprobs: Option<LogProbs>,
     /// Reason the model stopped generating (`"stop"`, `"length"`, `"tool_calls"`, etc.).
     pub finish_reason: Option<String>,
+}
+
+/// Token-level log probability info for a completion.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogProbs {
+    /// Logprobs for generated content tokens.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<Vec<TokenLogProb>>,
+}
+
+/// Log probability for a single token.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenLogProb {
+    /// Log probability of the token (natural log).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logprob: Option<f64>,
 }
 
 /// Token-usage statistics returned by the API.

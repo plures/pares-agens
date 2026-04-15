@@ -6,7 +6,7 @@ use tracing::{debug, error, info, warn};
 use crate::{
     event::Event,
     memory::{MemoryCapture, MemoryClient},
-    model::{ChatMessage, ModelClient, ToolDispatcher},
+    model::{ChatMessage, ChatOptions, ModelClient, ToolDispatcher},
     procedure::Procedure,
 };
 
@@ -107,7 +107,11 @@ impl Procedure for OnMessage {
         let mut final_response: Option<String> = None;
 
         for iteration in 0..MAX_TOOL_ITERATIONS {
-            let completion = match self.model.complete(&messages, &tool_defs).await {
+            let completion = match self
+                .model
+                .complete(&messages, &tool_defs, &ChatOptions::default())
+                .await
+            {
                 Ok(c) => c,
                 Err(e) => {
                     error!(error = %e, "model completion failed");
@@ -195,7 +199,7 @@ impl Procedure for OnMessage {
 mod tests {
     use super::*;
     use crate::memory::Memory;
-    use crate::model::{ModelCompletion, ToolCall, ToolDefinition};
+    use crate::model::{ChatOptions, ModelCompletion, ToolCall, ToolDefinition};
     use serde_json::json;
     use std::sync::Mutex;
 
@@ -256,10 +260,12 @@ mod tests {
             &self,
             _messages: &[ChatMessage],
             _tools: &[ToolDefinition],
+            _options: &ChatOptions,
         ) -> Result<ModelCompletion, String> {
             Ok(ModelCompletion {
                 content: Some(self.response.clone()),
                 tool_calls: vec![],
+                logprobs: None,
             })
         }
     }
@@ -286,6 +292,7 @@ mod tests {
             &self,
             _messages: &[ChatMessage],
             _tools: &[ToolDefinition],
+            _options: &ChatOptions,
         ) -> Result<ModelCompletion, String> {
             let mut count = self.call_count.lock().unwrap();
             *count += 1;
@@ -298,12 +305,14 @@ mod tests {
                         name: self.tool_name.clone(),
                         arguments: json!({"q": "test"}),
                     }],
+                    logprobs: None,
                 })
             } else {
                 // Second call: final response after tool result
                 Ok(ModelCompletion {
                     content: Some(self.final_response.clone()),
                     tool_calls: vec![],
+                    logprobs: None,
                 })
             }
         }

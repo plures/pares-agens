@@ -96,6 +96,17 @@ pub struct ModelCompletion {
     /// Tool calls requested by the model (empty when the model responded
     /// directly with text).
     pub tool_calls: Vec<ToolCall>,
+    /// Log probabilities for each generated token (when supported).
+    pub logprobs: Option<Vec<f64>>,
+}
+
+/// Optional settings for a chat completion.
+#[derive(Debug, Clone, Default)]
+pub struct ChatOptions {
+    /// Sampling temperature (0.0–2.0). `None` uses the provider default.
+    pub temperature: Option<f64>,
+    /// Request token logprobs when supported by the provider.
+    pub logprobs: bool,
 }
 
 // ── Traits ───────────────────────────────────────────────────────────────────
@@ -114,6 +125,7 @@ pub trait ModelClient: Send + Sync {
         &self,
         messages: &[ChatMessage],
         tools: &[ToolDefinition],
+        options: &ChatOptions,
     ) -> Result<ModelCompletion, String>;
 }
 

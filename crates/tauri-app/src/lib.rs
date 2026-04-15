@@ -12,7 +12,7 @@ use pares_agens_core::memory::embed::MockEmbedder;
 use pares_agens_core::memory::store::PluresDbStore;
 use pares_agens_core::memory::store::{InMemoryStore, MemoryStore};
 use pares_agens_core::memory::PluresLm;
-use pares_agens_core::model::{ChatMessage, ModelClient, ModelCompletion, ToolDefinition, ToolDispatcher};
+use pares_agens_core::model::{ChatMessage, ChatOptions, ModelClient, ModelCompletion, ToolDefinition, ToolDispatcher};
 use pares_agens_core::optimization::OptimizationSafetyGate;
 use pares_agens_core::praxis::GuidanceService;
 use pares_agens_core::secrets::InMemorySecretStore;
@@ -42,6 +42,7 @@ impl ModelClient for AppModelClient {
         &self,
         messages: &[ChatMessage],
         tools: &[ToolDefinition],
+        options: &ChatOptions,
     ) -> Result<ModelCompletion, String> {
         let model = {
             let settings = self.settings.lock().await;
@@ -94,6 +95,12 @@ impl ModelClient for AppModelClient {
                     .collect(),
             );
         }
+        if let Some(temp) = options.temperature {
+            request.temperature = Some(temp as f32);
+        }
+        if options.logprobs {
+            request.logprobs = Some(true);
+        }
 
         let router_guard = self.router.read().await;
         let response = router_guard.chat(&request).await.map_err(|e| e.to_string())?;
@@ -118,9 +125,17 @@ impl ModelClient for AppModelClient {
             })
             .collect();
 
+        let logprobs = choice
+            .logprobs
+            .as_ref()
+            .and_then(|lp| lp.content.as_ref())
+            .map(|tokens| tokens.iter().filter_map(|t| t.logprob).collect::<Vec<_>>())
+            .filter(|vals| !vals.is_empty());
+
         Ok(ModelCompletion {
             content: choice.message.content.clone(),
             tool_calls,
+            logprobs,
         })
     }
 }

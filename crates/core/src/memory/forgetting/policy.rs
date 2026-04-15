@@ -138,6 +138,10 @@ impl RetentionPolicy {
         .set_rule(MemoryCategory::Preference, RetentionRule::keep_forever())
         .set_rule(MemoryCategory::Decision, RetentionRule::keep_forever())
         .set_rule(
+            MemoryCategory::Fact,
+            RetentionRule::expire_and_limit(365, 1_000),
+        )
+        .set_rule(
             MemoryCategory::CodePattern,
             RetentionRule::expire_and_limit(180, 500),
         )

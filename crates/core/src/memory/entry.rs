@@ -16,6 +16,8 @@ pub enum MemoryCategory {
     Preference,
     /// Recorded decisions and rationale.
     Decision,
+    /// Factual knowledge extracted from responses.
+    Fact,
     /// UI click/type/navigate events with before/after state.
     UiInteraction,
     /// Application window snapshots.
@@ -41,6 +43,7 @@ impl MemoryCategory {
             Self::ErrorFix => "error-fix",
             Self::Preference => "preference",
             Self::Decision => "decision",
+            Self::Fact => "fact",
             Self::UiInteraction => "ui-interaction",
             Self::AppState => "app-state",
             Self::ScreenCapture => "screen-capture",
