@@ -25,6 +25,7 @@ uuid.workspace = true
 chrono.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+reqwest.workspace = true
 pares-agens-core = { path = "../core", features = ["embeddings"] }
 pares-agens-channels = { path = "../channels" }
 pares-models = { path = "../models" }

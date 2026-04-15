@@ -15,6 +15,8 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
+use reqwest::header::{HeaderMap, HeaderValue};
+
 use pares_agens_channels::adapter::ChannelAdapter;
 use pares_agens_channels::telegram::{TelegramAdapter, TelegramConfig};
 use pares_agens_core::agent::{Agent, Memory};
@@ -224,6 +226,12 @@ impl Memory for PluresMemory {
 struct ReadFileProcedure;
 struct WriteFileProcedure;
 struct RunCommandProcedure;
+struct EditFileProcedure;
+struct ListDirectoryProcedure;
+struct WebFetchProcedure;
+struct WebSearchProcedure {
+    brave_api_key: Option<String>,
+}
 
 #[async_trait]
 impl Procedure for ReadFileProcedure {
@@ -356,6 +364,263 @@ impl Procedure for RunCommandProcedure {
     }
 }
 
+#[async_trait]
+impl Procedure for EditFileProcedure {
+    fn name(&self) -> &str {
+        "edit_file"
+    }
+
+    fn handles(&self) -> &str {
+        "edit_file"
+    }
+
+    async fn execute(&self, event: &Event) -> Vec<Event> {
+        match event {
+            Event::Message { id, content, .. } => {
+                let result = match parse_tool_args(content) {
+                    Ok(args) => {
+                        let path = args.get("path").and_then(|v| v.as_str());
+                        let old_text = args.get("old_text").and_then(|v| v.as_str());
+                        let new_text = args.get("new_text").and_then(|v| v.as_str());
+                        match (path, old_text, new_text) {
+                            (Some(path), Some(old_text), Some(new_text)) => {
+                                let body = tokio::fs::read_to_string(path)
+                                    .await
+                                    .map_err(|e| e.to_string());
+                                match body {
+                                    Ok(mut body) => {
+                                        if let Some(idx) = body.find(old_text) {
+                                            body.replace_range(idx..idx + old_text.len(), new_text);
+                                            tokio::fs::write(path, body)
+                                                .await
+                                                .map_err(|e| e.to_string())
+                                                .map(|_| "ok".to_string())
+                                        } else {
+                                            Err("old_text not found".into())
+                                        }
+                                    }
+                                    Err(e) => Err(e),
+                                }
+                            }
+                            _ => Err("missing 'path', 'old_text', or 'new_text'".into()),
+                        }
+                    }
+                    Err(e) => Err(e),
+                };
+
+                vec![Event::ToolResult {
+                    tool_call_id: id.clone(),
+                    tool_name: "edit_file".into(),
+                    content: result.clone().unwrap_or_else(|e| e),
+                    is_error: result.is_err(),
+                }]
+            }
+            _ => vec![],
+        }
+    }
+}
+
+#[async_trait]
+impl Procedure for ListDirectoryProcedure {
+    fn name(&self) -> &str {
+        "list_directory"
+    }
+
+    fn handles(&self) -> &str {
+        "list_directory"
+    }
+
+    async fn execute(&self, event: &Event) -> Vec<Event> {
+        match event {
+            Event::Message { id, content, .. } => {
+                let result = match parse_tool_args(content) {
+                    Ok(args) => match args.get("path").and_then(|v| v.as_str()) {
+                        Some(path) => {
+                            let entries = tokio::fs::read_dir(path).await.map_err(|e| e.to_string());
+                            match entries {
+                                Ok(mut entries) => {
+                                    let mut names = Vec::new();
+                                    let mut error: Option<String> = None;
+                                    loop {
+                                        match entries.next_entry().await {
+                                            Ok(Some(entry)) => {
+                                                if let Some(name) = entry.file_name().to_str() {
+                                                    names.push(name.to_string());
+                                                }
+                                            }
+                                            Ok(None) => break,
+                                            Err(e) => {
+                                                error = Some(e.to_string());
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if let Some(error) = error {
+                                        Err(error)
+                                    } else {
+                                        Ok(names.join("\n"))
+                                    }
+                                }
+                                Err(e) => Err(e),
+                            }
+                        }
+                        None => Err("missing 'path'".into()),
+                    },
+                    Err(e) => Err(e),
+                };
+
+                vec![Event::ToolResult {
+                    tool_call_id: id.clone(),
+                    tool_name: "list_directory".into(),
+                    content: result.clone().unwrap_or_else(|e| e),
+                    is_error: result.is_err(),
+                }]
+            }
+            _ => vec![],
+        }
+    }
+}
+
+#[async_trait]
+impl Procedure for WebFetchProcedure {
+    fn name(&self) -> &str {
+        "web_fetch"
+    }
+
+    fn handles(&self) -> &str {
+        "web_fetch"
+    }
+
+    async fn execute(&self, event: &Event) -> Vec<Event> {
+        match event {
+            Event::Message { id, content, .. } => {
+                let result = match parse_tool_args(content) {
+                    Ok(args) => match args.get("url").and_then(|v| v.as_str()) {
+                        Some(url) => {
+                            let response = reqwest::get(url).await.map_err(|e| e.to_string());
+                            match response {
+                                Ok(response) => match response.text().await.map_err(|e| e.to_string()) {
+                                    Ok(body) => {
+                                        let truncated = if body.len() > 10_000 {
+                                            body.chars().take(10_000).collect::<String>()
+                                        } else {
+                                            body
+                                        };
+                                        Ok(truncated)
+                                    }
+                                    Err(e) => Err(e),
+                                },
+                                Err(e) => Err(e),
+                            }
+                        }
+                        None => Err("missing 'url'".into()),
+                    },
+                    Err(e) => Err(e),
+                };
+
+                vec![Event::ToolResult {
+                    tool_call_id: id.clone(),
+                    tool_name: "web_fetch".into(),
+                    content: result.clone().unwrap_or_else(|e| e),
+                    is_error: result.is_err(),
+                }]
+            }
+            _ => vec![],
+        }
+    }
+}
+
+#[async_trait]
+impl Procedure for WebSearchProcedure {
+    fn name(&self) -> &str {
+        "web_search"
+    }
+
+    fn handles(&self) -> &str {
+        "web_search"
+    }
+
+    async fn execute(&self, event: &Event) -> Vec<Event> {
+        match event {
+            Event::Message { id, content, .. } => {
+                let result = match parse_tool_args(content) {
+                    Ok(args) => {
+                        let query = args.get("query").and_then(|v| v.as_str());
+                        let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(5);
+                        let api_key = self.brave_api_key.clone();
+                        match (query, api_key) {
+                            (Some(query), Some(api_key)) => {
+                                let mut headers = HeaderMap::new();
+                                let token = HeaderValue::from_str(&api_key).map_err(|e| e.to_string());
+                                match token {
+                                    Ok(token) => {
+                                        headers.insert("X-Subscription-Token", token);
+                                        let client = reqwest::Client::new();
+                                        let response = client
+                                            .get("https://api.search.brave.com/res/v1/web/search")
+                                            .headers(headers)
+                                            .query(&[("q", query), ("count", &count.to_string())])
+                                            .send()
+                                            .await
+                                            .map_err(|e| e.to_string());
+                                        match response {
+                                            Ok(response) => {
+                                                let value: Result<serde_json::Value, String> = response
+                                                    .json()
+                                                    .await
+                                                    .map_err(|e| e.to_string());
+                                                match value {
+                                                    Ok(value) => {
+                                                        let results = value
+                                                            .get("web")
+                                                            .and_then(|v| v.get("results"))
+                                                            .and_then(|v| v.as_array())
+                                                            .map(|items| {
+                                                                items
+                                                                    .iter()
+                                                                    .filter_map(|item| {
+                                                                        Some(serde_json::json!({
+                                                                            "title": item.get("title")?.as_str()?,
+                                                                            "url": item.get("url")?.as_str()?,
+                                                                            "description": item
+                                                                                .get("description")
+                                                                                .and_then(|d| d.as_str())
+                                                                                .unwrap_or("")
+                                                                        }))
+                                                                    })
+                                                                    .collect::<Vec<_>>()
+                                                            })
+                                                            .unwrap_or_default();
+                                                        Ok(serde_json::json!(results).to_string())
+                                                    }
+                                                    Err(e) => Err(e),
+                                                }
+                                            }
+                                            Err(e) => Err(e),
+                                        }
+                                    }
+                                    Err(e) => Err(e),
+                                }
+                            }
+                            (None, _) => Err("missing 'query'".into()),
+                            (_, None) => Err("missing BRAVE_API_KEY".into()),
+                        }
+                    }
+                    Err(e) => Err(e),
+                };
+
+                vec![Event::ToolResult {
+                    tool_call_id: id.clone(),
+                    tool_name: "web_search".into(),
+                    content: result.clone().unwrap_or_else(|e| e),
+                    is_error: result.is_err(),
+                }]
+            }
+            _ => vec![],
+        }
+    }
+}
+
 fn parse_tool_args(raw: &str) -> Result<serde_json::Value, String> {
     serde_json::from_str(raw).map_err(|e| format!("invalid tool arguments: {e}"))
 }
@@ -383,6 +648,53 @@ fn tool_definitions() -> Vec<ToolDefinition> {
                     "content": {"type": "string"}
                 },
                 "required": ["path", "content"]
+            }),
+        },
+        ToolDefinition {
+            name: "edit_file".into(),
+            description: "Replace the first occurrence of old_text with new_text in a file".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "old_text": {"type": "string"},
+                    "new_text": {"type": "string"}
+                },
+                "required": ["path", "old_text", "new_text"]
+            }),
+        },
+        ToolDefinition {
+            name: "list_directory".into(),
+            description: "List files in a directory, one per line".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"}
+                },
+                "required": ["path"]
+            }),
+        },
+        ToolDefinition {
+            name: "web_fetch".into(),
+            description: "Fetch a URL and return the response body (truncated)".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string"}
+                },
+                "required": ["url"]
+            }),
+        },
+        ToolDefinition {
+            name: "web_search".into(),
+            description: "Search the web via Brave Search API".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "count": {"type": "integer"}
+                },
+                "required": ["query"]
             }),
         },
         ToolDefinition {
@@ -467,6 +779,10 @@ enum Commands {
         /// Path to a system prompt file.
         #[arg(long, value_name = "PATH")]
         system_prompt: Option<PathBuf>,
+
+        /// Brave Search API key (falls back to BRAVE_API_KEY env var).
+        #[arg(long, env = "BRAVE_API_KEY")]
+        brave_api_key: Option<String>,
     },
 }
 
@@ -517,6 +833,7 @@ async fn main() {
             embed_url,
             embed_model,
             system_prompt,
+            brave_api_key,
         } => {
             tracing::info!("Starting Pares Agens daemon");
             tracing::info!("Model: {model} @ {model_url}");
@@ -575,10 +892,16 @@ async fn main() {
             });
             let cerebellum = Cerebellum::new(CerebellumConfig::default());
 
+            let brave_api_key = brave_api_key.or_else(|| std::env::var("BRAVE_API_KEY").ok());
+
             // Register native tool procedures
             let mut procedure_registry = ProcedureRegistry::new();
             procedure_registry.register(Box::new(ReadFileProcedure));
             procedure_registry.register(Box::new(WriteFileProcedure));
+            procedure_registry.register(Box::new(EditFileProcedure));
+            procedure_registry.register(Box::new(ListDirectoryProcedure));
+            procedure_registry.register(Box::new(WebFetchProcedure));
+            procedure_registry.register(Box::new(WebSearchProcedure { brave_api_key }));
             procedure_registry.register(Box::new(RunCommandProcedure));
             let procedure_registry = Arc::new(procedure_registry);
 
