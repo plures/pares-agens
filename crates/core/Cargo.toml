@@ -30,6 +30,7 @@ tracing.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
 reqwest.workspace = true
+base64 = "0.22"
 subtle = "2"
 pares-agens-privacy = { path = "../privacy" }
 pares-agens-praxis = { path = "../praxis" }

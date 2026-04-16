@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
+use serde::{Deserialize, Serialize};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
@@ -20,6 +21,7 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use pares_agens_channels::adapter::ChannelAdapter;
 use pares_agens_channels::telegram::{TelegramAdapter, TelegramConfig};
 use pares_agens_core::agent::{Agent, Memory};
+use pares_agens_core::auth::copilot::{CopilotAuth, CopilotModelClient};
 use pares_agens_core::cerebellum::{Cerebellum, CerebellumConfig};
 use pares_agens_core::delegation::{broker::DelegationBroker, registry::AgentRegistry};
 use pares_agens_core::memory::{
@@ -51,6 +53,11 @@ struct Cli {
 struct RouterModelClient {
     router: Arc<ModelRouter>,
     model: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CopilotAuthCache {
+    oauth_token: String,
 }
 
 #[async_trait]
@@ -757,6 +764,10 @@ enum Commands {
         #[arg(long, env = "PARES_MODEL", default_value = "gpt-4o")]
         model: String,
 
+        /// Use GitHub Copilot device flow authentication.
+        #[arg(long)]
+        copilot: bool,
+
         /// Deep model name used for low-confidence escalation.
         #[arg(long, env = "PARES_DEEP_MODEL", default_value = "gpt-4.1")]
         deep_model: String,
@@ -828,6 +839,7 @@ async fn main() {
             telegram_token,
             model_url,
             model,
+            copilot,
             deep_model,
             deep_model_url,
             api_key,
@@ -837,7 +849,6 @@ async fn main() {
             brave_api_key,
         } => {
             tracing::info!("Starting Pares Agens daemon");
-            tracing::info!("Model: {model} @ {model_url}");
 
             let system_prompt = match build_system_prompt(system_prompt) {
                 Ok(prompt) => prompt,
@@ -847,18 +858,102 @@ async fn main() {
                 }
             };
 
-            // Set up model router
-            let provider_config = ProviderConfig::new(&model_url, api_key.clone());
-            let router_config = RouterConfig::single("default", provider_config);
-            let model_router = Arc::new(ModelRouter::new(router_config));
+            let mut model = model;
+            let mut deep_model = deep_model;
 
-            let deep_model_url = deep_model_url.unwrap_or_else(|| model_url.clone());
-            let deep_provider_config = ProviderConfig::new(&deep_model_url, api_key.clone());
-            let deep_router_config = RouterConfig::single("deep", deep_provider_config);
-            let deep_model_router = Arc::new(ModelRouter::new(deep_router_config));
+            if copilot {
+                if model == "gpt-4o" {
+                    model = "claude-sonnet-4.5".into();
+                }
+                if deep_model == "gpt-4.1" {
+                    deep_model = "claude-opus-4.6".into();
+                }
+                tracing::info!("Copilot auth enabled");
+                tracing::info!("Model: {model} (copilot)");
+            } else {
+                tracing::info!("Model: {model} @ {model_url}");
+            }
+
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+
+            let (model_client, deep_model_client): (Arc<dyn ModelClient>, Arc<dyn ModelClient>) =
+                if copilot {
+                    let auth_path = PathBuf::from(&home).join(".pares-agens/copilot-auth.json");
+                    let cached = std::fs::read_to_string(&auth_path)
+                        .ok()
+                        .and_then(|raw| serde_json::from_str::<CopilotAuthCache>(&raw).ok());
+
+                    let oauth_token = if let Some(cache) = cached {
+                        cache.oauth_token
+                    } else {
+                        let (device_code, user_code, verification_uri) =
+                            match CopilotAuth::device_flow_start().await {
+                                Ok(response) => response,
+                                Err(e) => {
+                                    tracing::error!("copilot device flow failed: {e}");
+                                    std::process::exit(1);
+                                }
+                            };
+
+                        println!(
+                            "Authorize Copilot: visit {verification_uri} and enter code {user_code}"
+                        );
+
+                        let oauth_token = match CopilotAuth::device_flow_poll(&device_code).await {
+                            Ok(token) => token,
+                            Err(e) => {
+                                tracing::error!("copilot device flow polling failed: {e}");
+                                std::process::exit(1);
+                            }
+                        };
+
+                        if let Some(parent) = auth_path.parent() {
+                            if let Err(e) = std::fs::create_dir_all(parent) {
+                                tracing::warn!("failed to create copilot auth dir: {e}");
+                            }
+                        }
+                        if let Ok(serialized) = serde_json::to_string_pretty(&CopilotAuthCache {
+                            oauth_token: oauth_token.clone(),
+                        }) {
+                            if let Err(e) = std::fs::write(&auth_path, serialized) {
+                                tracing::warn!("failed to persist copilot auth: {e}");
+                            }
+                        }
+
+                        oauth_token
+                    };
+
+                    let auth = CopilotAuth::new(oauth_token.clone());
+                    let deep_auth = CopilotAuth::new(oauth_token);
+
+                    (
+                        Arc::new(CopilotModelClient::new(auth, model.clone())),
+                        Arc::new(CopilotModelClient::new(deep_auth, deep_model.clone())),
+                    )
+                } else {
+                    // Set up model router
+                    let provider_config = ProviderConfig::new(&model_url, api_key.clone());
+                    let router_config = RouterConfig::single("default", provider_config);
+                    let model_router = Arc::new(ModelRouter::new(router_config));
+
+                    let deep_model_url = deep_model_url.unwrap_or_else(|| model_url.clone());
+                    let deep_provider_config = ProviderConfig::new(&deep_model_url, api_key.clone());
+                    let deep_router_config = RouterConfig::single("deep", deep_provider_config);
+                    let deep_model_router = Arc::new(ModelRouter::new(deep_router_config));
+
+                    (
+                        Arc::new(RouterModelClient {
+                            router: model_router.clone(),
+                            model: model.clone(),
+                        }) as Arc<dyn ModelClient>,
+                        Arc::new(RouterModelClient {
+                            router: deep_model_router.clone(),
+                            model: deep_model.clone(),
+                        }) as Arc<dyn ModelClient>,
+                    )
+                };
 
             // Set up PluresDB memory store + PluresLM (native)
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
             let memory_path = PathBuf::from(home).join(".pares-agens/memory");
             let store = match PluresDbStore::open_with_embeddings(&memory_path) {
                 Ok(store) => {
@@ -906,14 +1001,6 @@ async fn main() {
             procedure_registry.register(Box::new(RunCommandProcedure));
             let procedure_registry = Arc::new(procedure_registry);
 
-            let model_client: Arc<dyn ModelClient> = Arc::new(RouterModelClient {
-                router: model_router.clone(),
-                model: model.clone(),
-            });
-            let deep_model_client: Arc<dyn ModelClient> = Arc::new(RouterModelClient {
-                router: deep_model_router.clone(),
-                model: deep_model.clone(),
-            });
             let tool_dispatcher: Arc<dyn ToolDispatcher> = Arc::new(ProcedureToolDispatcher {
                 registry: Arc::clone(&procedure_registry),
             });

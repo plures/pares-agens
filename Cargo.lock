@@ -3932,6 +3932,7 @@ name = "pares-agens-core"
 version = "0.6.1"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "pares-agens-praxis",
  "pares-agens-privacy",
