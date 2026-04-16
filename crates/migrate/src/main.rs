@@ -863,9 +863,13 @@ async fn main() {
 
             if copilot {
                 if model == "gpt-4o" {
-                    model = "claude-sonnet-4.5".into();
+                    // Benchmark 2026-04-16: GPT-4.1 = 90% combined (GPQA+coding)
+                    // at 3.7s avg. Fastest frontier model on Copilot Enterprise.
+                    model = "gpt-4.1".into();
                 }
                 if deep_model == "gpt-4.1" {
+                    // Benchmark 2026-04-16: Opus 4.6 = only model scoring 100%
+                    // on BOTH GPQA Diamond AND coding. Worth the latency.
                     deep_model = "claude-opus-4.6".into();
                 }
                 tracing::info!("Copilot auth enabled");
@@ -978,10 +982,13 @@ async fn main() {
             };
 
             let plures_lm = Arc::new(PluresLm::new(
-                store as Arc<dyn pares_agens_core::memory::store::MemoryStore>,
+                Arc::clone(&store) as Arc<dyn pares_agens_core::memory::store::MemoryStore>,
                 embedder,
                 128_000,
             ));
+
+            // Keep a reference to the store for conversation turn persistence.
+            let turn_store: Arc<dyn pares_agens_core::memory::store::MemoryStore> = store;
 
             let memory = Arc::new(PluresMemory {
                 plures_lm: Arc::clone(&plures_lm),
@@ -1021,7 +1028,8 @@ async fn main() {
             )
             .with_model(model_client, tool_dispatcher, system_prompt)
             .with_deep_model(deep_model_client)
-            .with_delegation(delegation_broker));
+            .with_delegation(delegation_broker)
+            .with_turn_store(turn_store));
 
             // Set up Telegram adapter
             let config = TelegramConfig::new(telegram_token);

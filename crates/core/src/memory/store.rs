@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use pluresdb::{CrdtStore, MemoryStorage, SledStorage, StorageEngine};
 use tokio::sync::RwLock;
 
-use super::{entry::MemoryEntry, Error};
+use super::{entry::{ChatTurn, MemoryEntry}, Error};
 
 /// Backing store for [`super::PluresLm`].
 ///
@@ -21,6 +21,13 @@ pub trait MemoryStore: Send + Sync {
 
     /// Remove a memory entry by ID.  Returns `true` if the entry existed.
     async fn remove(&self, id: &str) -> Result<bool, Error>;
+
+    /// Persist a conversation turn.
+    async fn insert_turn(&self, turn: ChatTurn) -> Result<(), Error>;
+
+    /// Return the most recent `limit` conversation turns for `channel`,
+    /// ordered oldest-first (chronological).
+    async fn recent_turns(&self, channel: &str, limit: usize) -> Result<Vec<ChatTurn>, Error>;
 }
 
 /// Thread-safe in-memory store backed by a `RwLock<Vec<MemoryEntry>>`.
@@ -28,6 +35,7 @@ pub trait MemoryStore: Send + Sync {
 /// Suitable for tests and single-process deployments without PluresDB.
 pub struct InMemoryStore {
     entries: RwLock<Vec<MemoryEntry>>,
+    turns: RwLock<Vec<ChatTurn>>,
 }
 
 impl InMemoryStore {
@@ -35,6 +43,7 @@ impl InMemoryStore {
     pub fn new() -> Self {
         Self {
             entries: RwLock::new(Vec::new()),
+            turns: RwLock::new(Vec::new()),
         }
     }
 }
@@ -62,6 +71,23 @@ impl MemoryStore for InMemoryStore {
         entries.retain(|e| e.id != id);
         Ok(entries.len() < before)
     }
+
+    async fn insert_turn(&self, turn: ChatTurn) -> Result<(), Error> {
+        self.turns.write().await.push(turn);
+        Ok(())
+    }
+
+    async fn recent_turns(&self, channel: &str, limit: usize) -> Result<Vec<ChatTurn>, Error> {
+        let turns = self.turns.read().await;
+        let mut channel_turns: Vec<ChatTurn> = turns
+            .iter()
+            .filter(|t| t.channel == channel)
+            .cloned()
+            .collect();
+        channel_turns.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        let start = channel_turns.len().saturating_sub(limit);
+        Ok(channel_turns[start..].to_vec())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -70,6 +96,9 @@ impl MemoryStore for InMemoryStore {
 
 /// The PluresDB actor ID used for all write operations.
 const ACTOR: &str = "pares-agens";
+
+/// The PluresDB key prefix for conversation turn entries.
+const TURN_PREFIX: &str = "turn:";
 
 /// A [`MemoryStore`] backed by a PluresDB [`CrdtStore`].
 ///
@@ -184,9 +213,13 @@ impl MemoryStore for PluresDbStore {
         let records = self.store.list();
         let mut entries = Vec::with_capacity(records.len());
         for record in records {
-            let entry = serde_json::from_value::<MemoryEntry>(record.data)
-                .map_err(|e| Error::Store(format!("deserialise failed: {e}")))?;
-            entries.push(entry);
+            // Skip conversation turn entries (prefixed with "turn:").
+            if record.id.starts_with(TURN_PREFIX) {
+                continue;
+            }
+            if let Ok(entry) = serde_json::from_value::<MemoryEntry>(record.data) {
+                entries.push(entry);
+            }
         }
         Ok(entries)
     }
@@ -197,6 +230,28 @@ impl MemoryStore for PluresDbStore {
             // StoreError::NotFound is the only variant — entry did not exist.
             Err(_) => Ok(false),
         }
+    }
+
+    async fn insert_turn(&self, turn: ChatTurn) -> Result<(), Error> {
+        let key = format!("{TURN_PREFIX}{}", turn.id);
+        let data = serde_json::to_value(&turn)
+            .map_err(|e| Error::Store(format!("serialise turn failed: {e}")))?;
+        // Turns don't need embeddings — they're retrieved by channel+time, not similarity.
+        self.store.put(key, ACTOR, data);
+        Ok(())
+    }
+
+    async fn recent_turns(&self, channel: &str, limit: usize) -> Result<Vec<ChatTurn>, Error> {
+        let records = self.store.list();
+        let mut turns: Vec<ChatTurn> = records
+            .into_iter()
+            .filter(|r| r.id.starts_with(TURN_PREFIX))
+            .filter_map(|r| serde_json::from_value::<ChatTurn>(r.data).ok())
+            .filter(|t| t.channel == channel)
+            .collect();
+        turns.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        let start = turns.len().saturating_sub(limit);
+        Ok(turns[start..].to_vec())
     }
 }
 

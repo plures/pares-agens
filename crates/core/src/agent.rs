@@ -25,6 +25,7 @@ use crate::delegation::aggregator::ResultAggregator;
 use crate::delegation::broker::DelegationBroker;
 use crate::event::Event;
 use crate::memory::entry::Exchange;
+use crate::memory::store::MemoryStore;
 use crate::memory::{passes_quality_gate, PluresLm};
 use crate::model::{ChatMessage, ChatOptions, ModelClient, ToolDispatcher};
 use crate::procedure::ProcedureRegistry;
@@ -136,6 +137,9 @@ pub struct Agent {
     system_prompt: String,
     /// Per-channel conversation history (last 20 messages).
     conversation_history: Mutex<HashMap<String, Vec<ChatMessage>>>,
+    /// Optional persistent turn store (PluresDB). When `Some`, conversation
+    /// turns are persisted across restarts. Falls back to in-memory only.
+    turn_store: Option<Arc<dyn MemoryStore>>,
     /// Optional delegation broker for decomposed tasks.
     delegation_broker: Option<DelegationBroker>,
 }
@@ -153,6 +157,7 @@ impl Agent {
             tool_dispatcher: None,
             system_prompt: String::new(),
             conversation_history: Mutex::new(HashMap::new()),
+            turn_store: None,
             delegation_broker: None,
         }
     }
@@ -178,6 +183,7 @@ impl Agent {
             tool_dispatcher: None,
             system_prompt: String::new(),
             conversation_history: Mutex::new(HashMap::new()),
+            turn_store: None,
             delegation_broker: None,
         }
     }
@@ -204,6 +210,16 @@ impl Agent {
     /// Attach a delegation broker for decomposed tasks.
     pub fn with_delegation(mut self, broker: DelegationBroker) -> Self {
         self.delegation_broker = Some(broker);
+        self
+    }
+
+    /// Attach a persistent turn store (PluresDB) for conversation history.
+    ///
+    /// When set, every user→assistant exchange is persisted as a [`ChatTurn`]
+    /// and history survives process restarts.  On first message in a channel
+    /// the agent hydrates the in-memory cache from PluresDB.
+    pub fn with_turn_store(mut self, store: Arc<dyn MemoryStore>) -> Self {
+        self.turn_store = Some(store);
         self
     }
 
@@ -316,10 +332,7 @@ impl Agent {
             }
         };
 
-        let history_snapshot = {
-            let guard = self.conversation_history.lock().unwrap();
-            guard.get(channel).cloned().unwrap_or_default()
-        };
+        let history_snapshot = self.load_history(channel).await;
 
         let base_system_text = self.build_system_prompt(learned_context, false);
         let options = ChatOptions {
@@ -384,15 +397,11 @@ impl Agent {
 
         info!(input_len = content.len(), output_len = reply.len(), "LLM response generated");
 
-        let start = 1 + history_snapshot.len();
+        // Persist new turn messages to PluresDB and update in-memory cache.
+        let start = 1 + history_snapshot.len(); // skip system + existing history
         if messages.len() > start {
-            let mut guard = self.conversation_history.lock().unwrap();
-            let history = guard.entry(channel.to_string()).or_default();
-            history.extend(messages[start..].iter().cloned());
-            if history.len() > 20 {
-                let drain = history.len() - 20;
-                history.drain(0..drain);
-            }
+            let new_messages: Vec<ChatMessage> = messages[start..].to_vec();
+            self.persist_turn(channel, &new_messages).await;
         }
 
         self.capture_exchange(content, &reply).await;
@@ -607,6 +616,92 @@ impl Agent {
             .map(|lp| lp.exp())
             .fold(1.0_f64, |acc, p| acc.min(p));
         avg_logprob < -1.0 || min_prob < 0.6
+    }
+
+    // ── Conversation history persistence ─────────────────────────────────
+
+    /// Maximum number of messages to keep in the LLM context window.
+    const HISTORY_WINDOW: usize = 20;
+
+    /// Load conversation history for `channel`.
+    ///
+    /// If a persistent `turn_store` is configured, hydrates from PluresDB on
+    /// the first call for each channel and caches the result.  Subsequent
+    /// calls in the same process lifetime use the in-memory cache (kept in
+    /// sync by [`persist_turn`]).
+    async fn load_history(&self, channel: &str) -> Vec<ChatMessage> {
+        // Fast path: check in-memory cache first.
+        {
+            let guard = self.conversation_history.lock().unwrap();
+            if let Some(cached) = guard.get(channel) {
+                if !cached.is_empty() {
+                    return cached.clone();
+                }
+            }
+        }
+
+        // Slow path: hydrate from PluresDB if available.
+        if let Some(store) = &self.turn_store {
+            match store.recent_turns(channel, Self::HISTORY_WINDOW).await {
+                Ok(turns) if !turns.is_empty() => {
+                    let mut messages: Vec<ChatMessage> = turns
+                        .into_iter()
+                        .flat_map(|t| t.messages)
+                        .collect();
+                    // Trim to window size.
+                    if messages.len() > Self::HISTORY_WINDOW {
+                        let drain = messages.len() - Self::HISTORY_WINDOW;
+                        messages.drain(0..drain);
+                    }
+                    info!(
+                        channel,
+                        messages = messages.len(),
+                        "hydrated conversation history from PluresDB"
+                    );
+                    // Cache for future calls.
+                    let mut guard = self.conversation_history.lock().unwrap();
+                    guard.insert(channel.to_string(), messages.clone());
+                    return messages;
+                }
+                Ok(_) => {} // no turns yet
+                Err(e) => {
+                    warn!(error = %e, channel, "failed to load turns from PluresDB, using empty history");
+                }
+            }
+        }
+
+        Vec::new()
+    }
+
+    /// Persist a set of new messages as a conversation turn.
+    ///
+    /// Updates both the in-memory cache and (if configured) the persistent
+    /// PluresDB turn store.
+    async fn persist_turn(&self, channel: &str, new_messages: &[ChatMessage]) {
+        // Update in-memory cache.
+        {
+            let mut guard = self.conversation_history.lock().unwrap();
+            let history = guard.entry(channel.to_string()).or_default();
+            history.extend(new_messages.iter().cloned());
+            if history.len() > Self::HISTORY_WINDOW {
+                let drain = history.len() - Self::HISTORY_WINDOW;
+                history.drain(0..drain);
+            }
+        }
+
+        // Persist to PluresDB if available.
+        if let Some(store) = &self.turn_store {
+            use crate::memory::entry::ChatTurn;
+            let turn = ChatTurn {
+                id: uuid::Uuid::new_v4().to_string(),
+                channel: channel.to_string(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                messages: new_messages.to_vec(),
+            };
+            if let Err(e) = store.insert_turn(turn).await {
+                warn!(error = %e, channel, "failed to persist conversation turn");
+            }
+        }
     }
 
     async fn dispatch_procedures(&self, event: &Event) -> Option<Event> {

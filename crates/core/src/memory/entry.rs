@@ -87,3 +87,22 @@ pub struct Exchange {
     /// The assistant's reply.
     pub assistant: String,
 }
+
+/// A persisted conversation turn stored in PluresDB.
+///
+/// Each turn captures a single user→assistant exchange along with tool
+/// interactions, keyed by channel so multi-channel history stays separate.
+/// Unlike `MemoryEntry` (which stores distilled knowledge), `ChatTurn`
+/// stores the raw conversation for context-window hydration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatTurn {
+    /// Unique turn identifier (UUID v4).
+    pub id: String,
+    /// Channel identifier (e.g. `"telegram"`, `"cli"`).
+    pub channel: String,
+    /// ISO 8601 timestamp of this turn.
+    pub timestamp: String,
+    /// The ordered messages that make up this turn (user, assistant, tool
+    /// calls/results — everything the model loop produced).
+    pub messages: Vec<crate::model::ChatMessage>,
+}
