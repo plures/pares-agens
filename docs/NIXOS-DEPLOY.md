@@ -30,22 +30,19 @@ Pares Agens provides a NixOS flake with a ready-to-use NixOS module.
 
 ### 3. Handle the BSL-1.1 License
 
-Pares Agens is licensed under [BSL-1.1](https://mariadb.com/bsl11/) (Business Source License 1.1). Nix treats this as an **unfree** license. You must explicitly allow it.
+Pares Agens is licensed under [BSL-1.1](https://mariadb.com/bsl11/). The flake handles this automatically — `nix build` and `nix run` work out of the box.
 
-**Option A — Allow all unfree packages (simplest):**
+For the **NixOS module**, the package builds via an overlay using your system's `pkgs`. You need `allowUnfree` set where your nixpkgs instance is created:
 
-If you're using **flake-parts**, set `nixpkgsConfig` in your host definition:
+**flake-parts** (set in your host definition):
 
 ```nix
-# hosts/myhost/host.nix
-{
-  nixpkgsConfig = {
-    allowUnfree = true;
-  };
-}
+nixpkgsConfig = {
+  allowUnfree = true;
+};
 ```
 
-If you're using a **standalone flake** (no flake-parts), set it where you import nixpkgs:
+**Standalone flake** (set where you import nixpkgs):
 
 ```nix
 pkgs = import nixpkgs {
@@ -54,22 +51,19 @@ pkgs = import nixpkgs {
 };
 ```
 
-**Option B — Allow only pares-agens:**
+**Don't forget the overlay** — add it where you define overlays for your host:
 
 ```nix
-# flake-parts host config:
-nixpkgsConfig = {
-  allowUnfreePredicate = pkg:
-    builtins.elem (nixpkgs.lib.getName pkg) [ "pares-agens" ];
-};
+overlays = [
+  inputs.pares-agens.overlays.default
+];
 ```
 
-> **⚠️ Do NOT use `nixpkgs.config.allowUnfree = true;` in `configuration.nix`** when your flake creates the nixpkgs instance externally (e.g. flake-parts). This will cause:
+> **⚠️ Common mistake:** Do NOT use `nixpkgs.config.allowUnfree = true;` in `configuration.nix` if your flake creates the nixpkgs instance externally (e.g. flake-parts). This will error with:
 > ```
 > error: Your system configures nixpkgs with an externally created instance.
-> nixpkgs.config options should be passed when creating the instance instead.
 > ```
-> Use `nixpkgsConfig` in your host definition instead.
+> Set `allowUnfree` where the nixpkgs instance is created, not in NixOS modules.
 
 ### 4. Enable the service
 
