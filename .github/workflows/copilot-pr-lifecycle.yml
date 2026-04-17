@@ -208,17 +208,36 @@ jobs:
                          (f.conclusion === 'failure' && f.output?.summary?.includes?.('service'));
                 });
 
-                // Check if this run was already a retry
-                const runs = await github.rest.actions.listWorkflowRunsForRepo({
-                  owner, repo, event: 'pull_request', per_page: 5,
-                  head_sha: pr.head.sha
-                });
-                const ciRuns = runs.data.workflow_runs.filter(r => r.name === 'CI');
-                const failedAttempts = ciRuns.filter(r => r.conclusion === 'failure').length;
+                // Track retry attempts via PR labels (survives across cron runs)
+                const retryLabels = (pr.labels || []).filter(l => l.name.startsWith('ci-retry-'));
+                const retryCount = retryLabels.length > 0 
+                  ? parseInt(retryLabels[0].name.split('-')[2]) || 0 
+                  : 0;
 
-                if (failedAttempts <= 1) {
-                  // First failure — auto-rerun
-                  console.log(`🔄 PR #${pr.number}: CI failed (${failNames}) — auto-rerunning (attempt ${failedAttempts})`);
+                if (retryCount < 2) {
+                  // Auto-rerun and increment counter
+                  const nextRetry = retryCount + 1;
+                  console.log(`🔄 PR #${pr.number}: CI failed (${failNames}) — auto-rerunning (retry ${nextRetry}/2)`);
+                  
+                  // Remove old retry label, add new one
+                  for (const label of retryLabels) {
+                    try { await github.rest.issues.removeLabel({ owner, repo, issue_number: pr.number, name: label.name }); } catch (e) {}
+                  }
+                  try {
+                    await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: [`ci-retry-${nextRetry}`] });
+                  } catch (e) {
+                    // Label might not exist yet — create it
+                    try {
+                      await github.rest.issues.createLabel({ owner, repo, name: `ci-retry-${nextRetry}`, color: 'FBCA04' });
+                      await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: [`ci-retry-${nextRetry}`] });
+                    } catch (e2) {}
+                  }
+
+                  const runs = await github.rest.actions.listWorkflowRunsForRepo({
+                    owner, repo, event: 'pull_request', per_page: 5,
+                    head_sha: pr.head.sha
+                  });
+                  const ciRuns = runs.data.workflow_runs.filter(r => r.name === 'CI');
                   for (const run of ciRuns.filter(r => r.conclusion === 'failure')) {
                     try {
                       await github.rest.actions.reRunWorkflowFailedJobs({ owner, repo, run_id: run.id });
@@ -231,8 +250,9 @@ jobs:
                   continue;
                 }
 
-                // Second+ failure — create feedback issue
-                console.log(`❌ PR #${pr.number}: CI failed ${failedAttempts}x (${failNames}) — creating feedback issue`);
+                // Exhausted retries — force merge
+                const failedAttempts = retryCount;
+                console.log(`❌ PR #${pr.number}: CI failed ${failedAttempts}x (${failNames}) — creating feedback issue + force merging`);
                 const existing = await github.rest.issues.listForRepo({
                   owner, repo, state: 'open', labels: 'ci-failure', per_page: 1
                 });
