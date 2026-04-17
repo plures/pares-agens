@@ -28,6 +28,10 @@
         nativeBuildInputs = with pkgs; [ pkg-config cmake ];
         buildInputs = with pkgs; [ openssl stdenv.cc.cc.lib ];
 
+        # ort-sys downloads ONNX Runtime at build time — allow network in sandbox
+        __noChroot = true;
+
+        # fastembed downloads model at first run, not build time
         FASTEMBED_CACHE_PATH = "/tmp/fastembed-cache";
 
         meta = {
