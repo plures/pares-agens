@@ -352,11 +352,12 @@ jobs:
 
             const skipPrefixes = ['[cross-repo]', '[praxis-health]'];
 
-            // Priority queue: doc debt → bugs → critical → improvement → strategic → milestoned
+            // Priority queue: CI fixes FIRST → bugs → critical → doc debt → improvement → strategic → milestoned
             const priorities = [
-              { label: '📝 Doc debt', filter: i => i.labels.some(l => l.name === 'documentation'), type: 'Task' },
-              { label: '🐛 Bug fix', filter: i => i.labels.some(l => l.name === 'bug' || l.name === 'ci-failure'), type: 'Bug' },
+              { label: '🔧 CI fix', filter: i => i.labels.some(l => l.name === 'ci-failure'), type: 'Bug' },
+              { label: '🐛 Bug fix', filter: i => i.labels.some(l => l.name === 'bug') && !i.labels.some(l => l.name === 'ci-failure'), type: 'Bug' },
               { label: '🔴 Level-critical', filter: i => i.labels.some(l => l.name === 'critical') && i.labels.some(l => l.name === 'continuous-improvement'), type: 'Bug' },
+              { label: '📝 Doc debt', filter: i => i.labels.some(l => l.name === 'documentation'), type: 'Task' },
               { label: '📈 Improvement', filter: i => i.labels.some(l => l.name === 'continuous-improvement') && !i.labels.some(l => l.name === 'critical') && !skipPrefixes.some(p => i.title.includes(p)), type: 'Task' },
               { label: '🎯 Strategic', filter: i => i.labels.some(l => l.name === 'strategic-gate') && !skipPrefixes.some(p => i.title.includes(p)), type: 'Task' },
             ];
