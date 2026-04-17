@@ -10,7 +10,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build release binary
+        env:
+          SCCACHE_DIR: /tmp/sccache
+          RUSTC_WRAPPER: ""
         run: |
+          # Disable sccache for deploy builds (NixOS read-only store issue)
+          unset RUSTC_WRAPPER
           cargo build --release -p pares-agens
           ls -lh target/release/pares-agens
 
