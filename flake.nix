@@ -12,6 +12,30 @@
 
   outputs = { self, nixpkgs, flake-utils, rust-overlay }:
     let
+      # Prefetch ONNX Runtime static library for ort-sys.
+      # ort-sys downloads this at build time from cdn.pyke.io in a custom lzma2
+      # tar format. We prefetch + extract it so the Nix sandbox stays pure.
+      onnxruntimeLib = { pkgs }: pkgs.stdenvNoCC.mkDerivation {
+        name = "onnxruntime-prebuilt-1.23.2";
+        src = pkgs.fetchurl {
+          url = "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.23.2/x86_64-unknown-linux-gnu.tar.lzma2";
+          hash = "sha256-jFfQWaqu5AeBKlaY1nBseeCQrWnhoUIEMJ6ALcu6o18=";
+        };
+        nativeBuildInputs = [ pkgs.python3 ];
+        dontUnpack = true;
+        installPhase = ''
+          mkdir -p $out/lib
+          python3 -c "
+import lzma, tarfile, io, sys, os
+with open(sys.argv[1], 'rb') as f:
+    raw = f.read()
+data = lzma.decompress(raw, format=lzma.FORMAT_RAW, filters=[{'id': lzma.FILTER_LZMA2, 'dict_size': 1 << 26}])
+tar = tarfile.open(fileobj=io.BytesIO(data))
+tar.extractall(os.environ['out'] + '/lib')
+" $src
+        '';
+      };
+
       # Package builder — reusable across overlay and standalone packages
       mkPkg = pkgs: pkgs.rustPlatform.buildRustPackage {
         pname = "pares-agens";
@@ -28,11 +52,8 @@
         nativeBuildInputs = with pkgs; [ pkg-config cmake ];
         buildInputs = with pkgs; [ openssl stdenv.cc.cc.lib ];
 
-        # ort-sys 2.0.0-rc.11 downloads ONNX Runtime prebuilt binaries at build
-        # time from cdn.pyke.io using a custom lzma2 archive format.
-        # TODO: prefetch as fixed-output derivation once ort-sys supports
-        # ORT_LIB_LOCATION or switches to a standard archive format.
-        __noChroot = true;
+        # Point ort-sys to prefetched ONNX Runtime (pure sandbox, no network)
+        ORT_LIB_LOCATION = "${onnxruntimeLib { inherit pkgs; }}/lib";
 
         # fastembed downloads ONNX model at first run, not build time
         FASTEMBED_CACHE_PATH = "/tmp/fastembed-cache";
