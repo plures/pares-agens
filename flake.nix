@@ -28,10 +28,13 @@
         nativeBuildInputs = with pkgs; [ pkg-config cmake ];
         buildInputs = with pkgs; [ openssl stdenv.cc.cc.lib ];
 
-        # ort-sys downloads ONNX Runtime at build time — allow network in sandbox
+        # ort-sys 2.0.0-rc.11 downloads ONNX Runtime prebuilt binaries at build
+        # time from cdn.pyke.io using a custom lzma2 archive format.
+        # TODO: prefetch as fixed-output derivation once ort-sys supports
+        # ORT_LIB_LOCATION or switches to a standard archive format.
         __noChroot = true;
 
-        # fastembed downloads model at first run, not build time
+        # fastembed downloads ONNX model at first run, not build time
         FASTEMBED_CACHE_PATH = "/tmp/fastembed-cache";
 
         meta = {
