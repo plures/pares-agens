@@ -50,7 +50,7 @@
           meta = {
             description = "Native AI agent framework — 3-consciousness architecture on PluresDB";
             homepage = "https://github.com/plures/pares-agens";
-            license = pkgs.lib.licenses.free;
+            license = pkgs.lib.licenses.bsl11;
             mainProgram = "pares-agens";
           };
         };
@@ -150,6 +150,10 @@
           };
 
           config = lib.mkIf cfg.enable {
+            # Accept BSL-1.1 license for pares-agens
+            nixpkgs.config.allowUnfreePredicate = pkg:
+              builtins.elem (lib.getName pkg) [ "pares-agens" ];
+
             users.users.${cfg.user} = lib.mkIf cfg.createUser {
               isSystemUser = true;
               group = cfg.group;
