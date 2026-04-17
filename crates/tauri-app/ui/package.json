@@ -14,6 +14,7 @@
     "vite": "^7.0.0"
   },
   "dependencies": {
-    "@plures/design-dojo": "^0.10.10"
+    "@plures/design-dojo": "^0.10.10",
+    "@plures/unum": "^0.4.0"
   }
 }

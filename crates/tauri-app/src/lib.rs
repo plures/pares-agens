@@ -153,7 +153,7 @@ impl ToolDispatcher for McpToolDispatcher {
             .iter()
             .map(|(_, tool)| ToolDefinition {
                 name: tool.name.clone(),
-                description: tool.description.clone(),
+                description: tool.description.clone().unwrap_or_default(),
                 parameters: serde_json::to_value(&tool.input_schema).unwrap_or_default(),
             })
             .collect()
@@ -239,6 +239,7 @@ pub fn run() {
             // ── Shared settings & model router ────────────────────────────
             let default_settings = Settings::default();
             let router_config = build_router_config(&default_settings);
+            let system_prompt = default_settings.system_prompt.clone();
             let settings: Arc<Mutex<Settings>> = Arc::new(Mutex::new(default_settings));
             let model_router: Arc<RwLock<ModelRouter>> =
                 Arc::new(RwLock::new(ModelRouter::new(router_config)));
@@ -259,8 +260,6 @@ pub fn run() {
                 Box::new(MockEmbedder),
                 128_000,
             ));
-
-            let system_prompt = default_settings.system_prompt.clone();
 
             let model_client = Arc::new(AppModelClient {
                 router: Arc::clone(&model_router),
@@ -375,6 +374,7 @@ pub fn run() {
             commands::get_mcp_openai_tools,
             commands::get_license_status,
             commands::activate_license,
+            commands::get_conversation_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Pares Agens");

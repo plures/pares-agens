@@ -375,3 +375,44 @@ pub async fn activate_license(
     *state.license.lock().await = new_license;
     Ok(status)
 }
+
+/// Return recent conversation turns for the chat UI.
+///
+/// Reads persisted `ChatTurn` entries from PluresDB so the chat view can
+/// hydrate conversation history on load. Returns up to `limit` most recent
+/// turns (default 20), each containing the full message array.
+#[tauri::command]
+pub async fn get_conversation_history(
+    channel: Option<String>,
+    limit: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let channel = channel.unwrap_or_else(|| "desktop".to_string());
+    let limit = limit.unwrap_or(20);
+
+    let turns = state
+        .memory_store
+        .recent_turns(&channel, limit)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let result: Vec<serde_json::Value> = turns
+        .into_iter()
+        .flat_map(|t| {
+            let ts = t.timestamp.clone();
+            t.messages.into_iter().filter_map(move |m| {
+                // Skip system messages and tool results from the UI view.
+                if m.role == "system" || m.role == "tool" {
+                    return None;
+                }
+                Some(serde_json::json!({
+                    "role": if m.role == "assistant" { "agent" } else { &m.role },
+                    "content": m.content,
+                    "time": ts,
+                }))
+            })
+        })
+        .collect();
+
+    Ok(result)
+}
