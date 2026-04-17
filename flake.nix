@@ -50,12 +50,7 @@
           meta = {
             description = "Native AI agent framework — 3-consciousness architecture on PluresDB";
             homepage = "https://github.com/plures/pares-agens";
-            license = {
-              spdxId = "BSL-1.1";
-              fullName = "Business Source License 1.1";
-              url = "https://mariadb.com/bsl11/";
-              free = true;  # BSL converts to open source after change date
-            };
+            license = pkgs.lib.licenses.bsl11;
             mainProgram = "pares-agens";
           };
         };
