@@ -136,6 +136,12 @@
               description = "Path to a system prompt file.";
             };
 
+            createUser = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = "Whether to create the service user. Set false when using an existing user (e.g. kbristol).";
+            };
+
             extraFlags = lib.mkOption {
               type = lib.types.listOf lib.types.str;
               default = [];
@@ -144,14 +150,14 @@
           };
 
           config = lib.mkIf cfg.enable {
-            users.users.${cfg.user} = {
+            users.users.${cfg.user} = lib.mkIf cfg.createUser {
               isSystemUser = true;
               group = cfg.group;
               home = cfg.dataDir;
               createHome = true;
             };
 
-            users.groups.${cfg.group} = {};
+            users.groups.${cfg.group} = lib.mkIf cfg.createUser {};
 
             systemd.services.pares-agens = {
               description = "Pares Agens — AI Agent Daemon";
