@@ -926,7 +926,7 @@ impl RedactionMap {
 
         // Sort by placeholder length descending to avoid partial replacements.
         let mut sorted: Vec<&(String, String)> = self.entries.iter().collect();
-        sorted.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
+        sorted.sort_by_key(|entry| std::cmp::Reverse(entry.0.len()));
 
         let mut result = text.to_string();
         for (placeholder, original) in &sorted {
