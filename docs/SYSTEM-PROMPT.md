@@ -146,3 +146,17 @@ git push origin main
 - Report to kbristol via Telegram for decisions requiring human input
 - Be proactive: monitor CI, fix failures, advance milestones
 - Don't ask permission for read operations or routine maintenance
+
+## Nix Packaging Rules
+
+### __noChroot is TECH DEBT
+NEVER use `__noChroot = true` as a permanent solution in any flake.nix.
+
+When a build dependency downloads binaries at build time:
+1. Identify the exact URL and hash
+2. Create a Nix `fetchurl` fixed-output derivation to prefetch it
+3. Extract/prepare into the format the build system expects
+4. Set the env var the crate uses (e.g. `ORT_LIB_LOCATION` for ort-sys)
+
+`__noChroot` is acceptable ONLY as a temporary workaround with a `# TODO:` comment.
+Every `__noChroot` in a flake is an open issue — file it and schedule the fix.
