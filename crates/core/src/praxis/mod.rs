@@ -35,7 +35,8 @@ pub mod ledger;
 pub mod pluresdb_gate;
 
 pub use constraints::{
-    TaskSizeConstraint, TaskSizeViolation, MAX_DESCRIPTION_WORD_COUNT, MAX_OUTPUT_CHARS,
+    AuthorizationGate, TaskSizeConstraint, TaskSizeViolation, MAX_DESCRIPTION_WORD_COUNT,
+    MAX_OUTPUT_CHARS,
 };
 pub use guidance::{AnalysisEvent, GuidanceCategory, GuidanceEntry, GuidanceService, SourceSpan};
 pub use ledger::{
