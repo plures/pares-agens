@@ -1,0 +1,66 @@
+name: Deploy to Praxisbot
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, Linux, X64, rust]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build release binary
+        run: |
+          cargo build --release -p pares-agens
+          ls -lh target/release/pares-agens
+
+      - name: Install binary
+        run: |
+          sudo mkdir -p /opt/pares-agens
+          sudo cp target/release/pares-agens /opt/pares-agens/pares-agens
+          sudo chmod +x /opt/pares-agens/pares-agens
+
+      - name: Write systemd service
+        run: |
+          sudo tee /etc/systemd/system/pares-agens.service > /dev/null << 'EOF'
+          [Unit]
+          Description=Pares Agens — AI Agent Daemon
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          ExecStart=/opt/pares-agens/pares-agens serve --copilot --telegram-token %TELEGRAM_TOKEN% --brave-api-key %BRAVE_KEY%
+          Environment=RUST_LOG=info
+          Restart=on-failure
+          RestartSec=10
+          WorkingDirectory=/opt/pares-agens
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+
+          # Substitute secrets into the service file
+          sudo sed -i "s|%TELEGRAM_TOKEN%|${{ secrets.PARES_TELEGRAM_TOKEN }}|g" /etc/systemd/system/pares-agens.service
+          sudo sed -i "s|%BRAVE_KEY%|${{ secrets.BRAVE_API_KEY }}|g" /etc/systemd/system/pares-agens.service
+
+      - name: Enable and start service
+        run: |
+          sudo systemctl daemon-reload
+          sudo systemctl enable pares-agens
+          sudo systemctl restart pares-agens
+          sleep 8
+          sudo systemctl status pares-agens --no-pager || true
+          echo "=== Recent logs ==="
+          sudo journalctl -u pares-agens -n 20 --no-pager || true
+
+      - name: Verify bot is responding
+        run: |
+          # Check process is alive
+          if pgrep -f "pares-agens serve" > /dev/null; then
+            echo "✅ pares-agens is running"
+          else
+            echo "❌ pares-agens NOT running"
+            sudo journalctl -u pares-agens -n 50 --no-pager
+            exit 1
+          fi
