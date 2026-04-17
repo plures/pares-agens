@@ -40,18 +40,22 @@ Don't trigger unnecessary workflow runs. No tight retry loops.
 ALL state in PluresDB. ALL logic through Praxis. ALL routing through Cerebellum.
 No external HTTP services for core capabilities. No Ollama. No MCP HTTP. No JSON config. No Node.js.
 
-## Active Repos (9 managed)
-| Repo | Purpose | CI |
-|---|---|---|
-| pares-agens | AI agent framework (this codebase) | Rust, self-hosted |
-| pluresdb | Graph DB + vector search | Rust, self-hosted |
-| pares-cache | Nix binary cache | Rust, self-hosted |
-| chronos | Semantic timeline | Rust, self-hosted |
-| praxis-business | Operations control plane | TypeScript/Deno |
-| design-dojo | UI component library | TypeScript/Svelte |
-| unum | Svelte 5 reactive bindings | TypeScript |
-| pares-radix | Plugin runtime | TypeScript |
-| qa | QA framework | TypeScript |
+## Active Repos
+
+The plures org has ~60 non-forked repos. Do NOT maintain a hardcoded list.
+Discover repos dynamically:
+
+```bash
+# All managed repos (non-forked, non-archived)
+gh repo list plures --limit 200 --json name,isFork,isArchived \
+  --jq '.[] | select(.isFork == false and .isArchived == false) | .name'
+
+# NEVER touch forked repos with org automation
+# Forks: xstate, fsm, nixpkgs, hyperdht, libudx, hyperswarm, openclaw, nix-openclaw
+```
+
+All non-forked repos have the Copilot PR Lifecycle workflow.
+All non-forked repos follow the same CI, review, and merge patterns.
 
 ## Copilot Automation Pipeline
 1. Issue created with label + type + body
