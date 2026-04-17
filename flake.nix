@@ -177,10 +177,10 @@
                 WorkingDirectory = cfg.dataDir;
                 Restart = "on-failure";
                 RestartSec = 10;
-                # Hardening
-                NoNewPrivileges = true;
-                ProtectSystem = "strict";
-                ProtectHome = true;
+                # Hardening (relaxed when running as existing user)
+                NoNewPrivileges = lib.mkIf cfg.createUser true;
+                ProtectSystem = lib.mkIf cfg.createUser "strict";
+                ProtectHome = lib.mkIf cfg.createUser true;
                 ReadWritePaths = [ cfg.dataDir ];
                 PrivateTmp = true;
               };

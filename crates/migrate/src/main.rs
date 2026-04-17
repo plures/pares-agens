@@ -720,13 +720,24 @@ fn tool_definitions() -> Vec<ToolDefinition> {
 }
 
 fn build_system_prompt(path: Option<PathBuf>) -> Result<String, String> {
-    let base = if let Some(path) = path {
-        std::fs::read_to_string(&path)
-            .map_err(|e| format!("failed to read system prompt {}: {e}", path.display()))?
-    } else {
-        "You are Praxis, an AI agent built on the Pares Agens framework. You are helpful, concise, and knowledgeable about software engineering.".to_string()
-    };
-    Ok(base)
+    // Explicit path takes priority.
+    if let Some(path) = path {
+        return std::fs::read_to_string(&path)
+            .map_err(|e| format!("failed to read system prompt {}: {e}", path.display()));
+    }
+
+    // Auto-discover: check $HOME/.pares-agens/SYSTEM-PROMPT.md
+    if let Ok(home) = std::env::var("HOME") {
+        let home_prompt = PathBuf::from(&home).join(".pares-agens/SYSTEM-PROMPT.md");
+        if home_prompt.exists() {
+            tracing::info!("Loading system prompt from {}", home_prompt.display());
+            return std::fs::read_to_string(&home_prompt)
+                .map_err(|e| format!("failed to read {}: {e}", home_prompt.display()));
+        }
+    }
+
+    // Built-in fallback
+    Ok("You are Pares Agens, an AI agent built on the plures technology stack. Be direct, use tools proactively, and push commits without asking.".to_string())
 }
 
 #[derive(Debug, Subcommand)]
