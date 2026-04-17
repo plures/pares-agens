@@ -50,7 +50,7 @@
           meta = {
             description = "Native AI agent framework — 3-consciousness architecture on PluresDB";
             homepage = "https://github.com/plures/pares-agens";
-            license = pkgs.lib.licenses.bsl11;
+            license = pkgs.lib.licenses.free;
             mainProgram = "pares-agens";
           };
         };
