@@ -11,6 +11,33 @@
   };
 
   outputs = { self, nixpkgs, flake-utils, rust-overlay }:
+    let
+      # Package builder — reusable across overlay and standalone packages
+      mkPkg = pkgs: pkgs.rustPlatform.buildRustPackage {
+        pname = "pares-agens";
+        version = "0.6.1";
+        src = pkgs.lib.cleanSource ./.;
+
+        cargoLock = {
+          lockFile = ./Cargo.lock;
+          allowBuiltinFetchGit = true;
+        };
+
+        cargoBuildFlags = [ "-p" "pares-agens" ];
+
+        nativeBuildInputs = with pkgs; [ pkg-config cmake ];
+        buildInputs = with pkgs; [ openssl stdenv.cc.cc.lib ];
+
+        FASTEMBED_CACHE_PATH = "/tmp/fastembed-cache";
+
+        meta = {
+          description = "Native AI agent framework — 3-consciousness architecture on PluresDB";
+          homepage = "https://github.com/plures/pares-agens";
+          license = pkgs.lib.licenses.bsl11;
+          mainProgram = "pares-agens";
+        };
+      };
+    in
     flake-utils.lib.eachDefaultSystem (system:
       let
         overlays = [ (import rust-overlay) ];
@@ -20,54 +47,21 @@
         };
       in
       {
-        packages.default = pkgs.rustPlatform.buildRustPackage {
-          pname = "pares-agens";
-          version = "0.6.1";
-          src = pkgs.lib.cleanSource ./.;
-
-          cargoLock = {
-            lockFile = ./Cargo.lock;
-            # PluresDB is fetched from GitHub — allow network access for git deps
-            allowBuiltinFetchGit = true;
-          };
-
-          # Only build the serve binary (crates/migrate = pares-agens CLI)
-          cargoBuildFlags = [ "-p" "pares-agens" ];
-
-          nativeBuildInputs = with pkgs; [
-            pkg-config
-            cmake       # for onnxruntime/fastembed build
-          ];
-
-          buildInputs = with pkgs; [
-            openssl
-            stdenv.cc.cc.lib  # libstdc++ for fastembed/ONNX
-          ];
-
-          # fastembed downloads ONNX model at build time — allow network
-          FASTEMBED_CACHE_PATH = "/tmp/fastembed-cache";
-
-          meta = {
-            description = "Native AI agent framework — 3-consciousness architecture on PluresDB";
-            homepage = "https://github.com/plures/pares-agens";
-            license = pkgs.lib.licenses.bsl11;
-            mainProgram = "pares-agens";
-          };
-        };
+        packages.default = mkPkg pkgs;
 
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
-            rust
-            pkg-config
-            openssl
-            cmake
-            stdenv.cc.cc.lib
-            cargo-watch
+            rust pkg-config openssl cmake stdenv.cc.cc.lib cargo-watch
           ];
         };
       }
     ) // {
-      # NixOS module for running pares-agens as a systemd service
+      # Overlay — builds pares-agens with the CONSUMER's pkgs (inherits allowUnfree)
+      overlays.default = final: prev: {
+        pares-agens = mkPkg final;
+      };
+
+      # NixOS module
       nixosModules.default = { config, lib, pkgs, ... }:
         let
           cfg = config.services.pares-agens;
@@ -78,8 +72,10 @@
 
             package = lib.mkOption {
               type = lib.types.package;
-              default = self.packages.${pkgs.system}.default;
-              description = "The pares-agens package to use.";
+              # Default uses pkgs.pares-agens from the overlay (consumer's pkgs)
+              default = pkgs.pares-agens;
+              defaultText = lib.literalExpression "pkgs.pares-agens";
+              description = "The pares-agens package to use. Requires the pares-agens overlay.";
             };
 
             user = lib.mkOption {
@@ -139,7 +135,7 @@
             createUser = lib.mkOption {
               type = lib.types.bool;
               default = true;
-              description = "Whether to create the service user. Set false when using an existing user (e.g. kbristol).";
+              description = "Whether to create the service user. Set false for existing users.";
             };
 
             extraFlags = lib.mkOption {
@@ -177,7 +173,6 @@
                 WorkingDirectory = cfg.dataDir;
                 Restart = "on-failure";
                 RestartSec = 10;
-                # Hardening (relaxed when running as existing user)
                 NoNewPrivileges = lib.mkIf cfg.createUser true;
                 ProtectSystem = lib.mkIf cfg.createUser "strict";
                 ProtectHome = lib.mkIf cfg.createUser true;
