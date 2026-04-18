@@ -233,7 +233,7 @@ tar.extractall(os.environ['out'] + '/lib')
 
               script =
                 let
-                  telegramTokenFile = lib.escapeShellArg (toString cfg.telegramTokenFile);
+                  escapedTelegramTokenFile = lib.escapeShellArg (toString cfg.telegramTokenFile);
                   copilotArg = if cfg.copilot then "--copilot" else "";
                   modelArg = "--model ${cfg.model} --deep-model ${cfg.deepModel}";
                   promptArg = if cfg.systemPromptFile != null
@@ -242,6 +242,7 @@ tar.extractall(os.environ['out'] + '/lib')
                   syncArg = if cfg.syncTopicKey != null
                     then "--sync-topic-key ${cfg.syncTopicKey}"
                     else "";
+                  telegramTokenExport = "export PARES_TELEGRAM_TOKEN=\"$(tr -d '\\r\\n' < ${escapedTelegramTokenFile})\"";
                   braveApiKeyExport = if cfg.braveApiKeyFile != null
                     then "export BRAVE_API_KEY=\"$(tr -d '\\r\\n' < ${lib.escapeShellArg (toString cfg.braveApiKeyFile)})\""
                     else "";
@@ -251,7 +252,7 @@ tar.extractall(os.environ['out'] + '/lib')
                   extraArgs = lib.concatStringsSep " " cfg.extraFlags;
                 in
                 ''
-                  export PARES_TELEGRAM_TOKEN="$(tr -d '\\r\\n' < ${telegramTokenFile})"
+                  ${telegramTokenExport}
                   ${braveApiKeyExport}
                   ${syncSharedKeyExport}
 
