@@ -31,12 +31,15 @@ pub mod router;
 use crate::cerebellum::bridge::PluresDbBridge;
 use crate::delegation::broker::SubTask;
 use crate::event::Event;
+use crate::memory::entry::MemoryCategory;
 use crate::memory::PluresLm;
 use crate::praxis::constraints::AuthorizationGate;
 use crate::procedure::{Procedure, ProcedureRegistry};
 
 use async_trait::async_trait;
 use pares_agens_praxis::rule::{Rule, RuleContext, RuleResult};
+use std::collections::HashMap;
+use std::sync::Mutex;
 use tracing::{debug, info, instrument, warn};
 
 // ── routing decision ─────────────────────────────────────────────────────────
@@ -88,6 +91,9 @@ pub struct CerebellumConfig {
     /// Cosine similarity threshold above which two entries are considered
     /// duplicates during a cerebellum sweep.
     pub similarity_threshold: f32,
+    /// Cosine similarity threshold below which a new message is treated as a
+    /// topic shift for selective history management.
+    pub topic_similarity_threshold: f32,
 }
 
 impl Default for CerebellumConfig {
@@ -100,6 +106,7 @@ impl Default for CerebellumConfig {
             context_token_budget: 4096,
             staleness_days: 30,
             similarity_threshold: 0.85,
+            topic_similarity_threshold: 0.72,
         }
     }
 }
@@ -129,6 +136,9 @@ pub struct CerebellumContext {
     pub route: Route,
     /// Praxis ledger guidance entries, if any.
     pub guidance: Vec<String>,
+    /// Whether short-term conversation history should be cleared for this turn
+    /// because a topic shift was detected.
+    pub clear_history: bool,
     /// When `Some`, the authorization gate (ADR-0012 level 4) requires explicit
     /// human approval before this action may be dispatched.
     pub approval_required: Option<ApprovalRequest>,
@@ -151,6 +161,8 @@ pub struct Cerebellum {
     pub config: CerebellumConfig,
     /// Optional PluresDB bridge for native procedure execution.
     pub pluresdb: Option<PluresDbBridge>,
+    /// Last topic embedding seen per channel.
+    topic_embeddings: Mutex<HashMap<String, Vec<f32>>>,
 }
 
 impl Cerebellum {
@@ -159,6 +171,7 @@ impl Cerebellum {
         Self {
             config,
             pluresdb: None,
+            topic_embeddings: Mutex::new(HashMap::new()),
         }
     }
 
@@ -167,6 +180,7 @@ impl Cerebellum {
         Self {
             config,
             pluresdb: Some(bridge),
+            topic_embeddings: Mutex::new(HashMap::new()),
         }
     }
 
@@ -185,12 +199,20 @@ impl Cerebellum {
     ) -> Result<CerebellumContext, CerebellumError> {
         // 1. Autorecall
         let query = extract_query(event);
+        let mut clear_history = false;
         let learned_context = if let Some(q) = &query {
-            let memories = memory
-                .recall(q, self.config.recall_limit, &[])
+            let query_embedding = memory
+                .embed_text(q)
                 .await
                 .map_err(|e| CerebellumError::Memory(e.to_string()))?;
-            memory.inject_context(&memories, None)
+            clear_history = self.detect_topic_shift(event, &query_embedding);
+
+            let exclude_categories = parse_excluded_categories(&self.config.exclude_categories);
+            let memories = memory
+                .recall(q, self.config.recall_limit, &exclude_categories)
+                .await
+                .map_err(|e| CerebellumError::Memory(e.to_string()))?;
+            memory.inject_context(&memories, Some(self.config.context_token_budget))
         } else {
             String::new()
         };
@@ -198,6 +220,7 @@ impl Cerebellum {
         info!(
             event_kind = event.kind(),
             context_len = learned_context.len(),
+            topic_shifted = clear_history,
             "autorecall complete"
         );
 
@@ -250,8 +273,23 @@ impl Cerebellum {
             learned_context,
             route,
             guidance,
+            clear_history,
             approval_required,
         })
+    }
+
+    fn detect_topic_shift(&self, event: &Event, current_embedding: &[f32]) -> bool {
+        let Some(channel_key) = event_channel_key(event) else {
+            return false;
+        };
+
+        let mut embeddings = self.topic_embeddings.lock().unwrap();
+        let shifted = embeddings
+            .get(&channel_key)
+            .map(|previous| cosine_similarity(previous, current_embedding) < self.config.topic_similarity_threshold)
+            .unwrap_or(false);
+        embeddings.insert(channel_key, current_embedding.to_vec());
+        shifted
     }
 }
 
@@ -314,6 +352,54 @@ fn extract_query(event: &Event) -> Option<String> {
     }
 }
 
+fn event_channel_key(event: &Event) -> Option<String> {
+    match event {
+        Event::Message { channel, .. } => Some(channel.clone()),
+        _ => None,
+    }
+}
+
+fn parse_excluded_categories(raw_categories: &[String]) -> Vec<MemoryCategory> {
+    raw_categories
+        .iter()
+        .filter_map(|category| parse_memory_category(category))
+        .collect()
+}
+
+fn parse_memory_category(category: &str) -> Option<MemoryCategory> {
+    let normalized = category.trim().to_ascii_lowercase().replace('_', "-");
+    match normalized.as_str() {
+        "conversation" => Some(MemoryCategory::Conversation),
+        "code-pattern" => Some(MemoryCategory::CodePattern),
+        "error-fix" => Some(MemoryCategory::ErrorFix),
+        "preference" => Some(MemoryCategory::Preference),
+        "decision" => Some(MemoryCategory::Decision),
+        "fact" => Some(MemoryCategory::Fact),
+        "procedure" => Some(MemoryCategory::Procedure),
+        "ui-interaction" => Some(MemoryCategory::UiInteraction),
+        "app-state" => Some(MemoryCategory::AppState),
+        "screen-capture" => Some(MemoryCategory::ScreenCapture),
+        "automation-trace" => Some(MemoryCategory::AutomationTrace),
+        "build-result" => Some(MemoryCategory::BuildResult),
+        "demo-checkpoint" => Some(MemoryCategory::DemoCheckpoint),
+        "correction" => Some(MemoryCategory::Correction),
+        _ => None,
+    }
+}
+
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+    dot / (norm_a * norm_b)
+}
+
 /// Build an [`RuleContext`] for the authorization gate from an event.
 ///
 /// The cerebellum derives gate payload flags from what it can observe in the
@@ -361,6 +447,12 @@ fn build_authorization_context(event: &Event) -> RuleContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memory::{
+        embed::{EmbeddingProvider, MockEmbedder},
+        entry::{MemoryCategory, MemoryEntry},
+        store::{InMemoryStore, MemoryStore as _},
+    };
+    use std::sync::Arc;
     use pares_agens_praxis::rule::RuleResult;
 
     #[test]
@@ -404,6 +496,73 @@ mod tests {
         assert_eq!(cfg.recall_limit, 10);
         assert!(cfg.enable_subconscious);
         assert!((cfg.complexity_threshold - 0.7).abs() < f32::EPSILON);
+        assert!((cfg.topic_similarity_threshold - 0.72).abs() < f32::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn preprocess_clears_history_on_topic_shift_and_restores_on_return() {
+        let store = Arc::new(InMemoryStore::new());
+        let rust_embedding = MockEmbedder
+            .embed("Use tokio channels to coordinate async Rust tasks")
+            .await
+            .expect("embedding should succeed");
+        store
+            .insert(MemoryEntry {
+                id: "rust-1".into(),
+                content: "Use tokio channels to coordinate async Rust tasks".into(),
+                category: MemoryCategory::CodePattern,
+                tags: vec![],
+                embedding: rust_embedding,
+                score: 0.0,
+                created_at: "2026-01-01T00:00:00Z".into(),
+            })
+            .await
+            .expect("memory insert should succeed");
+
+        let memory = PluresLm::new(store, Box::new(MockEmbedder), 128_000);
+        let cerebellum = Cerebellum::new(CerebellumConfig::default());
+        let registry = ProcedureRegistry::new();
+
+        let rust_msg = Event::Message {
+            id: "1".into(),
+            channel: "test".into(),
+            sender: "u".into(),
+            content: "How does async Rust work with tokio?".into(),
+        };
+        let rust_ctx = cerebellum
+            .preprocess(&rust_msg, &memory, &registry)
+            .await
+            .expect("first preprocess should succeed");
+        assert!(!rust_ctx.clear_history, "first topic should not clear history");
+
+        let cooking_msg = Event::Message {
+            id: "2".into(),
+            channel: "test".into(),
+            sender: "u".into(),
+            content: "What is the best way to bake sourdough bread?".into(),
+        };
+        let cooking_ctx = cerebellum
+            .preprocess(&cooking_msg, &memory, &registry)
+            .await
+            .expect("second preprocess should succeed");
+        assert!(cooking_ctx.clear_history, "different topic should clear history");
+
+        let rust_return_msg = Event::Message {
+            id: "3".into(),
+            channel: "test".into(),
+            sender: "u".into(),
+            content: "Back to Rust: when should I use async channels?".into(),
+        };
+        let rust_return_ctx = cerebellum
+            .preprocess(&rust_return_msg, &memory, &registry)
+            .await
+            .expect("topic return preprocess should succeed");
+        assert!(
+            rust_return_ctx
+                .learned_context
+                .contains("Use tokio channels to coordinate async Rust tasks"),
+            "returned topic should restore relevant long-term context from memory"
+        );
     }
 
     // ── build_authorization_context ───────────────────────────────────────────
