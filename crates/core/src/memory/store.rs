@@ -105,9 +105,44 @@ const ACTOR: &str = "pares-agens";
 
 /// The PluresDB key prefix for conversation turn entries.
 const TURN_PREFIX: &str = "turn:";
+/// The PluresDB key prefix for per-host adapter configuration.
+const HOST_PREFIX: &str = "host/";
+/// The PluresDB key suffix for per-host adapter configuration.
+const ADAPTERS_SUFFIX: &str = "/adapters";
 const SEA_DATA_FIELD: &str = "_sea";
 const SEA_HOST_KEY_FILE: &str = ".sea-host-key.json";
 const SEA_SYNC_PAYLOAD_ENCODING: &str = "base64url";
+
+/// Configuration for a single channel adapter connection.
+///
+/// This schema is adapter-agnostic so single-connection constraints can be
+/// enforced for Telegram today and extended to Slack/Discord/WhatsApp later.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HostAdapterConfig {
+    /// Adapter kind, e.g. `"telegram"` or `"slack_rtm"`.
+    pub kind: String,
+    /// Stable connection identifier used for uniqueness checks.
+    ///
+    /// For Telegram this is the bot token.
+    pub connection_id: String,
+    /// Whether this adapter requires unique connection ownership in a swarm.
+    #[serde(default)]
+    pub single_connection: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct HostAdaptersPayload {
+    adapters: Vec<HostAdapterConfig>,
+}
+
+/// Adapter configuration snapshot for a specific host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostAdapterRecord {
+    /// Host identifier from the key path: `host/<hostname>/adapters`.
+    pub host: String,
+    /// Adapters configured for this host.
+    pub adapters: Vec<HostAdapterConfig>,
+}
 
 /// A [`MemoryStore`] backed by a PluresDB [`CrdtStore`].
 ///
@@ -224,6 +259,56 @@ impl PluresDbStore {
             host_sea_key: None,
             _sync_task: None,
         }
+    }
+
+    /// Persist adapter configuration under `host/<hostname>/adapters`.
+    pub async fn set_host_adapters(
+        &self,
+        hostname: &str,
+        adapters: Vec<HostAdapterConfig>,
+    ) -> Result<(), Error> {
+        if hostname.trim().is_empty()
+            || hostname.contains('/')
+            || hostname.chars().any(|c| c.is_control())
+        {
+            return Err(Error::Store(
+                "hostname must be non-empty and must not contain '/' or control characters".into(),
+            ));
+        }
+        let payload = HostAdaptersPayload { adapters };
+        let data = seal_value_for_storage(
+            serde_json::to_value(payload)
+                .map_err(|e| Error::Store(format!("serialise host adapters failed: {e}")))?,
+            self.host_sea_key.as_ref(),
+        )?;
+        let key = format!("{HOST_PREFIX}{hostname}{ADAPTERS_SUFFIX}");
+        self.store.put(key, ACTOR, data);
+        Ok(())
+    }
+
+    /// List all host adapter configuration snapshots from PluresDB.
+    pub async fn list_host_adapters(&self) -> Result<Vec<HostAdapterRecord>, Error> {
+        let mut records = Vec::new();
+        for record in self.store.list() {
+            if !(record.id.starts_with(HOST_PREFIX) && record.id.ends_with(ADAPTERS_SUFFIX)) {
+                continue;
+            }
+            let Some(host) = record
+                .id
+                .strip_prefix(HOST_PREFIX)
+                .and_then(|id| id.strip_suffix(ADAPTERS_SUFFIX))
+            else {
+                continue;
+            };
+            let value = unseal_value_from_storage(record.data, self.host_sea_key.as_ref())?;
+            if let Ok(payload) = serde_json::from_value::<HostAdaptersPayload>(value) {
+                records.push(HostAdapterRecord {
+                    host: host.to_string(),
+                    adapters: payload.adapters,
+                });
+            }
+        }
+        Ok(records)
     }
 }
 
@@ -709,6 +794,32 @@ mod tests {
         let reopened = PluresDbStore::open(dir.path()).unwrap();
         let all = reopened.all().await.unwrap();
         assert!(all.iter().any(|entry| entry.id == "persist-1"));
+    }
+
+    #[tokio::test]
+    async fn pluresdb_store_set_and_list_host_adapters_roundtrip() {
+        let store = PluresDbStore::in_memory();
+        let adapters = vec![HostAdapterConfig {
+            kind: "telegram".to_string(),
+            connection_id: "123:abc".to_string(),
+            single_connection: true,
+        }];
+        store
+            .set_host_adapters("host-a", adapters.clone())
+            .await
+            .unwrap();
+        let configs = store.list_host_adapters().await.unwrap();
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].host, "host-a");
+        assert_eq!(configs[0].adapters, adapters);
+    }
+
+    #[tokio::test]
+    async fn pluresdb_store_list_host_adapters_ignores_memory_entries() {
+        let store = PluresDbStore::in_memory();
+        store.insert(make_entry("m1", "memory")).await.unwrap();
+        let configs = store.list_host_adapters().await.unwrap();
+        assert!(configs.is_empty());
     }
 
     // ── remove ───────────────────────────────────────────────────────────────
