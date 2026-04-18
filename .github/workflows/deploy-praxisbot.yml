@@ -21,15 +21,14 @@ jobs:
 
       - name: Install binary
         run: |
-          mkdir -p $HOME/.local/bin
-          cp target/release/pares-agens $HOME/.local/bin/pares-agens
-          chmod +x $HOME/.local/bin/pares-agens
-          echo "Installed to $HOME/.local/bin/pares-agens"
+          sudo mkdir -p /usr/local/bin
+          sudo cp target/release/pares-agens /usr/local/bin/pares-agens
+          sudo chmod +x /usr/local/bin/pares-agens
+          echo "Installed to /usr/local/bin/pares-agens"
 
-      - name: Create systemd user service
+      - name: Create systemd system service
         run: |
-          mkdir -p $HOME/.config/systemd/user
-          cat > $HOME/.config/systemd/user/pares-agens.service << EOF
+          sudo tee /etc/systemd/system/pares-agens.service > /dev/null << 'UNIT'
           [Unit]
           Description=Pares Agens — AI Agent Daemon
           After=network-online.target
@@ -37,25 +36,29 @@ jobs:
 
           [Service]
           Type=simple
-          ExecStart=$HOME/.local/bin/pares-agens serve --copilot --telegram-token ${{ secrets.PARES_TELEGRAM_TOKEN }} --brave-api-key ${{ secrets.BRAVE_API_KEY }}
+          ExecStart=/usr/local/bin/pares-agens serve --copilot --telegram-token ${{ secrets.PARES_TELEGRAM_TOKEN }} --brave-api-key ${{ secrets.BRAVE_API_KEY }}
           Environment=RUST_LOG=info
           Restart=on-failure
           RestartSec=10
-          WorkingDirectory=$HOME
+          WorkingDirectory=/var/lib/pares-agens
+
+          # Run as a dedicated service user for isolation
+          DynamicUser=yes
+          StateDirectory=pares-agens
 
           [Install]
-          WantedBy=default.target
-          EOF
+          WantedBy=multi-user.target
+          UNIT
 
       - name: Enable and start service
         run: |
-          systemctl --user daemon-reload
-          systemctl --user enable pares-agens
-          systemctl --user restart pares-agens
+          sudo systemctl daemon-reload
+          sudo systemctl enable pares-agens
+          sudo systemctl restart pares-agens
           sleep 8
-          systemctl --user status pares-agens --no-pager || true
+          sudo systemctl status pares-agens --no-pager || true
           echo "=== Recent logs ==="
-          journalctl --user -u pares-agens -n 20 --no-pager || true
+          sudo journalctl -u pares-agens -n 20 --no-pager || true
 
       - name: Verify bot is responding
         run: |
@@ -63,6 +66,6 @@ jobs:
             echo "✅ pares-agens is running"
           else
             echo "❌ pares-agens NOT running"
-            journalctl --user -u pares-agens -n 50 --no-pager || true
+            sudo journalctl -u pares-agens -n 50 --no-pager || true
             exit 1
           fi
