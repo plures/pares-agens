@@ -1,5 +1,6 @@
 <script>
   import '@plures/design-dojo/tokens.css';
+  import { readText as readClipboardText } from '@tauri-apps/plugin-clipboard-manager';
 
   const { invoke } = window.__TAURI__.core;
   const { listen } = window.__TAURI__.event;
@@ -18,6 +19,9 @@
   let messagesEl = $state(null);
   let inputEl = $state(null);
   let historyLoaded = $state(false);
+  let clipboardText = $state('');
+  let clipboardFresh = $state(false);
+  let clipboardDismissed = $state(false);
 
   /** Format a Date as HH:MM */
   function fmtTime(date = new Date()) {
@@ -36,6 +40,46 @@
   /** Generate unique message ID */
   function msgId() {
     return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function hasTauriRuntime() {
+    return typeof window !== 'undefined' && !!window.__TAURI__;
+  }
+
+  async function readClipboard() {
+    if (!hasTauriRuntime()) return '';
+    try {
+      const value = await readClipboardText();
+      return (value ?? '').replace(/\r\n/g, '\n');
+    } catch {
+      return '';
+    }
+  }
+
+  async function refreshClipboard() {
+    const next = await readClipboard();
+    if (!next) {
+      clipboardText = '';
+      clipboardFresh = false;
+      clipboardDismissed = false;
+      return;
+    }
+    if (next !== clipboardText) {
+      clipboardText = next;
+      clipboardFresh = true;
+      clipboardDismissed = false;
+    }
+  }
+
+  function addClipboardAsContext() {
+    if (!clipboardText) return;
+    const context = `Clipboard context:\n${clipboardText.trimEnd()}`;
+    inputValue = inputValue.trim()
+      ? `${context}\n\n${inputValue}`
+      : context;
+    clipboardFresh = false;
+    clipboardDismissed = false;
+    requestAnimationFrame(() => inputEl?.focus());
   }
 
   /** Auto-scroll to bottom when messages change */
@@ -114,8 +158,34 @@
     };
   });
 
+  $effect(() => {
+    if (!hasTauriRuntime()) return;
+    refreshClipboard();
+    const interval = setInterval(() => { refreshClipboard(); }, 1000);
+    const handleFocus = () => { refreshClipboard(); };
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', handleFocus);
+    };
+  });
+
   async function sendMessage() {
-    const content = inputValue.trim();
+    if (busy) return;
+
+    let content = inputValue.trim();
+    if (content === '/paste') {
+      const clipboard = await readClipboard();
+      if (!clipboard.trim()) {
+        messages = [...messages, { role: 'system', content: '⚠️ Clipboard is empty.', time: fmtTime(), id: msgId() }];
+        return;
+      }
+      clipboardText = clipboard;
+      clipboardFresh = false;
+      clipboardDismissed = false;
+      content = clipboard;
+    }
+
     if (!content || busy) return;
 
     const id = msgId();
@@ -222,10 +292,19 @@
 
   <form class="chat-form" autocomplete="off"
     onsubmit={(e) => { e.preventDefault(); sendMessage(); }}>
+    {#if inputValue.trim() && clipboardFresh && !clipboardDismissed && clipboardText}
+      <div class="clipboard-offer" role="status" aria-live="polite">
+        <span>Use clipboard as context?</span>
+        <div class="clipboard-actions">
+          <button type="button" class="clipboard-btn" onclick={addClipboardAsContext}>Use clipboard</button>
+          <button type="button" class="clipboard-btn dismiss" onclick={() => { clipboardDismissed = true; }}>Dismiss</button>
+        </div>
+      </div>
+    {/if}
     <div class="input-row">
       <textarea
         class="chat-input"
-        placeholder="Type a message… (Enter to send, Shift+Enter for newline)"
+        placeholder="Type a message… (/paste for clipboard, Enter to send, Shift+Enter for newline)"
         rows="1"
         aria-label="Message input"
         bind:value={inputValue}
@@ -364,6 +443,34 @@
     border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
     background: var(--surface-elevated, rgba(255, 255, 255, 0.02));
   }
+
+  .clipboard-offer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+    background: var(--surface-hover, rgba(255, 255, 255, 0.04));
+    font-size: 13px;
+    color: var(--text-secondary, #a0a0b0);
+  }
+
+  .clipboard-actions { display: flex; gap: 6px; }
+
+  .clipboard-btn {
+    border: 1px solid var(--border-default, rgba(255, 255, 255, 0.16));
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-primary, #e8e8f0);
+    font-size: 12px;
+    padding: 4px 8px;
+    cursor: pointer;
+  }
+  .clipboard-btn:hover { background: var(--surface-hover, rgba(255, 255, 255, 0.08)); }
+  .clipboard-btn.dismiss { color: var(--text-tertiary, #707080); }
 
   .input-row { display: flex; gap: 8px; align-items: flex-end; }
 

@@ -300,6 +300,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             // ── Memory store ──────────────────────────────────────────────
             // Open a persistent PluresDB-backed memory store under the app data

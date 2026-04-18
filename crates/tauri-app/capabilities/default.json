@@ -6,6 +6,7 @@
     "core:default",
     "core:event:default",
     "window-state:default",
-    "autostart:default"
+    "autostart:default",
+    "clipboard-manager:default"
   ]
 }
