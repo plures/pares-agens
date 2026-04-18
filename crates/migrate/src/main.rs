@@ -833,6 +833,10 @@ enum Commands {
         /// 32-byte Hyperswarm sync topic key (hex) for multi-host replication.
         #[arg(long, env = "PARES_SYNC_TOPIC_KEY")]
         sync_topic_key: Option<String>,
+
+        /// Shared SEA key (base64url-encoded SeaKeyPair JSON) required to decrypt sync payloads.
+        #[arg(long, env = "PARES_SYNC_SHARED_KEY")]
+        sync_shared_key: Option<String>,
     },
 }
 
@@ -884,6 +888,7 @@ async fn main() {
             system_prompt,
             brave_api_key,
             sync_topic_key,
+            sync_shared_key,
         } => {
             tracing::info!("Starting Pares Agens daemon");
 
@@ -998,6 +1003,15 @@ async fn main() {
             // Set up PluresDB memory store + PluresLM (native)
             let memory_path = PathBuf::from(home).join(".pares-agens/memory");
             let store = if let Some(topic_key_raw) = sync_topic_key {
+                let shared_key = match sync_shared_key {
+                    Some(key) => key,
+                    None => {
+                        tracing::error!(
+                            "--sync-topic-key requires --sync-shared-key (or PARES_SYNC_SHARED_KEY)"
+                        );
+                        std::process::exit(1);
+                    }
+                };
                 let topic_key = match parse_sync_topic_key(&topic_key_raw) {
                     Ok(key) => key,
                     Err(e) => {
@@ -1006,7 +1020,7 @@ async fn main() {
                     }
                 };
                 tracing::info!("PluresDB Hyperswarm sync enabled");
-                match PluresDbStore::open_with_sync(&memory_path, &topic_key) {
+                match PluresDbStore::open_with_sync(&memory_path, &topic_key, &shared_key) {
                     Ok(store) => Arc::new(store),
                     Err(e) => {
                         tracing::error!("failed to open sync-enabled memory store: {e}");
