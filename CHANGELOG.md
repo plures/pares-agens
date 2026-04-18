@@ -1,3 +1,7 @@
+## [0.16.0] — 2026-04-18
+
+- feat: .px AST builder + expression/value parsing tests (7465e3a)
+
 ## [0.15.0] — 2026-04-18
 
 - feat: .px parser — PEG grammar + AST types for Praxis Intent Language (398482c)

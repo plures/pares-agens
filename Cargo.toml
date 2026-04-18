@@ -7,7 +7,7 @@ members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client
 # already include the Tauri/GTK/WebKit dependencies for locked builds to work.
 
 [workspace.package]
-version = "0.15.0"
+version = "0.16.0"
 edition = "2021"
 license = "BSL-1.1"
 repository = "https://github.com/plures/pares-agens"
