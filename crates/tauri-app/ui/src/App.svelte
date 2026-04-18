@@ -65,7 +65,7 @@
           {#each notification.actions as action (action.id)}
             <button
               type="button"
-              class="actionable-btn primary"
+              class={`actionable-btn ${action.id === 'view' ? 'secondary' : 'primary'}`}
               onclick={() => triggerNotificationAction(notification.id, action.id)}>
               {action.label}
             </button>
