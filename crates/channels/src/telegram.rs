@@ -467,7 +467,7 @@ impl ChannelAdapter for TelegramAdapter {
                                 let _ = bot
                                     .send_message(
                                         msg.chat.id,
-                                        "Pares Agens commands:\n/status - health info\n/health - health info\n/agents - browse pares-modulus marketplace\n/install <id> - install an agent/plugin\n/update - run NixOS self-update and rebuild if pares-agens changed\n\nOr just send a message.",
+                                        "Pares Agens commands:\n/status - status + health snapshot\n/health - alias for /status\n/agents - browse pares-modulus marketplace\n/install <id> - install an agent/plugin\n/update - run NixOS self-update and rebuild if pares-agens changed\n\nOr just send a message.",
                                     )
                                     .await;
                                 return respond(());
@@ -477,7 +477,7 @@ impl ChannelAdapter for TelegramAdapter {
                                     .map(|rss| format!("{rss} KiB"))
                                     .unwrap_or_else(|| "n/a".to_string());
                                 let status = format!(
-                                    "Pares Agens health: ok\nPID: {}\nMemory RSS: {}\nModel: GPT-4.1 + Opus 4.6\nPluresDB: ~/.pares-agens/memory/",
+                                    "Pares Agens status snapshot\nPID: {}\nMemory RSS: {}\nModel: GPT-4.1 + Opus 4.6\nPluresDB: ~/.pares-agens/memory/",
                                     std::process::id(), memory,
                                 );
                                 let _ = bot.send_message(msg.chat.id, &status).await;

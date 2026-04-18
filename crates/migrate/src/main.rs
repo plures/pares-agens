@@ -901,8 +901,8 @@ fn parse_watchdog_ping_interval(watchdog_usec: &str) -> Option<Duration> {
         return None;
     }
     let half = micros / 2;
-    let heartbeat = std::cmp::max(half, 1_000_000);
-    Some(Duration::from_micros(heartbeat))
+    let ping_interval_micros = std::cmp::max(half, 1_000_000);
+    Some(Duration::from_micros(ping_interval_micros))
 }
 
 #[cfg(unix)]
