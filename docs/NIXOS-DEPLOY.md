@@ -77,6 +77,9 @@ overlays = [
     deepModel = "claude-opus-4.6";            # Deep escalation model
     telegramTokenFile = "/run/secrets/telegram-token";
     braveApiKeyFile = "/run/secrets/brave-key";
+    # Optional multi-host replication:
+    # syncTopicKey = "<32-byte-hex-topic-key>";
+    # syncSharedKeyFile = "/run/secrets/pares-sync-shared-key";
   };
 }
 ```
@@ -113,6 +116,8 @@ Visit the URL, enter the code, and the OAuth token is cached permanently.
 | `dataDir` | path | `/var/lib/pares-agens` | PluresDB storage + config directory |
 | `telegramTokenFile` | path | `null` | Path to file containing Telegram bot token |
 | `braveApiKeyFile` | path | `null` | Path to file containing Brave Search API key |
+| `syncTopicKey` | string | `null` | 32-byte Hyperswarm sync topic key in hex |
+| `syncSharedKeyFile` | path | `null` | Path to file containing shared SEA key (required with `syncTopicKey`) |
 | `systemPromptFile` | path | `null` | Path to custom system prompt |
 | `extraFlags` | list | `[]` | Additional CLI flags |
 
@@ -152,3 +157,18 @@ sudo nixos-rebuild switch --flake .#myhost
 ```
 
 The service restarts automatically after rebuild.
+
+## Praxisbot rollout checklist
+
+```bash
+cd ~/nixos-config
+sudo nix flake update pares-agens
+sudo nixos-rebuild switch --flake .#praxisbot
+```
+
+Verify:
+
+- `systemctl status pares-agens` shows `active (running)`
+- Telegram bot responds to `/status`
+- Memory survives restarts (`sudo systemctl restart pares-agens` then re-check prior context)
+- Copilot OAuth is authenticated (for first boot, run `journalctl -u pares-agens -f`, open the printed device-flow URL, and submit the shown code)

@@ -160,6 +160,12 @@ tar.extractall(os.environ['out'] + '/lib')
               description = "32-byte Hyperswarm sync topic key in hex for multi-host memory replication.";
             };
 
+            syncSharedKeyFile = lib.mkOption {
+              type = lib.types.nullOr lib.types.path;
+              default = null;
+              description = "Path to file containing shared SEA key required for sync payload decryption.";
+            };
+
             systemPromptFile = lib.mkOption {
               type = lib.types.nullOr lib.types.path;
               default = null;
@@ -180,6 +186,17 @@ tar.extractall(os.environ['out'] + '/lib')
           };
 
           config = lib.mkIf cfg.enable {
+            assertions = [
+              {
+                assertion = cfg.telegramTokenFile != null;
+                message = "services.pares-agens.telegramTokenFile must be set. pares-agens serve requires PARES_TELEGRAM_TOKEN.";
+              }
+              {
+                assertion = cfg.syncTopicKey == null || cfg.syncSharedKeyFile != null;
+                message = "services.pares-agens.syncSharedKeyFile must be set when services.pares-agens.syncTopicKey is configured.";
+              }
+            ];
+
             users.users.${cfg.user} = lib.mkIf cfg.createUser {
               isSystemUser = true;
               group = cfg.group;
@@ -216,12 +233,7 @@ tar.extractall(os.environ['out'] + '/lib')
 
               script =
                 let
-                  telegramArg = if cfg.telegramTokenFile != null
-                    then "--telegram-token $(cat ${cfg.telegramTokenFile})"
-                    else "";
-                  braveArg = if cfg.braveApiKeyFile != null
-                    then "--brave-api-key $(cat ${cfg.braveApiKeyFile})"
-                    else "";
+                  escapedTelegramTokenFile = lib.escapeShellArg (toString cfg.telegramTokenFile);
                   copilotArg = if cfg.copilot then "--copilot" else "";
                   modelArg = "--model ${cfg.model} --deep-model ${cfg.deepModel}";
                   promptArg = if cfg.systemPromptFile != null
@@ -230,13 +242,28 @@ tar.extractall(os.environ['out'] + '/lib')
                   syncArg = if cfg.syncTopicKey != null
                     then "--sync-topic-key ${cfg.syncTopicKey}"
                     else "";
+                  escapedBraveApiKeyFile = if cfg.braveApiKeyFile != null
+                    then lib.escapeShellArg (toString cfg.braveApiKeyFile)
+                    else null;
+                  escapedSyncSharedKeyFile = if cfg.syncSharedKeyFile != null
+                    then lib.escapeShellArg (toString cfg.syncSharedKeyFile)
+                    else null;
+                  telegramTokenExport = "export PARES_TELEGRAM_TOKEN=\"$(tr -d '\\r\\n' < ${escapedTelegramTokenFile})\"";
+                  braveApiKeyExport = if cfg.braveApiKeyFile != null
+                    then "export BRAVE_API_KEY=\"$(tr -d '\\r\\n' < ${escapedBraveApiKeyFile})\""
+                    else "";
+                  syncSharedKeyExport = if cfg.syncSharedKeyFile != null
+                    then "export PARES_SYNC_SHARED_KEY=\"$(tr -d '\\r\\n' < ${escapedSyncSharedKeyFile})\""
+                    else "";
                   extraArgs = lib.concatStringsSep " " cfg.extraFlags;
                 in
                 ''
+                  ${telegramTokenExport}
+                  ${braveApiKeyExport}
+                  ${syncSharedKeyExport}
+
                   exec ${cfg.package}/bin/pares-agens serve \
                     ${copilotArg} \
-                    ${telegramArg} \
-                    ${braveArg} \
                     ${modelArg} \
                     ${promptArg} \
                     ${syncArg} \
