@@ -17,3 +17,4 @@ pares-agens-core = { path = "../core" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
+serde_json = { workspace = true }
