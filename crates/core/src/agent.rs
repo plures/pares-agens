@@ -140,6 +140,10 @@ pub struct Agent {
     /// Optional persistent turn store (PluresDB). When `Some`, conversation
     /// turns are persisted across restarts. Falls back to in-memory only.
     turn_store: Option<Arc<dyn MemoryStore>>,
+    /// Optional audit store for logging all agent actions (model calls, tool
+    /// executions, memory writes). When `Some`, every significant action is
+    /// recorded for compliance and debugging.
+    audit_store: Option<Arc<dyn pares_agens_audit::store::AuditStore>>,
     /// Optional delegation broker for decomposed tasks.
     delegation_broker: Option<DelegationBroker>,
 }
@@ -158,6 +162,7 @@ impl Agent {
             system_prompt: String::new(),
             conversation_history: Mutex::new(HashMap::new()),
             turn_store: None,
+            audit_store: None,
             delegation_broker: None,
         }
     }
@@ -184,6 +189,7 @@ impl Agent {
             system_prompt: String::new(),
             conversation_history: Mutex::new(HashMap::new()),
             turn_store: None,
+            audit_store: None,
             delegation_broker: None,
         }
     }
@@ -220,6 +226,12 @@ impl Agent {
     /// the agent hydrates the in-memory cache from PluresDB.
     pub fn with_turn_store(mut self, store: Arc<dyn MemoryStore>) -> Self {
         self.turn_store = Some(store);
+        self
+    }
+
+    /// Attach an audit store for logging all agent actions.
+    pub fn with_audit_store(mut self, store: Arc<dyn pares_agens_audit::store::AuditStore>) -> Self {
+        self.audit_store = Some(store);
         self
     }
 
@@ -396,6 +408,14 @@ impl Agent {
         }
 
         info!(input_len = content.len(), output_len = reply.len(), "LLM response generated");
+
+        // Audit: log model call
+        self.audit(
+            pares_agens_audit::event::EventKind::ModelCall,
+            "agent",
+            model_label,
+            &format!("in={}tok out={}tok", content.len() / 4, reply.len() / 4),
+        ).await;
 
         // Persist new turn messages to PluresDB and update in-memory cache.
         let start = 1 + history_snapshot.len(); // skip system + existing history
@@ -757,6 +777,14 @@ impl Agent {
 
         result.extend_from_slice(&messages[keep_from..]);
         result
+    }
+
+    /// Log an audit event if the audit store is configured.
+    async fn audit(&self, kind: pares_agens_audit::event::EventKind, actor: &str, dest: &str, summary: &str) {
+        if let Some(store) = &self.audit_store {
+            let event = pares_agens_audit::event::AuditEvent::new(kind, actor, dest, summary, false);
+            store.append(event).await;
+        }
     }
 
     async fn dispatch_procedures(&self, event: &Event) -> Option<Event> {
