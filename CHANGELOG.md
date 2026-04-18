@@ -1,3 +1,7 @@
+## [0.13.0] — 2026-04-18
+
+- feat: declarative rule engine — lifecycle rules as JSON data, not code (8067005)
+
 ## [0.12.0] — 2026-04-18
 
 - feat: Praxis-driven lifecycle rules — replaces JS with Rust (dc0e8d2)
