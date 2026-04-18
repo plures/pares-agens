@@ -669,6 +669,7 @@ mod tests {
         let topic = generate_sync_topic_key_hex();
         assert_eq!(topic.len(), 64);
         assert!(topic.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(topic, topic.to_lowercase(), "topic hex should be lowercase");
     }
 
     #[test]
