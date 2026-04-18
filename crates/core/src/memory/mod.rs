@@ -24,7 +24,7 @@ use std::{
     sync::Arc,
 };
 
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use self::{
@@ -362,7 +362,14 @@ impl PluresLm {
 
         let canonical_path = match tokio::fs::canonicalize(path).await {
             Ok(p) => p,
-            Err(_) => path.to_path_buf(),
+            Err(e) => {
+                warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "failed to canonicalize document path; using provided path"
+                );
+                path.to_path_buf()
+            }
         };
         let source = canonical_path.to_string_lossy().to_string();
         self.remove_existing_document_chunks(&source).await?;
@@ -377,12 +384,7 @@ impl PluresLm {
 
         let total_chunks = chunks.len();
         for (idx, chunk) in chunks.into_iter().enumerate() {
-            let content = format!(
-                "Source: {source}\nChunk: {}/{}\n\n{}",
-                idx + 1,
-                total_chunks,
-                chunk
-            );
+            let content = format_document_chunk_content(&source, idx + 1, total_chunks, &chunk);
             let embedding = self
                 .embedder
                 .embed(&content)
@@ -655,6 +657,10 @@ fn split_document_chunks(text: &str, max_chars: usize, overlap_chars: usize) -> 
     }
 
     out
+}
+
+fn format_document_chunk_content(source: &str, chunk_index: usize, total_chunks: usize, chunk: &str) -> String {
+    format!("Source: {source}\nChunk: {chunk_index}/{total_chunks}\n\n{chunk}")
 }
 
 /// Extract simple keyword tags from the exchange.
