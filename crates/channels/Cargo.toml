@@ -13,7 +13,10 @@ thiserror.workspace = true
 uuid.workspace = true
 tracing.workspace = true
 teloxide.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
 pares-agens-core = { path = "../core" }
+pares-agens-marketplace = { path = "../marketplace" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
