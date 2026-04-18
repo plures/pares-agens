@@ -285,10 +285,15 @@ jobs:
                   console.log(`⚠️ Could not add direct-fix labels to PR #${pr.number}: ${e.message}`);
                   try {
                     await github.rest.issues.createLabel({
+                      owner, repo, name: 'ci-failure', color: 'D93F0B'
+                    }).catch((labelErr) => {
+                      console.log(`ℹ️ ci-failure label create skipped: ${labelErr.message}`);
+                    });
+                    await github.rest.issues.createLabel({
                       owner, repo, name: 'direct-fix-needed', color: directFixLabelColor,
                       description: 'PR requires direct code fixes after CI retry exhaustion'
-                    }).catch((createLabelErr) => {
-                      console.log(`ℹ️ direct-fix-needed label create skipped: ${createLabelErr.message}`);
+                    }).catch((labelErr) => {
+                      console.log(`ℹ️ direct-fix-needed label create skipped: ${labelErr.message}`);
                     });
                     await github.rest.issues.addLabels({
                       owner, repo, issue_number: pr.number, labels: ['ci-failure', 'direct-fix-needed']
