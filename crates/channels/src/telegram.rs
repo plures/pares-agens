@@ -221,6 +221,25 @@ fn format_update_command_output(output: &std::process::Output) -> String {
     }
 }
 
+fn current_process_rss_kib() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        status.lines().find_map(|line| {
+            let line = line.trim();
+            if !line.starts_with("VmRSS:") {
+                return None;
+            }
+            line.split_whitespace().nth(1)?.parse::<u64>().ok()
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
 fn is_update_authorized(msg: &Message) -> bool {
     let allowlist = std::env::var("PARES_TELEGRAM_UPDATE_ALLOWED_USERS")
         .ok()
@@ -448,15 +467,18 @@ impl ChannelAdapter for TelegramAdapter {
                                 let _ = bot
                                     .send_message(
                                         msg.chat.id,
-                                        "Pares Agens commands:\n/status - health info\n/agents - browse pares-modulus marketplace\n/install <id> - install an agent/plugin\n/update - run NixOS self-update and rebuild if pares-agens changed\n\nOr just send a message.",
+                                        "Pares Agens commands:\n/status - health info\n/health - health info\n/agents - browse pares-modulus marketplace\n/install <id> - install an agent/plugin\n/update - run NixOS self-update and rebuild if pares-agens changed\n\nOr just send a message.",
                                     )
                                     .await;
                                 return respond(());
                             }
-                            "status" => {
+                            "status" | "health" => {
+                                let memory = current_process_rss_kib()
+                                    .map(|rss| format!("{rss} KiB"))
+                                    .unwrap_or_else(|| "n/a".to_string());
                                 let status = format!(
-                                    "Pares Agens alive\nPID: {}\nModel: GPT-4.1 + Opus 4.6\nPluresDB: ~/.pares-agens/memory/",
-                                    std::process::id(),
+                                    "Pares Agens health: ok\nPID: {}\nMemory RSS: {}\nModel: GPT-4.1 + Opus 4.6\nPluresDB: ~/.pares-agens/memory/",
+                                    std::process::id(), memory,
                                 );
                                 let _ = bot.send_message(msg.chat.id, &status).await;
                                 return respond(());
