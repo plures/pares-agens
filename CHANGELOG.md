@@ -1,3 +1,7 @@
+## [0.14.0] — 2026-04-18
+
+- feat: harden daemon runtime with recovery loop, watchdog, and health surface (#553) (f94f0ae)
+
 ## [0.13.0] — 2026-04-18
 
 - feat: declarative rule engine — lifecycle rules as JSON data, not code (8067005)
