@@ -218,7 +218,9 @@ tar.extractall(os.environ['out'] + '/lib')
               };
 
               serviceConfig = {
-                Type = "simple";
+                Type = "notify";
+                NotifyAccess = "main";
+                WatchdogSec = 30;
                 User = cfg.user;
                 Group = cfg.group;
                 WorkingDirectory = cfg.dataDir;

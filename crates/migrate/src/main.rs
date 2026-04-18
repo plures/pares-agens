@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
@@ -765,6 +765,10 @@ fn parse_sync_topic_key(raw: &str) -> Result<[u8; 32], String> {
 
 const ADAPTER_DISCOVERY_TIMEOUT: Duration = Duration::from_millis(1200);
 const ADAPTER_DISCOVERY_INTERVAL: Duration = Duration::from_millis(200);
+const TELEGRAM_RECONNECT_MAX_ATTEMPTS: u32 = 8;
+const TELEGRAM_RECONNECT_BASE_DELAY_SECS: u64 = 2;
+const TELEGRAM_RECONNECT_MAX_DELAY_SECS: u64 = 30;
+const MEMORY_MONITOR_INTERVAL_SECS: u64 = 60;
 const DEFAULT_NIX_FLAKE_DIR: &str = ".";
 const DEFAULT_NIX_HOST: &str = "praxisbot";
 const DEFAULT_SELF_UPDATE_INTERVAL_SECS: u64 = 3600;
@@ -866,6 +870,150 @@ fn self_update_task_from_env() -> pares_agens_agenda::scheduler::Task {
         .unwrap_or(DEFAULT_SELF_UPDATE_INTERVAL_SECS);
 
     build_self_update_task(&flake_dir, &host, interval)
+}
+
+fn parse_vm_rss_kib(contents: &str) -> Option<u64> {
+    contents.lines().find_map(|line| {
+        let line = line.trim();
+        if !line.starts_with("VmRSS:") {
+            return None;
+        }
+        line.split_whitespace().nth(1)?.parse::<u64>().ok()
+    })
+}
+
+fn current_process_rss_kib() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        parse_vm_rss_kib(&status)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+fn parse_watchdog_ping_interval(watchdog_usec: &str) -> Option<Duration> {
+    let micros = watchdog_usec.trim().parse::<u64>().ok()?;
+    if micros == 0 {
+        return None;
+    }
+    let half = micros / 2;
+    let ping_interval_micros = std::cmp::max(half, 1_000_000);
+    Some(Duration::from_micros(ping_interval_micros))
+}
+
+#[cfg(unix)]
+fn systemd_notify(state: &str) -> Result<(), String> {
+    use std::os::unix::net::UnixDatagram;
+
+    let notify_socket = match std::env::var("NOTIFY_SOCKET") {
+        Ok(v) if !v.trim().is_empty() => v,
+        _ => return Ok(()),
+    };
+
+    let sock = UnixDatagram::unbound().map_err(|e| format!("sd_notify socket failed: {e}"))?;
+    if notify_socket.starts_with('@') {
+        return Err("abstract NOTIFY_SOCKET is not supported in this build".to_string());
+    }
+
+    sock.send_to(state.as_bytes(), &notify_socket)
+        .map_err(|e| format!("sd_notify send failed: {e}"))?;
+
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn systemd_notify(_state: &str) -> Result<(), String> {
+    Ok(())
+}
+
+fn spawn_memory_monitor() -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(MEMORY_MONITOR_INTERVAL_SECS));
+        loop {
+            interval.tick().await;
+            if let Some(rss_kib) = current_process_rss_kib() {
+                tracing::info!(memory_rss_kib = rss_kib, "process memory usage");
+            }
+        }
+    })
+}
+
+fn spawn_systemd_watchdog() -> Option<tokio::task::JoinHandle<()>> {
+    let watchdog_usec = std::env::var("WATCHDOG_USEC").ok()?;
+    let ping_interval = parse_watchdog_ping_interval(&watchdog_usec)?;
+
+    if let Err(e) = systemd_notify("READY=1") {
+        tracing::warn!("failed to send systemd READY=1: {e}");
+    }
+
+    Some(tokio::spawn(async move {
+        let mut interval = tokio::time::interval(ping_interval);
+        loop {
+            interval.tick().await;
+            if let Err(e) = systemd_notify("WATCHDOG=1") {
+                tracing::warn!("failed to send systemd WATCHDOG=1: {e}");
+            }
+        }
+    }))
+}
+
+async fn run_adapter_with_recovery(
+    adapter: &TelegramAdapter,
+    agent: Arc<Agent>,
+) -> Result<(), String> {
+    let mut attempts = 0u32;
+    loop {
+        let agent_clone = Arc::clone(&agent);
+        match adapter
+            .run(move |event: Event| {
+                let agent = Arc::clone(&agent_clone);
+                Box::pin(async move { agent.handle_event(event).await })
+            })
+            .await
+        {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                attempts += 1;
+                if attempts > TELEGRAM_RECONNECT_MAX_ATTEMPTS {
+                    return Err(format!(
+                        "telegram adapter failed after {TELEGRAM_RECONNECT_MAX_ATTEMPTS} retries: {e}"
+                    ));
+                }
+                let delay = std::cmp::min(
+                    TELEGRAM_RECONNECT_BASE_DELAY_SECS.saturating_mul(2u64.pow(attempts - 1)),
+                    TELEGRAM_RECONNECT_MAX_DELAY_SECS,
+                );
+                tracing::warn!(
+                    attempt = attempts,
+                    retry_in_secs = delay,
+                    "telegram adapter error; restarting"
+                );
+                tokio::time::sleep(Duration::from_secs(delay)).await;
+            }
+        }
+    }
+}
+
+async fn flush_pluresdb_on_shutdown(
+    store: &PluresDbStore,
+    hostname: &str,
+    telegram_token: &str,
+) -> Result<(), String> {
+    store
+        .set_host_adapters(
+            hostname,
+            vec![HostAdapterConfig {
+                kind: "telegram".to_string(),
+                connection_id: telegram_token.to_string(),
+                single_connection: true,
+            }],
+        )
+        .await
+        .map_err(|e| format!("pluresdb flush failed: {e}"))
 }
 
 async fn read_host_adapter_configs(
@@ -1028,6 +1176,9 @@ enum Commands {
 async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
+        .with_target(true)
+        .with_thread_ids(true)
+        .with_thread_names(true)
         .init();
 
     let cli = Cli::parse();
@@ -1075,6 +1226,7 @@ async fn main() {
             sync_shared_key,
         } => {
             tracing::info!("Starting Pares Agens daemon");
+            let started_at = Instant::now();
             let sync_enabled = sync_topic_key.is_some();
 
             let system_prompt = match build_system_prompt(system_prompt) {
@@ -1290,7 +1442,7 @@ async fn main() {
             ));
 
             // Keep a reference to the store for conversation turn persistence.
-            let turn_store: Arc<dyn pares_agens_core::memory::store::MemoryStore> = store;
+            let turn_store: Arc<dyn pares_agens_core::memory::store::MemoryStore> = store.clone();
 
             let memory = Arc::new(PluresMemory {
                 plures_lm: Arc::clone(&plures_lm),
@@ -1332,6 +1484,7 @@ async fn main() {
             );
 
             // Set up Telegram adapter
+            let telegram_token_for_shutdown = telegram_token.clone();
             let config = TelegramConfig::new(telegram_token);
             let adapter = TelegramAdapter::new(config);
 
@@ -1371,16 +1524,39 @@ async fn main() {
             });
             tracing::info!("Scheduler started");
 
-            let agent_clone = agent.clone();
+            let memory_monitor = spawn_memory_monitor();
+            let watchdog = spawn_systemd_watchdog();
 
-            if let Err(e) = adapter
-                .run(move |event: Event| {
-                    let agent = agent_clone.clone();
-                    Box::pin(async move { agent.handle_event(event).await })
-                })
-                .await
+            let adapter_result = run_adapter_with_recovery(&adapter, Arc::clone(&agent)).await;
+
+            if let Err(e) = systemd_notify("STOPPING=1") {
+                tracing::warn!("failed to send systemd STOPPING=1: {e}");
+            }
+
+            if let Err(e) =
+                flush_pluresdb_on_shutdown(&store, &hostname, &telegram_token_for_shutdown).await
             {
-                tracing::error!("Telegram adapter exited: {e}");
+                tracing::warn!("{e}");
+            }
+
+            memory_monitor.abort();
+            if let Some(handle) = watchdog {
+                handle.abort();
+            }
+
+            let uptime_secs = started_at.elapsed().as_secs();
+            if let Some(rss_kib) = current_process_rss_kib() {
+                tracing::info!(
+                    uptime_secs,
+                    memory_rss_kib = rss_kib,
+                    "daemon shutdown complete"
+                );
+            } else {
+                tracing::info!(uptime_secs, "daemon shutdown complete");
+            }
+
+            if let Err(e) = adapter_result {
+                tracing::error!("{e}");
                 std::process::exit(1);
             }
         }
@@ -1491,5 +1667,23 @@ mod tests {
             }
             _ => panic!("expected interval schedule"),
         }
+    }
+
+    #[test]
+    fn parse_vm_rss_kib_extracts_numeric_value() {
+        let status = "Name:\tpares-agens\nVmRSS:\t   42104 kB\nThreads:\t6\n";
+        assert_eq!(parse_vm_rss_kib(status), Some(42104));
+    }
+
+    #[test]
+    fn parse_watchdog_ping_interval_uses_half_of_watchdog_usec() {
+        let interval = parse_watchdog_ping_interval("4000000").expect("watchdog interval");
+        assert_eq!(interval, Duration::from_secs(2));
+    }
+
+    #[test]
+    fn parse_watchdog_ping_interval_has_safe_minimum() {
+        let interval = parse_watchdog_ping_interval("1000").expect("watchdog interval");
+        assert_eq!(interval, Duration::from_secs(1));
     }
 }
