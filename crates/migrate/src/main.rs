@@ -768,6 +768,7 @@ fn parse_sync_topic_key(raw: &str) -> Result<[u8; 32], String> {
 }
 
 #[derive(Debug, Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Migrate data from an existing OpenClaw installation.
     Migrate {
