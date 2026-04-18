@@ -2,7 +2,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use pluresdb::{CrdtStore, MemoryStorage, SledStorage, StorageEngine};
+use pluresdb_sea::{sea_decrypt_wire, sea_encrypt_wire, SeaKeyPair};
 use pluresdb_sync::{create_transport, GunMessage, Replicator, TransportConfig, TransportMode};
 use tokio::sync::RwLock;
 
@@ -103,6 +105,9 @@ const ACTOR: &str = "pares-agens";
 
 /// The PluresDB key prefix for conversation turn entries.
 const TURN_PREFIX: &str = "turn:";
+const SEA_DATA_FIELD: &str = "_sea";
+const SEA_HOST_KEY_FILE: &str = ".sea-host-key.json";
+const SEA_SYNC_PAYLOAD_ENCODING: &str = "base64url";
 
 /// A [`MemoryStore`] backed by a PluresDB [`CrdtStore`].
 ///
@@ -117,6 +122,7 @@ const TURN_PREFIX: &str = "turn:";
 /// leverage the index directly.
 pub struct PluresDbStore {
     store: Arc<CrdtStore>,
+    host_sea_key: Option<SeaKeyPair>,
     _sync_task: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -127,12 +133,14 @@ impl PluresDbStore {
     /// Returns [`Error::Store`] if the underlying [`SledStorage`] cannot be
     /// opened (e.g. permission denied, corrupted database).
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
+        let host_sea_key = load_or_create_host_sea_key(path.as_ref())?;
         let storage: Arc<dyn StorageEngine> = Arc::new(
             SledStorage::open(path).map_err(|e| Error::Store(format!("open failed: {e}")))?,
         );
         let store = CrdtStore::default().with_persistence(storage);
         Ok(Self {
             store: Arc::new(store),
+            host_sea_key: Some(host_sea_key),
             _sync_task: None,
         })
     }
@@ -149,6 +157,7 @@ impl PluresDbStore {
     pub fn open_with_embeddings(path: impl AsRef<Path>) -> Result<Self, Error> {
         use pluresdb::FastEmbedder;
 
+        let host_sea_key = load_or_create_host_sea_key(path.as_ref())?;
         let storage: Arc<dyn StorageEngine> = Arc::new(
             SledStorage::open(&path).map_err(|e| Error::Store(format!("open failed: {e}")))?,
         );
@@ -169,6 +178,7 @@ impl PluresDbStore {
         // CrdtStore is Clone — both share the same underlying data via Arc internals.
         Ok(Self {
             store: arc_store,
+            host_sea_key: Some(host_sea_key),
             _sync_task: None,
         })
     }
@@ -182,11 +192,22 @@ impl PluresDbStore {
     /// # Errors
     /// Returns [`Error::Store`] if the store cannot be opened or sync cannot
     /// be initialized.
-    pub fn open_with_sync(path: impl AsRef<Path>, topic_key: &[u8; 32]) -> Result<Self, Error> {
+    pub fn open_with_sync(
+        path: impl AsRef<Path>,
+        topic_key: &[u8; 32],
+        shared_key: &str,
+    ) -> Result<Self, Error> {
         let mut store = Self::open(path)?;
+        let sync_sea_key = parse_sea_key(shared_key)?;
+        let host_sea_key = store.host_sea_key.clone();
         store._sync_task = Some(
-            spawn_sync_task(Arc::clone(&store.store), *topic_key)
-                .map_err(|e| Error::Store(format!("sync init failed: {e}")))?,
+            spawn_sync_task(
+                Arc::clone(&store.store),
+                *topic_key,
+                sync_sea_key,
+                host_sea_key,
+            )
+            .map_err(|e| Error::Store(format!("sync init failed: {e}")))?,
         );
         Ok(store)
     }
@@ -200,14 +221,142 @@ impl PluresDbStore {
         let store = CrdtStore::default().with_persistence(storage);
         Self {
             store: Arc::new(store),
+            host_sea_key: None,
             _sync_task: None,
         }
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SeaSyncEnvelope {
+    sender_epub: String,
+    wire: String,
+    payload_b64: String,
+}
+
+fn load_or_create_host_sea_key(path: &Path) -> Result<SeaKeyPair, Error> {
+    std::fs::create_dir_all(path).map_err(|e| {
+        Error::Store(format!(
+            "failed to create store directory for host key {}: {e}",
+            path.display()
+        ))
+    })?;
+    let key_path = path.join(SEA_HOST_KEY_FILE);
+    if key_path.exists() {
+        let raw = std::fs::read_to_string(&key_path).map_err(|e| {
+            Error::Store(format!(
+                "failed to read host key {}: {e}",
+                key_path.display()
+            ))
+        })?;
+        return serde_json::from_str::<SeaKeyPair>(&raw).map_err(|e| {
+            Error::Store(format!(
+                "failed to parse host key {}: {e}",
+                key_path.display()
+            ))
+        });
+    }
+
+    let pair = SeaKeyPair::generate();
+    let raw = serde_json::to_string(&pair).map_err(|e| {
+        Error::Store(format!(
+            "failed to serialise generated host key {}: {e}",
+            key_path.display()
+        ))
+    })?;
+    std::fs::write(&key_path, raw).map_err(|e| {
+        Error::Store(format!(
+            "failed to persist host key {}: {e}",
+            key_path.display()
+        ))
+    })?;
+    Ok(pair)
+}
+
+fn parse_sea_key(shared_key: &str) -> Result<SeaKeyPair, Error> {
+    if let Ok(pair) = serde_json::from_str::<SeaKeyPair>(shared_key) {
+        return Ok(pair);
+    }
+    let decoded = URL_SAFE_NO_PAD
+        .decode(shared_key)
+        .map_err(|e| Error::Store(format!("invalid sync shared key encoding: {e}")))?;
+    let json = String::from_utf8(decoded)
+        .map_err(|e| Error::Store(format!("invalid sync shared key UTF-8: {e}")))?;
+    serde_json::from_str::<SeaKeyPair>(&json)
+        .map_err(|e| Error::Store(format!("invalid sync shared key payload: {e}")))
+}
+
+fn seal_value_for_storage(
+    value: serde_json::Value,
+    host_key: Option<&SeaKeyPair>,
+) -> Result<serde_json::Value, Error> {
+    match host_key {
+        None => Ok(value),
+        Some(key) => {
+            let plaintext = serde_json::to_string(&value).map_err(|e| {
+                Error::Store(format!("failed to serialise value for encryption: {e}"))
+            })?;
+            let wire = sea_encrypt_wire(&plaintext, key, &key.epub)
+                .map_err(|e| Error::Store(format!("failed to encrypt value for storage: {e}")))?;
+            Ok(serde_json::json!({ SEA_DATA_FIELD: wire }))
+        }
+    }
+}
+
+fn unseal_value_from_storage(
+    value: serde_json::Value,
+    host_key: Option<&SeaKeyPair>,
+) -> Result<serde_json::Value, Error> {
+    match host_key {
+        None => Ok(value),
+        Some(key) => {
+            let Some(wire) = value
+                .get(SEA_DATA_FIELD)
+                .and_then(serde_json::Value::as_str)
+            else {
+                return Ok(value);
+            };
+            let plaintext = sea_decrypt_wire(wire, key, &key.epub)
+                .map_err(|e| Error::Store(format!("failed to decrypt value from storage: {e}")))?;
+            serde_json::from_str(&plaintext)
+                .map_err(|e| Error::Store(format!("failed to parse decrypted value JSON: {e}")))
+        }
+    }
+}
+
+fn encrypt_sync_payload(payload: &[u8], sync_sea_key: &SeaKeyPair) -> Result<Vec<u8>, String> {
+    let payload_b64 = URL_SAFE_NO_PAD.encode(payload);
+    let wire = sea_encrypt_wire(&payload_b64, sync_sea_key, &sync_sea_key.epub)
+        .map_err(|e| format!("SEA payload encryption failed: {e}"))?;
+    serde_json::to_vec(&SeaSyncEnvelope {
+        sender_epub: sync_sea_key.epub.clone(),
+        wire,
+        payload_b64: SEA_SYNC_PAYLOAD_ENCODING.to_string(),
+    })
+    .map_err(|e| format!("SEA sync envelope serialise failed: {e}"))
+}
+
+fn decrypt_sync_payload(payload: &[u8], sync_sea_key: &SeaKeyPair) -> Result<Vec<u8>, String> {
+    let envelope: SeaSyncEnvelope = serde_json::from_slice(payload)
+        .map_err(|e| format!("SEA sync envelope parse failed: {e}"))?;
+    if envelope.payload_b64 != SEA_SYNC_PAYLOAD_ENCODING {
+        return Err(format!(
+            "unsupported SEA sync payload encoding: {}",
+            envelope.payload_b64
+        ));
+    }
+    let plaintext_b64 = sea_decrypt_wire(&envelope.wire, sync_sea_key, &envelope.sender_epub)
+        .map_err(|e| format!("SEA payload decryption failed: {e}"))?;
+    URL_SAFE_NO_PAD
+        .decode(plaintext_b64)
+        .map_err(|e| format!("sync payload base64 decode failed: {e}"))
+}
+
 fn spawn_sync_task(
     store: Arc<CrdtStore>,
     topic_key: [u8; 32],
+    sync_sea_key: SeaKeyPair,
+    host_sea_key: Option<SeaKeyPair>,
 ) -> Result<tokio::task::JoinHandle<()>, String> {
     let runtime = tokio::runtime::Handle::try_current()
         .map_err(|e| format!("open_with_sync requires an active Tokio runtime: {e}"))?;
@@ -225,7 +374,14 @@ fn spawn_sync_task(
         };
         tracing::info!("PluresDbStore: Hyperswarm sync active");
         while let Some(mut connection) = connections.recv().await {
-            if let Err(e) = sync_connection(Arc::clone(&store), &mut *connection).await {
+            if let Err(e) = sync_connection(
+                Arc::clone(&store),
+                &mut *connection,
+                &sync_sea_key,
+                host_sea_key.as_ref(),
+            )
+            .await
+            {
                 tracing::warn!("sync connection failed: {e}");
             }
         }
@@ -235,14 +391,19 @@ fn spawn_sync_task(
 async fn sync_connection(
     store: Arc<CrdtStore>,
     connection: &mut dyn pluresdb_sync::Connection,
+    sync_sea_key: &SeaKeyPair,
+    host_sea_key: Option<&SeaKeyPair>,
 ) -> Result<(), String> {
     let replicator = Replicator::new(ACTOR);
     for record in store.list() {
+        let data = unseal_value_from_storage(record.data, host_sea_key)
+            .map_err(|e| format!("unseal local value failed before sync: {e}"))?;
         let payload = replicator
-            .encode_put(&record.id, record.data)
+            .encode_put(&record.id, data)
             .map_err(|e| format!("encode_put failed: {e}"))?;
+        let encrypted_payload = encrypt_sync_payload(&payload, sync_sea_key)?;
         connection
-            .send(&payload)
+            .send(&encrypted_payload)
             .await
             .map_err(|e| format!("send failed: {e}"))?;
     }
@@ -252,29 +413,30 @@ async fn sync_connection(
         .map_err(|e| format!("close failed: {e}"))?;
 
     loop {
-        let maybe_payload = match tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            connection.receive(),
-        )
-        .await
-        {
-            Ok(result) => result.map_err(|e| format!("receive failed: {e}"))?,
-            Err(_) => {
-                tracing::debug!("sync receive timeout reached; ending peer sync loop");
-                break;
-            }
-        };
+        let maybe_payload =
+            match tokio::time::timeout(std::time::Duration::from_secs(5), connection.receive())
+                .await
+            {
+                Ok(result) => result.map_err(|e| format!("receive failed: {e}"))?,
+                Err(_) => {
+                    tracing::debug!("sync receive timeout reached; ending peer sync loop");
+                    break;
+                }
+            };
         let Some(payload) = maybe_payload else {
             break;
         };
-        let message = GunMessage::decode(&payload).map_err(|e| format!("decode failed: {e}"))?;
+        let decrypted_payload = decrypt_sync_payload(&payload, sync_sea_key)?;
+        let message =
+            GunMessage::decode(&decrypted_payload).map_err(|e| format!("decode failed: {e}"))?;
         if let GunMessage::Put(put) = message {
             for (id, node) in put.put {
-                store.put(
-                    id,
-                    ACTOR,
+                let value = seal_value_for_storage(
                     serde_json::Value::Object(node.fields.into_iter().collect()),
-                );
+                    host_sea_key,
+                )
+                .map_err(|e| format!("seal synced value for local storage failed: {e}"))?;
+                store.put(id, ACTOR, value);
             }
         }
     }
@@ -286,8 +448,11 @@ impl MemoryStore for PluresDbStore {
     async fn insert(&self, entry: MemoryEntry) -> Result<(), Error> {
         let id = entry.id.clone();
         let embedding = entry.embedding.clone();
-        let data = serde_json::to_value(&entry)
-            .map_err(|e| Error::Store(format!("serialise failed: {e}")))?;
+        let data = seal_value_for_storage(
+            serde_json::to_value(&entry)
+                .map_err(|e| Error::Store(format!("serialise failed: {e}")))?,
+            self.host_sea_key.as_ref(),
+        )?;
         self.store.put_with_embedding(id, ACTOR, data, embedding);
         Ok(())
     }
@@ -296,11 +461,12 @@ impl MemoryStore for PluresDbStore {
         let records = self.store.list();
         let mut entries = Vec::with_capacity(records.len());
         for record in records {
+            let value = unseal_value_from_storage(record.data, self.host_sea_key.as_ref())?;
             // Skip conversation turn entries (prefixed with "turn:").
             if record.id.starts_with(TURN_PREFIX) {
                 continue;
             }
-            if let Ok(entry) = serde_json::from_value::<MemoryEntry>(record.data) {
+            if let Ok(entry) = serde_json::from_value::<MemoryEntry>(value) {
                 entries.push(entry);
             }
         }
@@ -317,8 +483,11 @@ impl MemoryStore for PluresDbStore {
 
     async fn insert_turn(&self, turn: ChatTurn) -> Result<(), Error> {
         let key = format!("{TURN_PREFIX}{}", turn.id);
-        let data = serde_json::to_value(&turn)
-            .map_err(|e| Error::Store(format!("serialise turn failed: {e}")))?;
+        let data = seal_value_for_storage(
+            serde_json::to_value(&turn)
+                .map_err(|e| Error::Store(format!("serialise turn failed: {e}")))?,
+            self.host_sea_key.as_ref(),
+        )?;
         // Turns don't need embeddings — they're retrieved by channel+time, not similarity.
         self.store.put(key, ACTOR, data);
         Ok(())
@@ -326,12 +495,18 @@ impl MemoryStore for PluresDbStore {
 
     async fn recent_turns(&self, channel: &str, limit: usize) -> Result<Vec<ChatTurn>, Error> {
         let records = self.store.list();
-        let mut turns: Vec<ChatTurn> = records
+        let mut turns = Vec::new();
+        for record in records
             .into_iter()
             .filter(|r| r.id.starts_with(TURN_PREFIX))
-            .filter_map(|r| serde_json::from_value::<ChatTurn>(r.data).ok())
-            .filter(|t| t.channel == channel)
-            .collect();
+        {
+            let value = unseal_value_from_storage(record.data, self.host_sea_key.as_ref())?;
+            if let Ok(turn) = serde_json::from_value::<ChatTurn>(value) {
+                if turn.channel == channel {
+                    turns.push(turn);
+                }
+            }
+        }
         turns.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
         let start = turns.len().saturating_sub(limit);
         Ok(turns[start..].to_vec())
@@ -346,6 +521,13 @@ impl MemoryStore for PluresDbStore {
 mod tests {
     use super::*;
     use crate::memory::entry::MemoryCategory;
+    use std::time::Duration;
+    const SYNC_TIMEOUT_SECS: u64 = 10;
+
+    fn encode_shared_key(pair: &SeaKeyPair) -> String {
+        let json = serde_json::to_vec(pair).unwrap();
+        URL_SAFE_NO_PAD.encode(json)
+    }
 
     fn make_entry(id: &str, content: &str) -> MemoryEntry {
         MemoryEntry {
@@ -429,7 +611,8 @@ mod tests {
     async fn pluresdb_store_open_with_sync_succeeds() {
         let dir = tempfile::tempdir().unwrap();
         let key = [0u8; 32];
-        let store = PluresDbStore::open_with_sync(dir.path(), &key).unwrap();
+        let sync_key = encode_shared_key(&SeaKeyPair::generate());
+        let store = PluresDbStore::open_with_sync(dir.path(), &key, &sync_key).unwrap();
         store.insert(make_entry("s1", "synced")).await.unwrap();
         let all = store.all().await.unwrap();
         assert_eq!(all.len(), 1);
@@ -440,16 +623,18 @@ mod tests {
         let dir_a = tempfile::tempdir().unwrap();
         let dir_b = tempfile::tempdir().unwrap();
         let key = [7u8; 32];
+        let sync_key = encode_shared_key(&SeaKeyPair::generate());
 
-        let store_a = PluresDbStore::open_with_sync(dir_a.path(), &key).unwrap();
+        let store_a = PluresDbStore::open_with_sync(dir_a.path(), &key, &sync_key).unwrap();
         store_a
             .insert(make_entry("shared-1", "from-a"))
             .await
             .unwrap();
 
-        let store_b = PluresDbStore::open_with_sync(dir_b.path(), &key).unwrap();
+        let store_b = PluresDbStore::open_with_sync(dir_b.path(), &key, &sync_key).unwrap();
 
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline =
+            tokio::time::Instant::now() + std::time::Duration::from_secs(SYNC_TIMEOUT_SECS);
         loop {
             let all = store_b.all().await.unwrap();
             if all.iter().any(|entry| entry.id == "shared-1") {
@@ -460,6 +645,70 @@ mod tests {
             }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
+    }
+
+    #[tokio::test]
+    async fn pluresdb_store_open_with_sync_rejects_wrong_shared_key() {
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        let topic = [11u8; 32];
+        let sync_key_a = encode_shared_key(&SeaKeyPair::generate());
+        let sync_key_b = encode_shared_key(&SeaKeyPair::generate());
+
+        let store_a = PluresDbStore::open_with_sync(dir_a.path(), &topic, &sync_key_a).unwrap();
+        store_a
+            .insert(make_entry("shared-2", "from-a"))
+            .await
+            .unwrap();
+        let store_b = PluresDbStore::open_with_sync(dir_b.path(), &topic, &sync_key_b).unwrap();
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let all = store_b.all().await.unwrap();
+            if all.iter().any(|entry| entry.id == "shared-2") {
+                panic!("peer without shared key should not decrypt replicated payloads");
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn pluresdb_store_persists_encrypted_values_at_rest() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PluresDbStore::open(dir.path()).unwrap();
+        store
+            .insert(make_entry("enc-1", "highly-sensitive-memory"))
+            .await
+            .unwrap();
+
+        // Read raw sled files directly to verify plaintext is not present on disk.
+        let contains_plaintext = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter_map(|entry| std::fs::read(entry.path()).ok())
+            .any(|bytes| String::from_utf8_lossy(&bytes).contains("highly-sensitive-memory"));
+        assert!(
+            !contains_plaintext,
+            "sled value should be encrypted at rest"
+        );
+    }
+
+    #[tokio::test]
+    async fn pluresdb_store_reopen_decrypts_existing_values() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let store = PluresDbStore::open(dir.path()).unwrap();
+            store
+                .insert(make_entry("persist-1", "persisted"))
+                .await
+                .unwrap();
+        }
+        let reopened = PluresDbStore::open(dir.path()).unwrap();
+        let all = reopened.all().await.unwrap();
+        assert!(all.iter().any(|entry| entry.id == "persist-1"));
     }
 
     // ── remove ───────────────────────────────────────────────────────────────
