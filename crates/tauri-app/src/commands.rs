@@ -421,3 +421,14 @@ pub async fn get_conversation_history(
 
     Ok(result)
 }
+
+/// Handle a user action selected from an actionable desktop notification.
+#[tauri::command]
+pub async fn handle_notification_action(
+    notification_id: String,
+    action: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    crate::notifications::handle_action(&app, &notification_id, &action);
+    Ok(())
+}
