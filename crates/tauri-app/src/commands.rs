@@ -49,7 +49,11 @@ pub async fn send_message(
         settings.telemetry.enabled
     };
     if telemetry_enabled {
-        let elapsed_ms = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        let elapsed_ms = started_at
+            .elapsed()
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX);
         state.telemetry_service.record_model_call(elapsed_ms).await;
     }
 

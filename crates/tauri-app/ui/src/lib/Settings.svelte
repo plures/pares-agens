@@ -102,6 +102,7 @@
   /** @type {{ modelCallsByDay?: Record<string, number>, toolUsageFrequency?: Record<string, number>, avgLatencyMs?: number|null, latencySampleCount?: number, latencyMinMs?: number|null, latencyMaxMs?: number|null, lastUploadAt?: string|null }} */
   let telemetrySnapshot = $state({});
   let telemetryUploading = $state(false);
+  let telemetryUploadError = $state('');
 
   // ── Dialog lifecycle ─────────────────────────────────────────────────────
   $effect(() => {
@@ -183,6 +184,7 @@
     } catch {
       telemetrySnapshot = {};
     }
+    telemetryUploadError = '';
   }
 
   // ── Tab keyboard navigation (roving tabindex) ───────────────────────────
@@ -475,11 +477,12 @@
 
   async function uploadTelemetryNow() {
     telemetryUploading = true;
+    telemetryUploadError = '';
     try {
       await invoke('upload_telemetry_snapshot');
       telemetrySnapshot = await invoke('get_telemetry_snapshot');
     } catch (err) {
-      alert(`Telemetry upload failed: ${err}`);
+      telemetryUploadError = `Upload failed: ${err}`;
     } finally {
       telemetryUploading = false;
     }
@@ -949,6 +952,9 @@
           disabled={!telemetryEnabled || !telemetryUploadEnabled || !telemetryUploadEndpoint.trim() || telemetryUploading}>
           {telemetryUploading ? 'Uploading…' : 'Upload now'}
         </button>
+        {#if telemetryUploadError}
+          <p class="upgrade-error" role="alert">{telemetryUploadError}</p>
+        {/if}
       </div>
 
       <div class="pref-section">

@@ -30,10 +30,10 @@
 //! # }
 //! ```
 
-/// High-level agent abstraction and in-memory storage.
-pub mod agent;
 /// Authentication helpers for external providers.
 pub mod auth;
+/// High-level agent abstraction and in-memory storage.
+pub mod agent;
 /// Cerebellum orchestrator — autorecall, routing, and pipeline execution.
 pub mod cerebellum;
 /// Local multi-agent delegation and concurrent sub-task execution.
