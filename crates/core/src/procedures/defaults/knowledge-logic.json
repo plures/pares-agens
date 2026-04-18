@@ -1,0 +1,76 @@
+{
+  "praxis-logic-validate": {
+    "description": "When a decision is stored, validate against existing praxis logic. Check for contradictions.",
+    "trigger": {
+      "kind": "after_store",
+      "filter": {
+        "category": "decision"
+      }
+    },
+    "steps": [
+      {
+        "kind": "search",
+        "params": {
+          "query": "$input.text",
+          "limit": 10
+        },
+        "as": "related"
+      },
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": [
+            "$related"
+          ],
+          "instruction": "Check if new memory contradicts any existing facts. Flag contradictions.",
+          "mode": "structured"
+        },
+        "as": "validation"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "logic-validated",
+          "data": "$validation"
+        }
+      }
+    ]
+  },
+  "decision-wip-reconcile": {
+    "description": "When an architecture decision is stored, verify implementation tracking exists.",
+    "trigger": {
+      "kind": "after_store",
+      "filter": {
+        "category": "architecture-decision"
+      }
+    },
+    "steps": [
+      {
+        "kind": "search",
+        "params": {
+          "query": "$input.text",
+          "limit": 10
+        },
+        "as": "related"
+      },
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": [
+            "$related"
+          ],
+          "instruction": "Check: (1) WIP items contradicting this decision? (2) GitHub issue for implementation? (3) If no tracking, flag.",
+          "mode": "structured"
+        },
+        "as": "reconciliation"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "decision-reconciled",
+          "data": "$reconciliation"
+        }
+      }
+    ]
+  }
+}

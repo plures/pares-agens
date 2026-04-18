@@ -1,0 +1,48 @@
+{
+  "praxis-evidence-capture": {
+    "description": "When WIP stored, surface forgotten tasks and contradictions.",
+    "trigger": {
+      "kind": "after_store",
+      "filter": {
+        "category": "work-in-progress"
+      }
+    },
+    "steps": [
+      {
+        "kind": "search",
+        "params": {
+          "query": "$input.text",
+          "limit": 5
+        },
+        "as": "related_wip"
+      },
+      {
+        "kind": "search",
+        "params": {
+          "query": "constraint rule hard-rule",
+          "limit": 5
+        },
+        "as": "constraints"
+      },
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": [
+            "$related_wip",
+            "$constraints"
+          ],
+          "instruction": "Find incomplete work related to the new WIP. Surface constraints that apply. Flag contradictions.",
+          "mode": "fused"
+        },
+        "as": "evidence"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "evidence-captured",
+          "data": "$evidence"
+        }
+      }
+    ]
+  }
+}

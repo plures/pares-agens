@@ -1,0 +1,134 @@
+{
+  "staleness-on-access": {
+    "description": "On every memory recall, check if returned results contain hardcoded lists, stale counts, or deprecated references. Flag stale results.",
+    "trigger": {
+      "kind": "before_search"
+    },
+    "steps": [
+      {
+        "kind": "search",
+        "params": {
+          "query": "$input.query",
+          "limit": 5
+        },
+        "as": "results"
+      },
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": [
+            "$results"
+          ],
+          "instruction": "Check for hardcoded numbers, stale dates, deprecated references. Mark suspicious with possibly_stale flag.",
+          "mode": "structured"
+        },
+        "as": "stale_check"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "recall-with-staleness",
+          "data": "$stale_check"
+        }
+      }
+    ]
+  },
+  "supersede-on-store": {
+    "description": "When a new memory is stored, search for existing memories it might supersede.",
+    "trigger": {
+      "kind": "after_store"
+    },
+    "steps": [
+      {
+        "kind": "search",
+        "params": {
+          "query": "$input.text",
+          "limit": 1
+        },
+        "as": "new_memory"
+      },
+      {
+        "kind": "search",
+        "params": {
+          "query": "$input.text",
+          "limit": 5
+        },
+        "as": "existing"
+      },
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": [
+            "$new_memory",
+            "$existing"
+          ],
+          "instruction": "Compare new vs existing. Output {id, action: supersede|keep|review, reason} for conflicts.",
+          "mode": "structured"
+        },
+        "as": "conflicts"
+      },
+      {
+        "kind": "conditional",
+        "params": {
+          "condition": "$conflicts.length > 0",
+          "then_steps": [
+            {
+              "kind": "emit",
+              "params": {
+                "event": "memories-superseded",
+                "data": "$conflicts"
+              }
+            }
+          ],
+          "else_steps": []
+        }
+      }
+    ]
+  },
+  "memory-quality-check": {
+    "description": "After store: detect vague, incomplete, or low-quality memories and flag for enrichment.",
+    "trigger": {
+      "kind": "after_store",
+      "filter": {
+        "category": "conversation"
+      }
+    },
+    "steps": [
+      {
+        "kind": "search",
+        "params": {
+          "query": "$input.text",
+          "limit": 1
+        },
+        "as": "stored"
+      },
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": [
+            "$stored"
+          ],
+          "instruction": "Check: content length >50 chars, has specifics (names/numbers/dates), not just 'fixed the thing'. Flag low quality.",
+          "mode": "structured"
+        },
+        "as": "quality"
+      },
+      {
+        "kind": "conditional",
+        "params": {
+          "condition": "$quality.is_low",
+          "then_steps": [
+            {
+              "kind": "emit",
+              "params": {
+                "event": "memory-quality-low",
+                "data": "$quality"
+              }
+            }
+          ],
+          "else_steps": []
+        }
+      }
+    ]
+  }
+}
