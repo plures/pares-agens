@@ -30,9 +30,13 @@ use uuid::Uuid;
 
 use crate::adapter::{ChannelAdapter, ChannelError};
 
-const PARES_MODULUS_INDEX_URL: &str = "https://raw.githubusercontent.com/plures/pares-modulus/main/index.json";
+const PARES_MODULUS_INDEX_URL: &str =
+    "https://raw.githubusercontent.com/plures/pares-modulus/main/index.json";
 const DEFAULT_MARKETPLACE_INSTALL_DIR: &str = "/skills";
 const MAX_INDEX_LISTING_ITEMS: usize = 10;
+const DEFAULT_NIX_FLAKE_DIR: &str = ".";
+const DEFAULT_NIX_HOST: &str = "praxisbot";
+const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
 
 fn parse_modulus_index(payload: &str) -> Result<Vec<SkillMetadata>, String> {
     let value: Value =
@@ -42,10 +46,7 @@ fn parse_modulus_index(payload: &str) -> Result<Vec<SkillMetadata>, String> {
         Value::Object(map) => {
             for key in ["agents", "plugins", "items", "entries"] {
                 if let Some(Value::Array(items)) = map.get(key) {
-                    return Ok(items
-                        .iter()
-                        .filter_map(metadata_from_index_entry)
-                        .collect());
+                    return Ok(items.iter().filter_map(metadata_from_index_entry).collect());
                 }
             }
             return Err("index JSON must be an array or object containing agents/plugins".into());
@@ -136,7 +137,10 @@ async fn fetch_marketplace_index(index_url: &str) -> Result<Vec<SkillMetadata>, 
         .await
         .map_err(|e| format!("failed to fetch marketplace index: {e}"))?;
     if !response.status().is_success() {
-        return Err(format!("marketplace index returned HTTP {}", response.status()));
+        return Err(format!(
+            "marketplace index returned HTTP {}",
+            response.status()
+        ));
     }
     let body = response
         .text()
@@ -175,6 +179,46 @@ fn find_skill_by_id(skills: &[SkillMetadata], id: &str) -> Option<SkillMetadata>
         .iter()
         .find(|skill| skill.id.eq_ignore_ascii_case(id))
         .cloned()
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn build_nixos_update_command(flake_dir: &str, host: &str) -> String {
+    let flake_dir = shell_single_quote(flake_dir);
+    let host = shell_single_quote(host);
+    format!(
+        "set -eu; cd {flake_dir}; lock_before=$(sha256sum flake.lock 2>/dev/null | cut -d' ' -f1 || true); sudo nix flake update pares-agens; lock_after=$(sha256sum flake.lock 2>/dev/null | cut -d' ' -f1 || true); if [ \"$lock_before\" != \"$lock_after\" ]; then sudo nixos-rebuild switch --flake .#{host}; echo \"Self-update applied\"; else echo \"No new pares-agens commits on main\"; fi"
+    )
+}
+
+fn truncate_telegram_message(content: String) -> String {
+    let mut chars = content.chars();
+    let truncated: String = chars.by_ref().take(TELEGRAM_MAX_MESSAGE_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{truncated}\n…(truncated)")
+    } else {
+        truncated
+    }
+}
+
+fn format_update_command_output(output: &std::process::Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
+    if output.status.success() {
+        if stdout.is_empty() {
+            "Self-update completed.".to_string()
+        } else {
+            stdout
+        }
+    } else {
+        format!(
+            "Self-update failed ({status}).\n{stdout}\n{stderr}",
+            status = output.status
+        )
+    }
 }
 
 /// Configuration for the Telegram adapter.
@@ -362,6 +406,11 @@ impl ChannelAdapter for TelegramAdapter {
             let on_event = on_event.clone();
             let installer = installer.clone();
             let index_url = index_url.clone();
+            let update_flake_dir =
+                std::env::var("PARES_NIX_FLAKE_DIR").unwrap_or_else(|_| DEFAULT_NIX_FLAKE_DIR.into());
+            let update_host =
+                std::env::var("PARES_NIX_HOST").unwrap_or_else(|_| DEFAULT_NIX_HOST.into());
+            let update_command = build_nixos_update_command(&update_flake_dir, &update_host);
             async move {
                 // Check for slash commands before sending to agent
                 if let Some(text) = msg.text() {
@@ -375,7 +424,7 @@ impl ChannelAdapter for TelegramAdapter {
                                 let _ = bot
                                     .send_message(
                                         msg.chat.id,
-                                        "Pares Agens commands:\n/status - health info\n/agents - browse pares-modulus marketplace\n/install <id> - install an agent/plugin\n\nOr just send a message.",
+                                        "Pares Agens commands:\n/status - health info\n/agents - browse pares-modulus marketplace\n/install <id> - install an agent/plugin\n/update - run NixOS self-update and rebuild if pares-agens changed\n\nOr just send a message.",
                                     )
                                     .await;
                                 return respond(());
@@ -429,6 +478,30 @@ impl ChannelAdapter for TelegramAdapter {
                                     Err(e) => format!("Marketplace lookup failed: {e}"),
                                 };
 
+                                let _ = bot.send_message(msg.chat.id, reply).await;
+                                return respond(());
+                            }
+                            "update" => {
+                                let _ = bot
+                                    .send_message(
+                                        msg.chat.id,
+                                        format!(
+                                            "Running self-update in `{}` for host `{}`.",
+                                            update_flake_dir, update_host
+                                        ),
+                                    )
+                                    .await;
+                                let reply = match tokio::process::Command::new("sh")
+                                    .arg("-c")
+                                    .arg(&update_command)
+                                    .output()
+                                    .await
+                                {
+                                    Ok(output) => {
+                                        truncate_telegram_message(format_update_command_output(&output))
+                                    }
+                                    Err(e) => format!("Failed to start self-update command: {e}"),
+                                };
                                 let _ = bot.send_message(msg.chat.id, reply).await;
                                 return respond(());
                             }
@@ -592,5 +665,25 @@ mod tests {
         "#;
         let skills = parse_modulus_index(json).unwrap();
         assert!(skills.is_empty());
+    }
+
+    #[test]
+    fn build_nixos_update_command_contains_required_steps() {
+        let command = build_nixos_update_command("/etc/nixos", "praxisbot");
+        assert!(command.contains("sudo nix flake update pares-agens"));
+        assert!(command.contains("sudo nixos-rebuild switch --flake .#'praxisbot'"));
+        assert!(command.contains("No new pares-agens commits on main"));
+    }
+
+    #[test]
+    fn shell_single_quote_escapes_single_quotes() {
+        assert_eq!(shell_single_quote("/etc/ni'xos"), "'/etc/ni'\"'\"'xos'");
+    }
+
+    #[test]
+    fn truncate_telegram_message_marks_truncation() {
+        let input = "a".repeat(TELEGRAM_MAX_MESSAGE_CHARS + 10);
+        let truncated = truncate_telegram_message(input);
+        assert!(truncated.ends_with("…(truncated)"));
     }
 }
