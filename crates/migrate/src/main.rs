@@ -145,7 +145,7 @@ impl ModelClient for RouterModelClient {
                 id: call.id,
                 name: call.function.name,
                 arguments: serde_json::from_str(&call.function.arguments)
-                    .unwrap_or_else(|_| serde_json::Value::String(call.function.arguments)),
+                    .unwrap_or(serde_json::Value::String(call.function.arguments)),
             })
             .collect();
 
@@ -176,9 +176,8 @@ impl ToolDispatcher for ProcedureToolDispatcher {
 
     async fn call_tool(&self, name: &str, arguments: serde_json::Value) -> String {
         let mut handler = None;
-        for proc in self.registry.matching(name) {
+        if let Some(proc) = self.registry.matching(name).next() {
             handler = Some(proc);
-            break;
         }
         let handler = match handler {
             Some(h) => h,
@@ -768,6 +767,7 @@ fn parse_sync_topic_key(raw: &str) -> Result<[u8; 32], String> {
 }
 
 #[derive(Debug, Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Migrate data from an existing OpenClaw installation.
     Migrate {
