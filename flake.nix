@@ -189,7 +189,7 @@ tar.extractall(os.environ['out'] + '/lib')
             assertions = [
               {
                 assertion = cfg.telegramTokenFile != null;
-                message = "services.pares-agens.telegramTokenFile must be set. pares-agens serve requires --telegram-token (or PARES_TELEGRAM_TOKEN).";
+                message = "services.pares-agens.telegramTokenFile must be set. pares-agens serve requires PARES_TELEGRAM_TOKEN.";
               }
               {
                 assertion = cfg.syncTopicKey == null || cfg.syncSharedKeyFile != null;
@@ -251,7 +251,7 @@ tar.extractall(os.environ['out'] + '/lib')
                   extraArgs = lib.concatStringsSep " " cfg.extraFlags;
                 in
                 ''
-                  export PARES_TELEGRAM_TOKEN="$(tr -d '\r\n' < ${telegramTokenFile})"
+                  export PARES_TELEGRAM_TOKEN="$(tr -d '\\r\\n' < ${telegramTokenFile})"
                   ${braveApiKeyExport}
                   ${syncSharedKeyExport}
 
