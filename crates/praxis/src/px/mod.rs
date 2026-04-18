@@ -1,0 +1,151 @@
+//! Praxis Intent Language (.px) parser.
+//!
+//! Parses `.px` files into typed AST nodes using the pest PEG grammar.
+
+use pest::Parser;
+use pest_derive::Parser;
+use serde::{Deserialize, Serialize};
+
+#[derive(Parser)]
+#[grammar = "px/grammar.pest"]
+pub struct PxParser;
+
+/// A parsed .px document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PxDocument {
+    pub imports: Vec<PxImport>,
+    pub facts: Vec<PxFact>,
+    pub rules: Vec<PxRule>,
+    pub constraints: Vec<PxConstraint>,
+    pub contracts: Vec<PxContract>,
+    pub functions: Vec<PxFunction>,
+    pub triggers: Vec<PxTrigger>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PxImport {
+    pub path: String,
+    pub alias: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PxFact {
+    pub name: String,
+    pub fields: Vec<PxField>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PxField {
+    pub name: String,
+    pub type_expr: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PxRule {
+    pub name: String,
+    pub priority: Option<i32>,
+    pub conditions: Vec<String>,
+    pub lets: Vec<(String, String)>,
+    pub actions: Vec<PxAction>,
+    pub captures: Vec<PxCapture>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PxAction {
+    pub kind: String,
+    pub params: std::collections::HashMap<String, serde_json::Value>,
+    pub condition: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PxCapture {
+    pub content: String,
+    pub category: Option<String>,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PxConstraint {
+    pub name: String,
+    pub scope: Option<String>,
+    pub when_expr: String,
+    pub require_expr: String,
+    pub severity: String,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PxContract {
+    pub name: String,
+    pub given: Option<String>,
+    pub when_desc: Option<String>,
+    pub then_desc: Option<String>,
+    pub threshold: Option<f64>,
+    pub examples: Vec<PxExample>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PxExample {
+    pub input: serde_json::Value,
+    pub expect: serde_json::Value,
+    pub threshold: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PxFunction {
+    pub name: String,
+    pub params: Vec<PxField>,
+    pub return_type: String,
+    pub mode: FunctionMode,
+    pub docstring: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum FunctionMode {
+    Deterministic,
+    Probabilistic,
+    Hybrid,
+}
+
+impl Default for FunctionMode {
+    fn default() -> Self {
+        Self::Deterministic
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PxTrigger {
+    pub name: String,
+    pub on_event: String,
+    pub schedule: Option<String>,
+    pub run: String,
+}
+
+/// Parse a .px source string into a document AST.
+pub fn parse(source: &str) -> Result<PxDocument, String> {
+    let _pairs = PxParser::parse(Rule::document, source)
+        .map_err(|e| format!("parse error: {e}"))?;
+
+    // TODO: walk pairs and build PxDocument
+    // For now, return empty document to prove the grammar compiles
+    Ok(PxDocument {
+        imports: vec![],
+        facts: vec![],
+        rules: vec![],
+        constraints: vec![],
+        contracts: vec![],
+        functions: vec![],
+        triggers: vec![],
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parser_compiles() {
+        // Just verify the grammar compiles and the parser struct exists
+        let _ = PxParser::parse(Rule::ident, "hello");
+    }
+}
