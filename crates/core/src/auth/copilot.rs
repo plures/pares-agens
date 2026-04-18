@@ -218,10 +218,10 @@ impl CopilotAuth {
             self.api_base_url = api_base;
         }
 
-        Ok(self
+        self
             .session_token
             .as_deref()
-            .ok_or_else(|| CopilotAuthError::InvalidResponse("missing session token".into()))?)
+            .ok_or_else(|| CopilotAuthError::InvalidResponse("missing session token".into()))
     }
 
     /// Current API base URL derived from the session token.

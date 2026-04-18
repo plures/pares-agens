@@ -748,8 +748,8 @@ impl Agent {
     fn extract_facts(&self, response: &str) -> Vec<String> {
         response
             .lines()
-            .flat_map(|line| line.split(|c| c == '.' || c == '!' || c == '?'))
-            .map(|s| s.trim().trim_start_matches(|c: char| c == '-' || c == '*' || c == '•'))
+            .flat_map(|line| line.split(['.', '!', '?']))
+            .map(|s| s.trim().trim_start_matches(['-', '*', '•']))
             .filter(|s| !s.is_empty())
             .filter(|s| !self.looks_like_correction(s))
             .map(|s| s.to_string())
