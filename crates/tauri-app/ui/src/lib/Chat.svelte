@@ -236,9 +236,17 @@
     const unlistenFocusInput = listen('focus-chat-input', () => {
       requestAnimationFrame(() => inputEl?.focus());
     });
+    const unlistenNotificationAction = listen('notification-action', (event) => {
+      const prompt = event.payload?.prompt;
+      if (prompt) {
+        inputValue = inputValue.trim() ? `${prompt}\n\n${inputValue}` : prompt;
+      }
+      requestAnimationFrame(() => inputEl?.focus());
+    });
     return () => {
       unlisten.then(fn => fn?.());
       unlistenFocusInput.then(fn => fn?.());
+      unlistenNotificationAction.then(fn => fn?.());
     };
   });
 </script>

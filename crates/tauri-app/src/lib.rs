@@ -30,6 +30,7 @@ use crate::state::{
 mod commands;
 mod mcp;
 mod migration;
+mod notifications;
 mod procedures;
 mod settings;
 mod state;
@@ -301,6 +302,7 @@ pub fn run() {
             None,
         ))
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // ── Memory store ──────────────────────────────────────────────
             // Open a persistent PluresDB-backed memory store under the app data
@@ -374,6 +376,7 @@ pub fn run() {
 
             // Spawn the adapter run-loop, routing all events through the agent
             let frontend_handle = app.handle().clone();
+            let notification_settings = Arc::clone(&settings);
             tauri::async_runtime::spawn(async move {
                 info!("Tauri IPC adapter starting (cerebellum + model client enabled)");
                 adapter
@@ -387,6 +390,21 @@ pub fn run() {
                             };
 
                             let response = agent.handle_event(event).await;
+                            if let Some(content) =
+                                response.as_ref().and_then(notifications::response_content)
+                            {
+                                let notifications_enabled = {
+                                    let settings = notification_settings.lock().await;
+                                    settings.preferences.notifications_enabled
+                                };
+                                if notifications_enabled {
+                                    notifications::maybe_notify(
+                                        &app_handle,
+                                        content,
+                                        request_id.is_none(),
+                                    );
+                                }
+                            }
 
                             if let Some(request_id) = request_id {
                                 match &response {
@@ -539,6 +557,7 @@ pub fn run() {
             commands::call_mcp_tool,
             commands::restart_mcp_servers,
             commands::get_mcp_openai_tools,
+            commands::handle_notification_action,
             commands::get_license_status,
             commands::activate_license,
             commands::get_conversation_history,
