@@ -274,6 +274,7 @@ jobs:
                 }
 
                 console.log(`❌ PR #${pr.number}: CI failed ${failedAttempts}x (${failNames}) — requesting direct fix on branch`);
+                console.log(`🛠️ Direct-fix context for PR #${pr.number}: checks=${failNames}; logs=${failLogs}; details=${errorDetails.trim() || 'n/a'}`);
 
                 // Add labels so direct-fix automation can pick this up without creating a separate issue
                 try {
@@ -286,7 +287,9 @@ jobs:
                     await github.rest.issues.createLabel({
                       owner, repo, name: 'direct-fix-needed', color: directFixLabelColor,
                       description: 'PR requires direct code fixes after CI retry exhaustion'
-                    }).catch(() => {});
+                    }).catch((createLabelErr) => {
+                      console.log(`ℹ️ direct-fix-needed label create skipped: ${createLabelErr.message}`);
+                    });
                     await github.rest.issues.addLabels({
                       owner, repo, issue_number: pr.number, labels: ['ci-failure', 'direct-fix-needed']
                     });
@@ -295,7 +298,6 @@ jobs:
                   }
                 }
 
-                console.log(`🛠️ Direct-fix context for PR #${pr.number}: checks=${failNames}; logs=${failLogs}; details=${errorDetails.trim() || 'n/a'}`);
                 copilotPRBusy = true;
                 continue;
               }
