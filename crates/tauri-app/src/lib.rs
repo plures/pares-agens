@@ -117,11 +117,14 @@ impl ModelClient for AppModelClient {
             .clone()
             .unwrap_or_default()
             .into_iter()
-            .map(|call| pares_agens_core::model::ToolCall {
-                id: call.id,
-                name: call.function.name,
-                arguments: serde_json::from_str(&call.function.arguments)
-                    .unwrap_or_else(|_| serde_json::Value::String(call.function.arguments)),
+            .map(|call| {
+                let args = call.function.arguments;
+                pares_agens_core::model::ToolCall {
+                    id: call.id,
+                    name: call.function.name,
+                    arguments: serde_json::from_str(&args)
+                        .unwrap_or(serde_json::Value::String(args)),
+                }
             })
             .collect();
 
