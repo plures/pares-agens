@@ -91,6 +91,17 @@ impl PluresLm {
         }
     }
 
+    /// Embed arbitrary text using the configured embedding provider.
+    ///
+    /// Useful for higher-level orchestration logic (e.g. topic-shift detection)
+    /// that needs vector similarity without performing a full recall operation.
+    pub async fn embed_text(&self, text: &str) -> Result<Vec<f32>, Error> {
+        self.embedder
+            .embed(text)
+            .await
+            .map_err(|e| Error::Embed(e.to_string()))
+    }
+
     /// Recall the most relevant memories for `query`.
     ///
     /// Returns up to `limit` entries sorted by **descending cosine similarity**,

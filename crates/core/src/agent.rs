@@ -274,7 +274,7 @@ impl Agent {
         }
 
         // ── Cerebellum: autorecall + routing ─────────────────────────────
-        let (route, learned_context) = if let (Some(cerebellum), Some(plures_lm)) =
+        let (route, learned_context, clear_history) = if let (Some(cerebellum), Some(plures_lm)) =
             (&self.cerebellum, &self.plures_lm)
         {
             match cerebellum
@@ -290,11 +290,11 @@ impl Agent {
                         );
                         return None;
                     }
-                    (ctx.route, ctx.learned_context)
+                    (ctx.route, ctx.learned_context, ctx.clear_history)
                 }
                 Err(e) => {
                     error!(error = %e, "agent: cerebellum preprocess failed, continuing without context");
-                    (Route::Conscious, String::new())
+                    (Route::Conscious, String::new(), false)
                 }
             }
         } else {
@@ -302,7 +302,7 @@ impl Agent {
                 Event::Timer { .. } | Event::StateChange { .. } => Route::Procedural,
                 _ => Route::Conscious,
             };
-            (default_route, String::new())
+            (default_route, String::new(), false)
         };
 
         if route == Route::Drop {
@@ -332,12 +332,12 @@ impl Agent {
                     if delegated.is_some() {
                         delegated
                     } else {
-                        self.handle_model_message(id, channel, content, &learned_context)
+                        self.handle_model_message(id, channel, content, &learned_context, clear_history)
                             .await
                     }
                 }
                 Route::Conscious | Route::Deep { .. } => {
-                    self.handle_model_message(id, channel, content, &learned_context)
+                    self.handle_model_message(id, channel, content, &learned_context, clear_history)
                         .await
                 }
                 Route::Drop => None,
@@ -359,6 +359,7 @@ impl Agent {
         channel: &str,
         content: &str,
         learned_context: &str,
+        clear_history: bool,
     ) -> Option<Event> {
         let branch_channel = self.resolve_branch_channel(channel);
         let model_client = match &self.model_client {
@@ -384,7 +385,11 @@ impl Agent {
             }
         };
 
-        let history_snapshot = self.load_history(&branch_channel).await;
+        let history_snapshot = if clear_history {
+            vec![]
+        } else {
+            self.load_history(&branch_channel).await
+        };
 
         let base_system_text = self.build_system_prompt(learned_context, false);
         let options = ChatOptions {
