@@ -298,8 +298,8 @@ jobs:
                     await github.rest.issues.addLabels({
                       owner, repo, issue_number: pr.number, labels: ['ci-failure', 'direct-fix-needed']
                     });
-                  } catch (e2) {
-                    console.log(`⚠️ Failed to create/apply direct-fix-needed label on PR #${pr.number}: ${e2.message}`);
+                  } catch (retryLabelErr) {
+                    console.log(`⚠️ Failed to create/apply direct-fix-needed label on PR #${pr.number}: ${retryLabelErr.message}`);
                   }
                 }
 
