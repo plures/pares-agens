@@ -2,6 +2,8 @@
 //!
 //! Parses `.px` files into typed AST nodes using the pest PEG grammar.
 
+pub mod builder;
+
 use pest::Parser;
 use pest_derive::Parser;
 use serde::{Deserialize, Serialize};
@@ -123,20 +125,10 @@ pub struct PxTrigger {
 
 /// Parse a .px source string into a document AST.
 pub fn parse(source: &str) -> Result<PxDocument, String> {
-    let _pairs = PxParser::parse(Rule::document, source)
+    let pairs = PxParser::parse(Rule::document, source)
         .map_err(|e| format!("parse error: {e}"))?;
 
-    // TODO: walk pairs and build PxDocument
-    // For now, return empty document to prove the grammar compiles
-    Ok(PxDocument {
-        imports: vec![],
-        facts: vec![],
-        rules: vec![],
-        constraints: vec![],
-        contracts: vec![],
-        functions: vec![],
-        triggers: vec![],
-    })
+    Ok(builder::build(pairs))
 }
 
 #[cfg(test)]
@@ -145,7 +137,27 @@ mod tests {
 
     #[test]
     fn parser_compiles() {
-        // Just verify the grammar compiles and the parser struct exists
         let _ = PxParser::parse(Rule::ident, "hello");
+    }
+
+    #[test]
+    fn parse_simple_fact() {
+        let result = PxParser::parse(Rule::ident, "pr_state");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_constraint_expr() {
+        let result = PxParser::parse(Rule::expr, "pr.ci_status == green");
+        assert!(result.is_ok(), "failed to parse expression");
+    }
+
+    #[test]
+    fn parse_value_types() {
+        assert!(PxParser::parse(Rule::value, "\"hello\"").is_ok());
+        assert!(PxParser::parse(Rule::value, "42").is_ok());
+        assert!(PxParser::parse(Rule::value, "3.14").is_ok());
+        assert!(PxParser::parse(Rule::value, "true").is_ok());
+        assert!(PxParser::parse(Rule::value, "false").is_ok());
     }
 }
