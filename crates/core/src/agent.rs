@@ -13,7 +13,7 @@
 //! provides a simple in-process implementation suitable for tests and the
 //! first-run experience before a persistent store is configured.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -146,6 +146,25 @@ pub struct Agent {
     audit_store: Option<Arc<dyn pares_agens_audit::store::AuditStore>>,
     /// Optional delegation broker for decomposed tasks.
     delegation_broker: Option<DelegationBroker>,
+    /// Per-channel conversation branch state.
+    branch_state: Mutex<HashMap<String, ChannelBranches>>,
+}
+
+#[derive(Debug, Clone)]
+struct ChannelBranches {
+    active: String,
+    branches: BTreeSet<String>,
+}
+
+impl Default for ChannelBranches {
+    fn default() -> Self {
+        let mut branches = BTreeSet::new();
+        branches.insert("main".to_string());
+        Self {
+            active: "main".to_string(),
+            branches,
+        }
+    }
 }
 
 impl Agent {
@@ -164,6 +183,7 @@ impl Agent {
             turn_store: None,
             audit_store: None,
             delegation_broker: None,
+            branch_state: Mutex::new(HashMap::new()),
         }
     }
 
@@ -191,6 +211,7 @@ impl Agent {
             turn_store: None,
             audit_store: None,
             delegation_broker: None,
+            branch_state: Mutex::new(HashMap::new()),
         }
     }
 
@@ -230,13 +251,28 @@ impl Agent {
     }
 
     /// Attach an audit store for logging all agent actions.
-    pub fn with_audit_store(mut self, store: Arc<dyn pares_agens_audit::store::AuditStore>) -> Self {
+    pub fn with_audit_store(
+        mut self,
+        store: Arc<dyn pares_agens_audit::store::AuditStore>,
+    ) -> Self {
         self.audit_store = Some(store);
         self
     }
 
     /// Handle a single event and optionally return a response event.
     pub async fn handle_event(&self, event: Event) -> Option<Event> {
+        if let Event::Message {
+            ref id,
+            ref channel,
+            ref content,
+            ..
+        } = event
+        {
+            if let Some(command_response) = self.handle_branch_command(id, channel, content).await {
+                return Some(command_response);
+            }
+        }
+
         // ── Cerebellum: autorecall + routing ─────────────────────────────
         let (route, learned_context) = if let (Some(cerebellum), Some(plures_lm)) =
             (&self.cerebellum, &self.plures_lm)
@@ -248,7 +284,10 @@ impl Agent {
                 Ok(ctx) => {
                     debug!(route = ?ctx.route, context_len = ctx.learned_context.len(), "cerebellum preprocessed event");
                     if ctx.route == Route::Drop {
-                        debug!(event_kind = event.kind(), "cerebellum dropped event (Route::Drop)");
+                        debug!(
+                            event_kind = event.kind(),
+                            "cerebellum dropped event (Route::Drop)"
+                        );
                         return None;
                     }
                     (ctx.route, ctx.learned_context)
@@ -321,6 +360,7 @@ impl Agent {
         content: &str,
         learned_context: &str,
     ) -> Option<Event> {
+        let branch_channel = self.resolve_branch_channel(channel);
         let model_client = match &self.model_client {
             Some(client) => client,
             None => {
@@ -344,7 +384,7 @@ impl Agent {
             }
         };
 
-        let history_snapshot = self.load_history(channel).await;
+        let history_snapshot = self.load_history(&branch_channel).await;
 
         let base_system_text = self.build_system_prompt(learned_context, false);
         let options = ChatOptions {
@@ -407,7 +447,11 @@ impl Agent {
             }
         }
 
-        info!(input_len = content.len(), output_len = reply.len(), "LLM response generated");
+        info!(
+            input_len = content.len(),
+            output_len = reply.len(),
+            "LLM response generated"
+        );
 
         // Audit: log model call
         self.audit(
@@ -415,13 +459,14 @@ impl Agent {
             "agent",
             model_label,
             &format!("in={}tok out={}tok", content.len() / 4, reply.len() / 4),
-        ).await;
+        )
+        .await;
 
         // Persist new turn messages to PluresDB and update in-memory cache.
         let start = 1 + history_snapshot.len(); // skip system + existing history
         if messages.len() > start {
             let new_messages: Vec<ChatMessage> = messages[start..].to_vec();
-            self.persist_turn(channel, &new_messages).await;
+            self.persist_turn(&branch_channel, &new_messages).await;
         }
 
         self.capture_exchange(content, &reply).await;
@@ -674,10 +719,8 @@ impl Agent {
             // Load more than HISTORY_WINDOW to have material for summarization
             match store.recent_turns(channel, Self::HISTORY_WINDOW * 2).await {
                 Ok(turns) if !turns.is_empty() => {
-                    let messages: Vec<ChatMessage> = turns
-                        .into_iter()
-                        .flat_map(|t| t.messages)
-                        .collect();
+                    let messages: Vec<ChatMessage> =
+                        turns.into_iter().flat_map(|t| t.messages).collect();
                     let trimmed = Self::trim_to_token_budget(&messages);
                     info!(
                         channel,
@@ -780,9 +823,16 @@ impl Agent {
     }
 
     /// Log an audit event if the audit store is configured.
-    async fn audit(&self, kind: pares_agens_audit::event::EventKind, actor: &str, dest: &str, summary: &str) {
+    async fn audit(
+        &self,
+        kind: pares_agens_audit::event::EventKind,
+        actor: &str,
+        dest: &str,
+        summary: &str,
+    ) {
         if let Some(store) = &self.audit_store {
-            let event = pares_agens_audit::event::AuditEvent::new(kind, actor, dest, summary, false);
+            let event =
+                pares_agens_audit::event::AuditEvent::new(kind, actor, dest, summary, false);
             store.append(event).await;
         }
     }
@@ -803,12 +853,28 @@ impl Agent {
         let lower = question.to_lowercase();
         let mut tags = Vec::new();
 
-        for lang in ["rust", "python", "typescript", "javascript", "go", "c#", "java"] {
+        for lang in [
+            "rust",
+            "python",
+            "typescript",
+            "javascript",
+            "go",
+            "c#",
+            "java",
+        ] {
             if lower.contains(lang) {
                 tags.push(format!("lang:{lang}"));
             }
         }
-        for tool in ["cargo", "tokio", "serde", "git", "docker", "kubernetes", "sql"] {
+        for tool in [
+            "cargo",
+            "tokio",
+            "serde",
+            "git",
+            "docker",
+            "kubernetes",
+            "sql",
+        ] {
             if lower.contains(tool) {
                 tags.push(format!("tool:{tool}"));
             }
@@ -870,6 +936,154 @@ impl Agent {
             error!(error = %e, "agent: failed to capture exchange in memory");
         }
     }
+
+    fn resolve_branch_channel(&self, channel: &str) -> String {
+        let guard = self.branch_state.lock().unwrap();
+        let state = guard.get(channel).cloned().unwrap_or_default();
+        if state.active == "main" {
+            channel.to_string()
+        } else {
+            format!("{channel}::{}", state.active)
+        }
+    }
+
+    fn branch_label(channel: &str) -> String {
+        channel
+            .rsplit_once("::")
+            .map_or_else(|| "main".to_string(), |(_, branch)| branch.to_string())
+    }
+
+    async fn handle_branch_command(&self, id: &str, channel: &str, content: &str) -> Option<Event> {
+        let trimmed = content.trim();
+        if !trimmed.starts_with('/') {
+            return None;
+        }
+
+        let mut parts = trimmed.split_whitespace();
+        let cmd = parts
+            .next()
+            .unwrap_or("")
+            .trim_start_matches('/')
+            .split('@')
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
+        match cmd.as_str() {
+            "branch" => {
+                let requested_name = parts.collect::<Vec<_>>().join(" ");
+                let requested_name = requested_name.trim();
+
+                let current_branch_channel = self.resolve_branch_channel(channel);
+                let current_branch = Self::branch_label(&current_branch_channel);
+                let snapshot = self.load_history(&current_branch_channel).await;
+
+                let (new_branch, created) = {
+                    let mut guard = self.branch_state.lock().unwrap();
+                    let state = guard.entry(channel.to_string()).or_default();
+                    let mut branch = if requested_name.is_empty() {
+                        let mut idx = 1usize;
+                        loop {
+                            let candidate = format!("branch-{idx}");
+                            if !state.branches.contains(&candidate) {
+                                break candidate;
+                            }
+                            idx += 1;
+                        }
+                    } else {
+                        requested_name.to_string()
+                    };
+
+                    if branch.eq_ignore_ascii_case("main") {
+                        branch = "main".to_string();
+                    }
+
+                    let created = state.branches.insert(branch.clone());
+                    state.active = branch.clone();
+                    (branch, created)
+                };
+
+                let new_branch_channel = if new_branch == "main" {
+                    channel.to_string()
+                } else {
+                    format!("{channel}::{new_branch}")
+                };
+
+                {
+                    let mut history = self.conversation_history.lock().unwrap();
+                    history.insert(new_branch_channel, snapshot);
+                }
+
+                let action = if created {
+                    "Created"
+                } else {
+                    "Switched to existing"
+                };
+                Some(Event::ModelResponse {
+                    request_id: id.to_string(),
+                    model: "command".into(),
+                    content: format!("{action} branch '{new_branch}' from '{current_branch}'."),
+                })
+            }
+            "branches" => {
+                let (active, branches) = {
+                    let guard = self.branch_state.lock().unwrap();
+                    let state = guard.get(channel).cloned().unwrap_or_default();
+                    (state.active, state.branches)
+                };
+                let mut lines = vec![format!("Active branch: {active}")];
+                lines.push("Branches:".to_string());
+                for branch in branches {
+                    if branch == active {
+                        lines.push(format!("* {branch} (active)"));
+                    } else {
+                        lines.push(format!("* {branch}"));
+                    }
+                }
+                Some(Event::ModelResponse {
+                    request_id: id.to_string(),
+                    model: "command".into(),
+                    content: lines.join("\n"),
+                })
+            }
+            "switch" => {
+                let target = parts.collect::<Vec<_>>().join(" ").trim().to_string();
+                if target.is_empty() {
+                    return Some(Event::ModelResponse {
+                        request_id: id.to_string(),
+                        model: "command".into(),
+                        content: "Usage: /switch <branch>".into(),
+                    });
+                }
+
+                let switched = {
+                    let mut guard = self.branch_state.lock().unwrap();
+                    let state = guard.entry(channel.to_string()).or_default();
+                    if state.branches.contains(&target) {
+                        state.active = target.clone();
+                        true
+                    } else {
+                        false
+                    }
+                };
+
+                let message = if switched {
+                    format!("Switched to branch '{target}'.")
+                } else {
+                    format!(
+                        "Branch '{target}' not found. Use /branches to list available branches."
+                    )
+                };
+
+                Some(Event::ModelResponse {
+                    request_id: id.to_string(),
+                    model: "command".into(),
+                    content: message,
+                })
+            }
+            _ => None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -879,6 +1093,7 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memory::store::InMemoryStore as InMemoryTurnStore;
     use crate::model::{ChatOptions, ModelCompletion, ToolDefinition};
     use serde_json::json;
 
@@ -1076,7 +1291,11 @@ mod tests {
         ));
         let cerebellum = Cerebellum::new(CerebellumConfig::default());
         let agent = Agent::with_cerebellum(Arc::new(InMemory::new()), cerebellum, plures_lm)
-            .with_model(Arc::new(MockModel), Arc::new(MockTools), "You are a test agent.".into());
+            .with_model(
+                Arc::new(MockModel),
+                Arc::new(MockTools),
+                "You are a test agent.".into(),
+            );
 
         let event = Event::Message {
             id: "q1".into(),
@@ -1093,5 +1312,66 @@ mod tests {
         } else {
             panic!("expected ModelResponse with recalled context");
         }
+    }
+
+    #[tokio::test]
+    async fn branch_commands_create_list_and_switch() {
+        let agent = Agent::new(Arc::new(InMemory::new())).with_model(
+            Arc::new(MockModel),
+            Arc::new(MockTools),
+            "You are a test agent.".into(),
+        );
+
+        let branch_response = agent.handle_event(msg("/branch alt")).await;
+        assert!(
+            matches!(branch_response, Some(Event::ModelResponse { ref content, .. }) if content.contains("branch 'alt'"))
+        );
+
+        let list_response = agent.handle_event(msg("/branches")).await;
+        assert!(matches!(
+            list_response,
+            Some(Event::ModelResponse { ref content, .. })
+            if content.contains("Active branch: alt")
+                && content.contains("* main")
+                && content.contains("* alt (active)")
+        ));
+
+        let switch_response = agent.handle_event(msg("/switch main")).await;
+        assert!(matches!(
+            switch_response,
+            Some(Event::ModelResponse { ref content, .. }) if content == "Switched to branch 'main'."
+        ));
+    }
+
+    #[tokio::test]
+    async fn branch_turns_are_persisted_to_separate_channels() {
+        let turn_store = Arc::new(InMemoryTurnStore::new());
+        let agent = Agent::new(Arc::new(InMemory::new()))
+            .with_model(
+                Arc::new(MockModel),
+                Arc::new(MockTools),
+                "You are a test agent.".into(),
+            )
+            .with_turn_store(turn_store.clone() as Arc<dyn crate::memory::store::MemoryStore>);
+
+        let _ = agent.handle_event(msg("main path")).await;
+        let _ = agent.handle_event(msg("/branch alt")).await;
+        let _ = agent.handle_event(msg("alt path")).await;
+        let _ = agent.handle_event(msg("/switch main")).await;
+        let _ = agent.handle_event(msg("main again")).await;
+
+        let main_turns = turn_store.recent_turns("test", 10).await.unwrap();
+        let alt_turns = turn_store.recent_turns("test::alt", 10).await.unwrap();
+
+        assert_eq!(main_turns.len(), 2, "main should keep its own turn chain");
+        assert_eq!(alt_turns.len(), 1, "branch should have its own turn chain");
+        assert!(main_turns
+            .iter()
+            .flat_map(|t| t.messages.iter())
+            .any(|m| m.content.contains("main path")));
+        assert!(alt_turns
+            .iter()
+            .flat_map(|t| t.messages.iter())
+            .any(|m| m.content.contains("alt path")));
     }
 }
