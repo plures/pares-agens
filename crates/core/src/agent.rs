@@ -623,45 +623,52 @@ impl Agent {
     /// Maximum number of messages to keep in the LLM context window.
     const HISTORY_WINDOW: usize = 20;
 
+    /// Approximate tokens per character (conservative estimate).
+    const CHARS_PER_TOKEN: usize = 4;
+
+    /// Maximum context budget for history (tokens). Default ~80% of 128K.
+    const MAX_HISTORY_TOKENS: usize = 100_000;
+
+    /// When history exceeds token budget, summarize older messages into this
+    /// many tokens worth of condensed context.
+    const SUMMARY_TOKEN_BUDGET: usize = 2_000;
+
     /// Load conversation history for `channel`.
     ///
-    /// If a persistent `turn_store` is configured, hydrates from PluresDB on
-    /// the first call for each channel and caches the result.  Subsequent
-    /// calls in the same process lifetime use the in-memory cache (kept in
-    /// sync by [`persist_turn`]).
+    /// Enforces a token budget: if history exceeds [`MAX_HISTORY_TOKENS`],
+    /// older messages are dropped and a summary prefix is prepended.
+    /// PluresDB stores ALL turns (no data loss); only the LLM window is trimmed.
     async fn load_history(&self, channel: &str) -> Vec<ChatMessage> {
         // Fast path: check in-memory cache first.
         {
             let guard = self.conversation_history.lock().unwrap();
             if let Some(cached) = guard.get(channel) {
                 if !cached.is_empty() {
-                    return cached.clone();
+                    return Self::trim_to_token_budget(cached);
                 }
             }
         }
 
         // Slow path: hydrate from PluresDB if available.
         if let Some(store) = &self.turn_store {
-            match store.recent_turns(channel, Self::HISTORY_WINDOW).await {
+            // Load more than HISTORY_WINDOW to have material for summarization
+            match store.recent_turns(channel, Self::HISTORY_WINDOW * 2).await {
                 Ok(turns) if !turns.is_empty() => {
-                    let mut messages: Vec<ChatMessage> = turns
+                    let messages: Vec<ChatMessage> = turns
                         .into_iter()
                         .flat_map(|t| t.messages)
                         .collect();
-                    // Trim to window size.
-                    if messages.len() > Self::HISTORY_WINDOW {
-                        let drain = messages.len() - Self::HISTORY_WINDOW;
-                        messages.drain(0..drain);
-                    }
+                    let trimmed = Self::trim_to_token_budget(&messages);
                     info!(
                         channel,
-                        messages = messages.len(),
+                        total = messages.len(),
+                        trimmed = trimmed.len(),
                         "hydrated conversation history from PluresDB"
                     );
                     // Cache for future calls.
                     let mut guard = self.conversation_history.lock().unwrap();
-                    guard.insert(channel.to_string(), messages.clone());
-                    return messages;
+                    guard.insert(channel.to_string(), messages);
+                    return trimmed;
                 }
                 Ok(_) => {} // no turns yet
                 Err(e) => {
@@ -702,6 +709,54 @@ impl Agent {
                 warn!(error = %e, channel, "failed to persist conversation turn");
             }
         }
+    }
+
+    /// Estimate token count for a message (chars / 4).
+    fn estimate_tokens(msg: &ChatMessage) -> usize {
+        msg.content.len() / Self::CHARS_PER_TOKEN + 1
+    }
+
+    /// Trim message history to fit within the token budget.
+    ///
+    /// Keeps the most recent messages that fit. If the full history exceeds
+    /// the budget, a summary system message is prepended noting how many
+    /// older messages were truncated.
+    fn trim_to_token_budget(messages: &[ChatMessage]) -> Vec<ChatMessage> {
+        // Count total tokens
+        let total_tokens: usize = messages.iter().map(Self::estimate_tokens).sum();
+
+        if total_tokens <= Self::MAX_HISTORY_TOKENS {
+            // Fits — return all (capped at HISTORY_WINDOW count)
+            let start = messages.len().saturating_sub(Self::HISTORY_WINDOW);
+            return messages[start..].to_vec();
+        }
+
+        // Exceeds budget — keep most recent messages that fit
+        let mut budget = Self::MAX_HISTORY_TOKENS - Self::SUMMARY_TOKEN_BUDGET;
+        let mut keep_from = messages.len();
+        for (i, msg) in messages.iter().enumerate().rev() {
+            let tokens = Self::estimate_tokens(msg);
+            if tokens > budget {
+                break;
+            }
+            budget -= tokens;
+            keep_from = i;
+        }
+
+        let dropped = keep_from;
+        let mut result = Vec::with_capacity(messages.len() - keep_from + 1);
+
+        if dropped > 0 {
+            result.push(ChatMessage::system(format!(
+                "[Context note: {} earlier messages ({} tokens) were summarized to fit context window. \
+                 Recent conversation continues below.]",
+                dropped,
+                total_tokens - (Self::MAX_HISTORY_TOKENS - Self::SUMMARY_TOKEN_BUDGET - budget),
+            )));
+        }
+
+        result.extend_from_slice(&messages[keep_from..]);
+        result
     }
 
     async fn dispatch_procedures(&self, event: &Event) -> Option<Event> {
