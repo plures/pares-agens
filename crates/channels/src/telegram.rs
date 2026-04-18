@@ -182,17 +182,41 @@ impl ChannelAdapter for TelegramAdapter {
         info!("Starting Telegram adapter");
         let bot = Bot::new(self.config.token.clone());
 
+        let on_event = std::sync::Arc::new(on_event);
         let handler = Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
             let event = Self::message_to_event(&msg);
-            let response = event.map(&on_event);
+            let on_event = on_event.clone();
             async move {
-                if let Some(fut) = response {
-                    if let Some(Event::ModelResponse { content, .. }) = fut.await {
-                        // Send as plain text — LLM markdown conflicts with Telegram MarkdownV2
-                        if let Err(e) = bot
-                            .send_message(msg.chat.id, &content)
-                            .await
-                        {
+                // Check for slash commands before sending to agent
+                if let Some(text) = msg.text() {
+                    if text.starts_with('/') {
+                        let cmd = text.split_whitespace().next().unwrap_or("").to_lowercase();
+                        let cmd = cmd.trim_start_matches('/');
+                        let cmd = cmd.split('@').next().unwrap_or(cmd);
+                        match cmd {
+                            "start" | "help" => {
+                                let _ = bot.send_message(msg.chat.id, 
+                                    "Pares Agens commands:\n/status - health info\n/repos - org repos with open PRs\n/ci - CI status\n/update - self-update\n\nOr just send a message."
+                                ).await;
+                                return respond(());
+                            }
+                            "status" => {
+                                let status = format!(
+                                    "Pares Agens alive\nPID: {}\nModel: GPT-4.1 + Opus 4.6\nPluresDB: ~/.pares-agens/memory/",
+                                    std::process::id(),
+                                );
+                                let _ = bot.send_message(msg.chat.id, &status).await;
+                                return respond(());
+                            }
+                            _ => {} // fall through to agent
+                        }
+                    }
+                }
+
+                // Normal message — send to agent
+                if let Some(event) = event {
+                    if let Some(Event::ModelResponse { content, .. }) = on_event(event).await {
+                        if let Err(e) = bot.send_message(msg.chat.id, &content).await {
                             error!("Failed to send Telegram reply: {e}");
                         }
                     }
