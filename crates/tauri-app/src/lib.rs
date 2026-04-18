@@ -472,6 +472,8 @@ pub fn run() {
             wizard::detect_docker_runner,
             wizard::validate_api_key,
             wizard::is_wizard_completed,
+            wizard::generate_swarm_invite,
+            wizard::verify_swarm_join,
             wizard::complete_wizard,
             settings::list_providers,
             settings::add_provider,

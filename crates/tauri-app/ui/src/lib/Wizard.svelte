@@ -1,5 +1,6 @@
 <script>
-  const { invoke } = window.__TAURI__.core;
+  const invoke = window.__TAURI__?.core?.invoke
+    ?? (async () => { throw new Error('Tauri invoke unavailable'); });
 
   /** @type {{ onComplete: (name: string) => void }} */
   let { onComplete } = $props();
@@ -14,7 +15,7 @@
 
   // ── Wizard state ─────────────────────────────────────────────────────────
   let visible       = $state(false);
-  let step          = $state(0);     // 0–3
+  let step          = $state(0);     // 0–4
 
   let agentName     = $state('');
   let modelSource   = $state('');    // '' | 'local' | 'cloud' | 'skip'
@@ -22,10 +23,15 @@
   let apiKey        = $state('');    // in-memory only, never persisted
   let systemPrompt  = $state('');
   let telegramToken = $state('');    // in-memory only, never persisted
+  let swarmMode     = $state('skip'); // 'skip' | 'new' | 'join'
+  let swarmTopic    = $state('');
+  let swarmSharedKey = $state('');    // in-memory only, never persisted
 
   // ── Detection / validation state ─────────────────────────────────────────
   let dockerStatus  = $state('idle');    // 'idle' | 'checking' | 'found' | 'absent'
   let apiKeyStatus  = $state('idle');    // 'idle' | 'checking' | 'valid' | 'invalid' | 'error'
+  let swarmVerifyStatus = $state('idle'); // 'idle' | 'checking' | 'success' | 'error'
+  let swarmVerifyError = $state('');
 
   // ── Summary items ────────────────────────────────────────────────────────
   let summaryItems = $derived([
@@ -44,12 +50,28 @@
       label: 'Channel',
       value: telegramToken ? 'Telegram connected' : 'Desktop only',
     },
+    {
+      label: 'Swarm',
+      value: swarmMode === 'new'
+        ? 'New swarm generated'
+        : swarmMode === 'join'
+          ? 'Joining existing swarm'
+          : 'Not configured',
+    },
   ]);
 
   // ── Persistence helpers ───────────────────────────────────────────────────
   function saveState() {
-    // apiKey and telegramToken intentionally excluded
-    const persistable = { step, agentName, modelSource, cloudProvider, systemPrompt };
+    // apiKey, telegramToken, and swarmSharedKey intentionally excluded
+    const persistable = {
+      step,
+      agentName,
+      modelSource,
+      cloudProvider,
+      systemPrompt,
+      swarmMode,
+      swarmTopic,
+    };
     localStorage.setItem(LS_STATE, JSON.stringify(persistable));
   }
 
@@ -62,9 +84,11 @@
       modelSource   = s.modelSource   || '';
       cloudProvider = s.cloudProvider || 'openai';
       systemPrompt  = s.systemPrompt  || '';
-      // Clamp step to 0–3
+      swarmMode     = s.swarmMode     || 'skip';
+      swarmTopic    = s.swarmTopic    || '';
+      // Clamp step to 0–4
       const loaded  = typeof s.step === 'number' ? s.step : 0;
-      step = Math.min(Math.max(loaded, 0), 3);
+      step = Math.min(Math.max(loaded, 0), 4);
     } catch {
       step = 0;
     }
@@ -72,7 +96,7 @@
 
   // ── Navigation ────────────────────────────────────────────────────────────
   function goNext() {
-    step = Math.min(step + 1, 3);
+    step = Math.min(step + 1, 4);
     saveState();
   }
 
@@ -101,6 +125,36 @@
       apiKeyStatus = valid ? 'valid' : 'invalid';
     } catch {
       apiKeyStatus = 'error';
+    }
+  }
+
+  // ── Swarm setup helpers ───────────────────────────────────────────────────
+  async function createSwarmInvite() {
+    swarmVerifyStatus = 'idle';
+    swarmVerifyError = '';
+    try {
+      const invite = await invoke('generate_swarm_invite');
+      swarmTopic = invite.topic || '';
+      swarmSharedKey = invite.sharedKey || '';
+    } catch (err) {
+      swarmVerifyStatus = 'error';
+      swarmVerifyError = `Failed to generate swarm invite: ${String(err)}`;
+    }
+  }
+
+  async function verifyJoinSwarm() {
+    if (!swarmTopic.trim() || !swarmSharedKey.trim()) return;
+    swarmVerifyStatus = 'checking';
+    swarmVerifyError = '';
+    try {
+      await invoke('verify_swarm_join', {
+        topic: swarmTopic.trim(),
+        sharedKey: swarmSharedKey.trim(),
+      });
+      swarmVerifyStatus = 'success';
+    } catch (err) {
+      swarmVerifyStatus = 'error';
+      swarmVerifyError = String(err);
     }
   }
 
@@ -148,9 +202,16 @@
     };
     if (finalKey)      settings.apiKey        = finalKey;
     if (telegramToken) settings.telegramToken = telegramToken;
+    const swarm = swarmMode === 'skip'
+      ? null
+      : {
+          mode: swarmMode,
+          topic: swarmTopic.trim(),
+          sharedKey: swarmSharedKey.trim(),
+        };
 
     try {
-      await invoke('complete_wizard', { settings });
+      await invoke('complete_wizard', { settings, swarm });
     } catch (err) {
       console.error('complete_wizard failed, falling back to set_settings:', err);
       try { await invoke('set_settings', { settings }); } catch (e) {
@@ -183,6 +244,22 @@
     void apiKey;
     apiKeyStatus = 'idle';
   });
+
+  $effect(() => {
+    void swarmTopic;
+    void swarmSharedKey;
+    if (swarmVerifyStatus === 'error') {
+      swarmVerifyStatus = 'idle';
+      swarmVerifyError = '';
+    }
+  });
+
+  $effect(() => {
+    void swarmMode;
+    if (swarmMode === 'new' && (!swarmTopic || !swarmSharedKey)) {
+      createSwarmInvite();
+    }
+  });
 </script>
 
 {#if visible}
@@ -194,8 +271,8 @@
 >
   <div class="wizard-card">
     <!-- Progress bar -->
-    <div class="wizard-progress" role="progressbar" aria-valuenow={step + 1} aria-valuemin="1" aria-valuemax="4">
-      {#each [0, 1, 2, 3] as i}
+    <div class="wizard-progress" role="progressbar" aria-valuenow={step + 1} aria-valuemin="1" aria-valuemax="5">
+      {#each [0, 1, 2, 3, 4] as i}
         <div class="wizard-progress-step {i <= step ? 'active' : ''}"></div>
       {/each}
     </div>
@@ -326,8 +403,81 @@
       </div>
     {/if}
 
-    <!-- ── Step 3 — Done / Summary ─────────────────────────────────────── -->
+    <!-- ── Step 3 — Hyperswarm ─────────────────────────────────────────── -->
     {#if step === 3}
+      <div class="wizard-step" aria-live="polite">
+        <h2 class="wizard-title">Sync across hosts (optional)</h2>
+        <p class="wizard-desc">Set up Hyperswarm now or skip and configure later.</p>
+
+        <div class="model-cards">
+          <label class="model-card {swarmMode === 'new' ? 'selected' : ''}">
+            <input type="radio" name="swarm-mode" value="new" bind:group={swarmMode} class="sr-only" />
+            <span class="model-card-title">✨ New swarm</span>
+            <span class="model-card-desc">Generate a new topic + key and share with other hosts.</span>
+          </label>
+          <label class="model-card {swarmMode === 'join' ? 'selected' : ''}">
+            <input type="radio" name="swarm-mode" value="join" bind:group={swarmMode} class="sr-only" />
+            <span class="model-card-title">🔗 Join existing swarm</span>
+            <span class="model-card-desc">Enter a topic + key from another host and verify them.</span>
+          </label>
+          <label class="model-card {swarmMode === 'skip' ? 'selected' : ''}">
+            <input type="radio" name="swarm-mode" value="skip" bind:group={swarmMode} class="sr-only" />
+            <span class="model-card-title">⏭ Skip for now</span>
+            <span class="model-card-desc">Continue without Hyperswarm setup.</span>
+          </label>
+        </div>
+
+        {#if swarmMode === 'new'}
+          <div class="cloud-config">
+            <button class="btn-secondary" onclick={createSwarmInvite}>
+              {swarmTopic && swarmSharedKey ? 'Regenerate topic + key' : 'Generate topic + key'}
+            </button>
+            {#if swarmTopic && swarmSharedKey}
+              <p class="wizard-desc">
+                Share this with other hosts:
+                <br />
+                <strong>Topic:</strong> <code>{swarmTopic}</code>
+                <br />
+                <strong>Key:</strong> <code>{swarmSharedKey}</code>
+              </p>
+            {/if}
+          </div>
+        {:else if swarmMode === 'join'}
+          <div class="cloud-config">
+            <label class="wizard-label">
+              Topic (64 hex chars)
+              <input class="wizard-input" type="text" placeholder="a7f3..." bind:value={swarmTopic} />
+            </label>
+            <label class="wizard-label">
+              Shared key
+              <input class="wizard-input" type="password" placeholder="b92c..." bind:value={swarmSharedKey} />
+            </label>
+            <button class="btn-secondary" onclick={verifyJoinSwarm} disabled={!swarmTopic.trim() || !swarmSharedKey.trim() || swarmVerifyStatus === 'checking'}>
+              {swarmVerifyStatus === 'checking' ? 'Verifying…' : 'Verify join'}
+            </button>
+            {#if swarmVerifyStatus === 'success'}
+              <span class="key-status ok">✓ Verified — topic + key are valid</span>
+            {:else if swarmVerifyStatus === 'error' && swarmVerifyError}
+              <span class="key-status err">{swarmVerifyError}</span>
+            {/if}
+          </div>
+        {/if}
+
+        <div class="wizard-footer">
+          <button class="btn-secondary" onclick={goBack}>← Back</button>
+          <button
+            class="btn-primary"
+            onclick={() => { saveState(); goNext(); }}
+            disabled={swarmMode === 'new' ? (!swarmTopic || !swarmSharedKey) : (swarmMode === 'join' ? swarmVerifyStatus !== 'success' : false)}
+          >
+            Next →
+          </button>
+        </div>
+      </div>
+    {/if}
+
+    <!-- ── Step 4 — Done / Summary ─────────────────────────────────────── -->
+    {#if step === 4}
       <div class="wizard-step" aria-live="polite">
         <h2 class="wizard-title">You're all set!</h2>
         <p class="wizard-desc" id="wizard-done-summary">
@@ -538,6 +688,14 @@
   .key-status.ok   { color: var(--success); }
   .key-status.err  { color: var(--danger); }
   .key-status.warn { color: #f7a27c; }
+
+  code {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 4px;
+    word-break: break-all;
+  }
 
   /* Summary */
   .wizard-summary-list {

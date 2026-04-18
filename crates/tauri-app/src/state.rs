@@ -158,6 +158,16 @@ impl Default for AgentPreferences {
     }
 }
 
+/// Hyperswarm settings collected during first-run setup.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwarmSettings {
+    /// Swarm join mode selected by the user (`new` or `join`).
+    pub mode: String,
+    /// 32-byte topic key encoded as 64-char hex.
+    pub topic: String,
+}
+
 // ---------------------------------------------------------------------------
 // Top-level Settings
 // ---------------------------------------------------------------------------
@@ -200,6 +210,9 @@ pub struct Settings {
     /// MCP server configurations for tool orchestration.
     #[serde(default)]
     pub mcp_servers: Vec<McpServerConfig>,
+    /// Optional Hyperswarm topic configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swarm: Option<SwarmSettings>,
 }
 
 impl Default for Settings {
@@ -242,6 +255,7 @@ impl Default for Settings {
             ],
             preferences: AgentPreferences::default(),
             mcp_servers: Vec::new(),
+            swarm: None,
         }
     }
 }

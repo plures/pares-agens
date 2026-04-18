@@ -7,6 +7,7 @@ use pluresdb::{CrdtStore, MemoryStorage, SledStorage, StorageEngine};
 use pluresdb_sea::{sea_decrypt_wire, sea_encrypt_wire, SeaKeyPair};
 use pluresdb_sync::{create_transport, GunMessage, Replicator, TransportConfig, TransportMode};
 use tokio::sync::RwLock;
+use uuid::Uuid;
 
 use super::{
     entry::{ChatTurn, MemoryEntry},
@@ -142,6 +143,55 @@ pub struct HostAdapterRecord {
     pub host: String,
     /// Adapters configured for this host.
     pub adapters: Vec<HostAdapterConfig>,
+}
+
+/// Generate a new random Hyperswarm topic key as a 64-character lowercase hex string.
+#[must_use]
+pub fn generate_sync_topic_key_hex() -> String {
+    let a = Uuid::new_v4().as_simple().to_string();
+    let b = Uuid::new_v4().as_simple().to_string();
+    format!("{a}{b}")
+}
+
+/// Parse a 32-byte Hyperswarm topic key from hex.
+///
+/// Accepts values with or without a leading `0x` prefix.
+///
+/// # Errors
+/// Returns [`Error::Store`] when the value is not 64 hex characters.
+pub fn parse_sync_topic_key_hex(raw: &str) -> Result<[u8; 32], Error> {
+    let trimmed = raw.trim();
+    let value = trimmed.strip_prefix("0x").unwrap_or(trimmed);
+    if value.len() != 64 {
+        return Err(Error::Store(
+            "sync topic key must be 64 hex characters (32 bytes)".to_string(),
+        ));
+    }
+
+    let mut key = [0u8; 32];
+    for i in 0..32 {
+        let pair = &value[(i * 2)..(i * 2 + 2)];
+        key[i] = u8::from_str_radix(pair, 16)
+            .map_err(|_| Error::Store(format!("invalid hex byte at position {}: {pair}", i * 2)))?;
+    }
+    Ok(key)
+}
+
+/// Generate a new sync shared key payload accepted by [`PluresDbStore::open_with_sync`].
+///
+/// The result is a base64url-encoded JSON payload containing a generated SEA key pair.
+pub fn generate_sync_shared_key() -> Result<String, Error> {
+    let json = serde_json::to_vec(&SeaKeyPair::generate())
+        .map_err(|e| Error::Store(format!("failed to serialise sync shared key: {e}")))?;
+    Ok(URL_SAFE_NO_PAD.encode(json))
+}
+
+/// Validate that `shared_key` is a parseable sync shared key.
+///
+/// # Errors
+/// Returns [`Error::Store`] when the key is malformed.
+pub fn validate_sync_shared_key(shared_key: &str) -> Result<(), Error> {
+    parse_sea_key(shared_key).map(|_| ())
 }
 
 /// A [`MemoryStore`] backed by a PluresDB [`CrdtStore`].
@@ -612,6 +662,34 @@ mod tests {
     fn encode_shared_key(pair: &SeaKeyPair) -> String {
         let json = serde_json::to_vec(pair).unwrap();
         URL_SAFE_NO_PAD.encode(json)
+    }
+
+    #[test]
+    fn generate_sync_topic_key_hex_produces_64_hex_chars() {
+        let topic = generate_sync_topic_key_hex();
+        assert_eq!(topic.len(), 64);
+        assert!(topic.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(topic, topic.to_lowercase(), "topic hex should be lowercase");
+    }
+
+    #[test]
+    fn parse_sync_topic_key_hex_accepts_prefixed_and_plain() {
+        let topic = generate_sync_topic_key_hex();
+        let plain = parse_sync_topic_key_hex(&topic).unwrap();
+        let prefixed = parse_sync_topic_key_hex(&format!("0x{topic}")).unwrap();
+        assert_eq!(plain, prefixed);
+    }
+
+    #[test]
+    fn parse_sync_topic_key_hex_rejects_bad_input() {
+        let err = parse_sync_topic_key_hex("xyz").unwrap_err().to_string();
+        assert!(err.contains("64 hex characters"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn generate_and_validate_sync_shared_key_round_trip() {
+        let key = generate_sync_shared_key().unwrap();
+        validate_sync_shared_key(&key).unwrap();
     }
 
     fn make_entry(id: &str, content: &str) -> MemoryEntry {
