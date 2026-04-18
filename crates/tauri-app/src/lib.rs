@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tokio::sync::{Mutex, RwLock};
 use tracing::info;
 
