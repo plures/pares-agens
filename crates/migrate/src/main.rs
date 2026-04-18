@@ -1291,6 +1291,36 @@ async fn main() {
 
             tracing::info!("Telegram adapter starting — bot is live");
 
+            // Start the task scheduler in the background
+            let scheduler = pares_agens_agenda::scheduler::Scheduler::new()
+                .with_executor(std::sync::Arc::new(|cmd: String| {
+                    tokio::spawn(async move {
+                        match tokio::process::Command::new("sh")
+                            .arg("-c")
+                            .arg(&cmd)
+                            .output()
+                            .await
+                        {
+                            Ok(output) => {
+                                let stdout = String::from_utf8_lossy(&output.stdout);
+                                let stderr = String::from_utf8_lossy(&output.stderr);
+                                if output.status.success() {
+                                    stdout.to_string()
+                                } else {
+                                    format!("EXIT {}: {}\n{}", output.status, stdout, stderr)
+                                }
+                            }
+                            Err(e) => format!("EXEC ERROR: {e}"),
+                        }
+                    })
+                }));
+
+            // Spawn scheduler loop
+            tokio::spawn(async move {
+                scheduler.start().await;
+            });
+            tracing::info!("Scheduler started");
+
             let agent_clone = agent.clone();
 
             if let Err(e) = adapter

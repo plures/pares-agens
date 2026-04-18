@@ -4007,6 +4007,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "clap",
+ "pares-agens-agenda",
  "pares-agens-channels",
  "pares-agens-core",
  "pares-models",
