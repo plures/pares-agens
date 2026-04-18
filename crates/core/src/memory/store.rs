@@ -107,6 +107,7 @@ const ACTOR: &str = "pares-agens";
 const TURN_PREFIX: &str = "turn:";
 const SEA_DATA_FIELD: &str = "_sea";
 const SEA_HOST_KEY_FILE: &str = ".sea-host-key.json";
+const SEA_SYNC_PAYLOAD_ENCODING: &str = "base64url";
 
 /// A [`MemoryStore`] backed by a PluresDB [`CrdtStore`].
 ///
@@ -330,7 +331,7 @@ fn encrypt_sync_payload(payload: &[u8], sync_sea_key: &SeaKeyPair) -> Result<Vec
     serde_json::to_vec(&SeaSyncEnvelope {
         sender_epub: sync_sea_key.epub.clone(),
         wire,
-        payload_b64: "base64url".to_string(),
+        payload_b64: SEA_SYNC_PAYLOAD_ENCODING.to_string(),
     })
     .map_err(|e| format!("SEA sync envelope serialise failed: {e}"))
 }
@@ -338,7 +339,7 @@ fn encrypt_sync_payload(payload: &[u8], sync_sea_key: &SeaKeyPair) -> Result<Vec
 fn decrypt_sync_payload(payload: &[u8], sync_sea_key: &SeaKeyPair) -> Result<Vec<u8>, String> {
     let envelope: SeaSyncEnvelope = serde_json::from_slice(payload)
         .map_err(|e| format!("SEA sync envelope parse failed: {e}"))?;
-    if envelope.payload_b64 != "base64url" {
+    if envelope.payload_b64 != SEA_SYNC_PAYLOAD_ENCODING {
         return Err(format!(
             "unsupported SEA sync payload encoding: {}",
             envelope.payload_b64
@@ -521,6 +522,7 @@ mod tests {
     use super::*;
     use crate::memory::entry::MemoryCategory;
     use std::time::Duration;
+    const SYNC_TIMEOUT_SECS: u64 = 10;
 
     fn encode_shared_key(pair: &SeaKeyPair) -> String {
         let json = serde_json::to_vec(pair).unwrap();
@@ -631,7 +633,8 @@ mod tests {
 
         let store_b = PluresDbStore::open_with_sync(dir_b.path(), &key, &sync_key).unwrap();
 
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        let deadline =
+            tokio::time::Instant::now() + std::time::Duration::from_secs(SYNC_TIMEOUT_SECS);
         loop {
             let all = store_b.all().await.unwrap();
             if all.iter().any(|entry| entry.id == "shared-1") {
@@ -681,6 +684,7 @@ mod tests {
             .await
             .unwrap();
 
+        // Read raw sled files directly to verify plaintext is not present on disk.
         let contains_plaintext = std::fs::read_dir(dir.path())
             .unwrap()
             .filter_map(Result::ok)
