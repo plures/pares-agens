@@ -31,6 +31,8 @@ use uuid::Uuid;
 use crate::adapter::{ChannelAdapter, ChannelError};
 
 const PARES_MODULUS_INDEX_URL: &str = "https://raw.githubusercontent.com/plures/pares-modulus/main/index.json";
+const DEFAULT_MARKETPLACE_INSTALL_DIR: &str = "/skills";
+const MAX_INDEX_LISTING_ITEMS: usize = 10;
 
 fn parse_modulus_index(payload: &str) -> Result<Vec<SkillMetadata>, String> {
     let value: Value =
@@ -40,11 +42,9 @@ fn parse_modulus_index(payload: &str) -> Result<Vec<SkillMetadata>, String> {
         Value::Object(map) => {
             for key in ["agents", "plugins", "items", "entries"] {
                 if let Some(Value::Array(items)) = map.get(key) {
-                    let mut out = Vec::with_capacity(items.len());
-                    out.extend(items.iter().cloned());
-                    return Ok(out
-                        .into_iter()
-                        .filter_map(|entry| metadata_from_index_entry(&entry))
+                    return Ok(items
+                        .iter()
+                        .filter_map(metadata_from_index_entry)
                         .collect());
                 }
             }
@@ -56,8 +56,8 @@ fn parse_modulus_index(payload: &str) -> Result<Vec<SkillMetadata>, String> {
     };
 
     Ok(entries
-        .into_iter()
-        .filter_map(|entry| metadata_from_index_entry(&entry))
+        .iter()
+        .filter_map(metadata_from_index_entry)
         .collect())
 }
 
@@ -101,6 +101,18 @@ fn metadata_from_index_entry(entry: &Value) -> Option<SkillMetadata> {
         .or_else(|| obj.get("url").and_then(Value::as_str))
         .unwrap_or("https://github.com/plures/pares-modulus")
         .to_string();
+    if !download_url.starts_with("https://") {
+        return None;
+    }
+    let checksum = obj
+        .get("checksum")
+        .and_then(Value::as_str)
+        .or_else(|| obj.get("sha256").and_then(Value::as_str))
+        .or_else(|| obj.get("digest").and_then(Value::as_str))
+        .map(str::to_string)?;
+    if !is_valid_sha256_hex(&checksum) {
+        return None;
+    }
 
     Some(SkillMetadata {
         id,
@@ -109,26 +121,27 @@ fn metadata_from_index_entry(entry: &Value) -> Option<SkillMetadata> {
         description,
         author,
         categories: vec![SkillCategory::DomainSpecific("plugin".to_string())],
-        checksum: "0".repeat(64),
+        checksum,
         download_url,
         signature: None,
     })
 }
 
-async fn fetch_modulus_index() -> Result<Vec<SkillMetadata>, String> {
-    let response = reqwest::get(PARES_MODULUS_INDEX_URL)
+fn is_valid_sha256_hex(value: &str) -> bool {
+    value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+async fn fetch_marketplace_index(index_url: &str) -> Result<Vec<SkillMetadata>, String> {
+    let response = reqwest::get(index_url)
         .await
-        .map_err(|e| format!("failed to fetch pares-modulus index: {e}"))?;
+        .map_err(|e| format!("failed to fetch marketplace index: {e}"))?;
     if !response.status().is_success() {
-        return Err(format!(
-            "pares-modulus index returned HTTP {}",
-            response.status()
-        ));
+        return Err(format!("marketplace index returned HTTP {}", response.status()));
     }
     let body = response
         .text()
         .await
-        .map_err(|e| format!("failed to read pares-modulus index response: {e}"))?;
+        .map_err(|e| format!("failed to read marketplace index response: {e}"))?;
     parse_modulus_index(&body)
 }
 
@@ -141,14 +154,17 @@ fn format_index_listing(skills: &[SkillMetadata]) -> String {
         "Found {} agent/plugin entries in pares-modulus:",
         skills.len()
     )];
-    for skill in skills.iter().take(10) {
+    for skill in skills.iter().take(MAX_INDEX_LISTING_ITEMS) {
         lines.push(format!(
             "• {} ({}) — {}",
             skill.id, skill.version, skill.description
         ));
     }
-    if skills.len() > 10 {
-        lines.push(format!("…and {} more entries.", skills.len() - 10));
+    if skills.len() > MAX_INDEX_LISTING_ITEMS {
+        lines.push(format!(
+            "…and {} more entries.",
+            skills.len() - MAX_INDEX_LISTING_ITEMS
+        ));
     }
     lines.push("Install with: /install <id>".to_string());
     lines.join("\n")
@@ -169,6 +185,10 @@ fn find_skill_by_id(skills: &[SkillMetadata], id: &str) -> Option<SkillMetadata>
 pub struct TelegramConfig {
     /// Telegram bot token (from BotFather).
     pub token: String,
+    /// Marketplace index URL used by `/agents` and `/install`.
+    pub marketplace_index_url: String,
+    /// Local install directory used by marketplace installer state.
+    pub marketplace_install_dir: String,
 }
 
 impl TelegramConfig {
@@ -176,7 +196,23 @@ impl TelegramConfig {
     pub fn new(token: impl Into<String>) -> Self {
         Self {
             token: token.into(),
+            marketplace_index_url: PARES_MODULUS_INDEX_URL.to_string(),
+            marketplace_install_dir: DEFAULT_MARKETPLACE_INSTALL_DIR.to_string(),
         }
+    }
+
+    /// Override marketplace index URL.
+    #[must_use]
+    pub fn with_marketplace_index_url(mut self, url: impl Into<String>) -> Self {
+        self.marketplace_index_url = url.into();
+        self
+    }
+
+    /// Override marketplace install directory.
+    #[must_use]
+    pub fn with_marketplace_install_dir(mut self, dir: impl Into<String>) -> Self {
+        self.marketplace_install_dir = dir.into();
+        self
     }
 }
 
@@ -314,8 +350,10 @@ impl ChannelAdapter for TelegramAdapter {
     ) -> Result<(), ChannelError> {
         info!("Starting Telegram adapter");
         let bot = Bot::new(self.config.token.clone());
+        let index_url = self.config.marketplace_index_url.clone();
         let installer = std::sync::Arc::new(TokioMutex::new(
-            Installer::new("/skills").map_err(|e| ChannelError::Telegram(e.to_string()))?,
+            Installer::new(&self.config.marketplace_install_dir)
+                .map_err(|e| ChannelError::Telegram(e.to_string()))?,
         ));
 
         let on_event = std::sync::Arc::new(on_event);
@@ -323,6 +361,7 @@ impl ChannelAdapter for TelegramAdapter {
             let event = Self::message_to_event(&msg);
             let on_event = on_event.clone();
             let installer = installer.clone();
+            let index_url = index_url.clone();
             async move {
                 // Check for slash commands before sending to agent
                 if let Some(text) = msg.text() {
@@ -350,7 +389,7 @@ impl ChannelAdapter for TelegramAdapter {
                                 return respond(());
                             }
                             "agents" | "browse" => {
-                                let message = match fetch_modulus_index().await {
+                                let message = match fetch_marketplace_index(&index_url).await {
                                     Ok(skills) => format_index_listing(&skills),
                                     Err(e) => format!("Marketplace lookup failed: {e}"),
                                 };
@@ -365,7 +404,7 @@ impl ChannelAdapter for TelegramAdapter {
                                     return respond(());
                                 };
 
-                                let reply = match fetch_modulus_index().await {
+                                let reply = match fetch_marketplace_index(&index_url).await {
                                     Ok(skills) => {
                                         if let Some(metadata) = find_skill_by_id(&skills, id) {
                                             let mut lock = installer.lock().await;
@@ -503,7 +542,7 @@ mod tests {
     fn parse_modulus_index_accepts_array_root() {
         let json = r#"
         [
-          {"id":"pares/rust-helper","name":"Rust Helper","version":"1.2.3","description":"Rust coding helper","author":"pares"}
+          {"id":"pares/rust-helper","name":"Rust Helper","version":"1.2.3","description":"Rust coding helper","author":"pares","checksum":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","download_url":"https://example.com/rust-helper.tar.gz"}
         ]
         "#;
         let skills = parse_modulus_index(json).unwrap();
@@ -517,7 +556,7 @@ mod tests {
         let json = r#"
         {
           "agents": [
-            {"id":"pares/ops","description":"Ops assistant"}
+            {"id":"pares/ops","description":"Ops assistant","checksum":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","download_url":"https://example.com/ops.tar.gz"}
           ]
         }
         "#;
@@ -542,5 +581,16 @@ mod tests {
 
         let found = find_skill_by_id(&skills, "PARES/RUST-HELPER").unwrap();
         assert_eq!(found.id, "pares/rust-helper");
+    }
+
+    #[test]
+    fn parse_modulus_index_skips_entries_without_checksum() {
+        let json = r#"
+        [
+          {"id":"pares/invalid","description":"missing checksum","download_url":"https://example.com/invalid.tar.gz"}
+        ]
+        "#;
+        let skills = parse_modulus_index(json).unwrap();
+        assert!(skills.is_empty());
     }
 }
