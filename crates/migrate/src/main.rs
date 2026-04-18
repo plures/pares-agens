@@ -774,17 +774,25 @@ struct SingleConnectionConflict {
 }
 
 fn sanitize_hostname(raw: &str) -> String {
-    let mut value: String = raw
-        .trim()
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
-                c
-            } else {
-                '_'
+    let mut value = String::new();
+    let mut prev_underscore = false;
+    for c in raw.trim().chars() {
+        let mapped = if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+            c
+        } else {
+            '_'
+        };
+        if mapped == '_' {
+            if prev_underscore {
+                continue;
             }
-        })
-        .collect();
+            prev_underscore = true;
+        } else {
+            prev_underscore = false;
+        }
+        value.push(mapped);
+    }
+    value = value.trim_matches('_').to_string();
     if value.is_empty() {
         value = "unknown-host".to_string();
     }
@@ -798,6 +806,13 @@ fn current_hostname() -> String {
             return clean;
         }
     }
+    if let Ok(value) = std::env::var("COMPUTERNAME") {
+        let clean = sanitize_hostname(&value);
+        if clean != "unknown-host" {
+            return clean;
+        }
+    }
+    #[cfg(unix)]
     if let Ok(value) = std::fs::read_to_string("/etc/hostname") {
         let clean = sanitize_hostname(&value);
         if clean != "unknown-host" {
@@ -1208,7 +1223,7 @@ async fn main() {
             }
             if !conflicts.is_empty() {
                 tracing::error!(
-                    "headless mode: refusing to start adapter; resolve by assigning this adapter to a single host via setup wizard"
+                    "headless mode: refusing to start adapter; keep this adapter enabled on only one host in the swarm (resolve ownership in setup wizard or by disabling Telegram on other hosts)"
                 );
                 std::process::exit(1);
             }
@@ -1342,6 +1357,30 @@ mod tests {
                     kind: "local".to_string(),
                     connection_id: "n/a".to_string(),
                     single_connection: false,
+                }],
+            },
+        ];
+        let conflicts = detect_single_connection_conflicts("alpha", &records);
+        assert!(conflicts.is_empty());
+    }
+
+    #[test]
+    fn detect_single_connection_conflicts_ignores_non_local_conflicts() {
+        let records = vec![
+            HostAdapterRecord {
+                host: "beta".to_string(),
+                adapters: vec![HostAdapterConfig {
+                    kind: "telegram".to_string(),
+                    connection_id: "token-a".to_string(),
+                    single_connection: true,
+                }],
+            },
+            HostAdapterRecord {
+                host: "gamma".to_string(),
+                adapters: vec![HostAdapterConfig {
+                    kind: "telegram".to_string(),
+                    connection_id: "token-a".to_string(),
+                    single_connection: true,
                 }],
             },
         ];

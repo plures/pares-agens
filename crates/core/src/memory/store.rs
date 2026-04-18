@@ -267,9 +267,12 @@ impl PluresDbStore {
         hostname: &str,
         adapters: Vec<HostAdapterConfig>,
     ) -> Result<(), Error> {
-        if hostname.trim().is_empty() || hostname.contains('/') {
+        if hostname.trim().is_empty()
+            || hostname.contains('/')
+            || hostname.chars().any(|c| c.is_control())
+        {
             return Err(Error::Store(
-                "hostname must be non-empty and must not contain '/'".into(),
+                "hostname must be non-empty and must not contain '/' or control characters".into(),
             ));
         }
         let payload = HostAdaptersPayload { adapters };
