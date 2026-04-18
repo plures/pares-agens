@@ -11,15 +11,37 @@
 
 use std::time::Duration;
 
+use pares_agens_core::memory::entry::{MemoryCategory, MemoryEntry};
+use pares_agens_core::memory::store::{
+    generate_sync_shared_key, generate_sync_topic_key_hex, parse_sync_topic_key_hex,
+    validate_sync_shared_key, MemoryStore, PluresDbStore,
+};
+use serde::{Deserialize, Serialize};
 use tauri::State;
 use tracing::warn;
 
-use crate::state::{rebuild_model_router, AppState, Settings};
+use crate::state::{rebuild_model_router, AppState, Settings, SwarmSettings};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 /// Port used by Docker Model Runner's OpenAI-compatible endpoint.
 const DOCKER_RUNNER_ADDR: &str = "127.0.0.1:12434";
+const SWARM_SHARED_KEY_SECRET: &str = "swarm:shared_key";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwarmInvite {
+    pub topic: String,
+    pub shared_key: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwarmSetupInput {
+    pub mode: String,
+    pub topic: String,
+    pub shared_key: String,
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -105,12 +127,111 @@ pub async fn is_wizard_completed(state: State<'_, AppState>) -> Result<bool, Str
     Ok(*state.wizard_completed.lock().await)
 }
 
+/// Generate first-run Hyperswarm pairing material for a brand-new swarm.
+#[tauri::command]
+pub async fn generate_swarm_invite() -> Result<SwarmInvite, String> {
+    Ok(SwarmInvite {
+        topic: generate_sync_topic_key_hex(),
+        shared_key: generate_sync_shared_key().map_err(|e| e.to_string())?,
+    })
+}
+
+/// Verify that supplied swarm topic + shared key can decrypt a synced record.
+#[tauri::command]
+pub async fn verify_swarm_join(topic: String, shared_key: String) -> Result<(), String> {
+    let topic_key = parse_sync_topic_key_hex(&topic).map_err(|e| e.to_string())?;
+    validate_sync_shared_key(&shared_key).map_err(|e| e.to_string())?;
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let base = std::env::temp_dir().join(format!(
+        "pares-agens-swarm-verify-{}-{stamp}",
+        std::process::id()
+    ));
+    let dir_a = base.join("a");
+    let dir_b = base.join("b");
+    std::fs::create_dir_all(&dir_a).map_err(|e| format!("failed to create probe dir A: {e}"))?;
+    std::fs::create_dir_all(&dir_b).map_err(|e| format!("failed to create probe dir B: {e}"))?;
+
+    let result = async {
+        let store_a =
+            PluresDbStore::open_with_sync(&dir_a, &topic_key, &shared_key).map_err(|e| e.to_string())?;
+        let store_b =
+            PluresDbStore::open_with_sync(&dir_b, &topic_key, &shared_key).map_err(|e| e.to_string())?;
+
+        let probe_id = format!("swarm-probe-{}", stamp);
+        store_a
+            .insert(MemoryEntry {
+                id: probe_id.clone(),
+                content: "swarm verification probe".to_string(),
+                category: MemoryCategory::Decision,
+                tags: vec!["wizard".to_string(), "swarm-verify".to_string()],
+                embedding: vec![0.1_f32, 0.2, 0.3],
+                score: 0.0,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let entries = store_b.all().await.map_err(|e| e.to_string())?;
+            if entries.iter().any(|entry| entry.id == probe_id) {
+                break Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break Err(
+                    "Unable to verify swarm credentials. Check the topic and shared key, then try again."
+                        .to_string(),
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+    .await;
+
+    let _ = std::fs::remove_dir_all(&base);
+    result
+}
+
 /// Mark the wizard as completed and persist the chosen settings.
 ///
 /// The frontend is responsible for writing `localStorage("wizard_completed")`
 /// so that the wizard is suppressed on the next launch without an IPC call.
 #[tauri::command]
-pub async fn complete_wizard(settings: Settings, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn complete_wizard(
+    mut settings: Settings,
+    swarm: Option<SwarmSetupInput>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if let Some(swarm) = swarm {
+        let mode = swarm.mode.trim().to_lowercase();
+        if mode != "new" && mode != "join" {
+            return Err("swarm mode must be either 'new' or 'join'".to_string());
+        }
+
+        parse_sync_topic_key_hex(&swarm.topic).map_err(|e| e.to_string())?;
+        validate_sync_shared_key(&swarm.shared_key).map_err(|e| e.to_string())?;
+        state
+            .secret_store
+            .set(SWARM_SHARED_KEY_SECRET, swarm.shared_key.trim())
+            .await
+            .map_err(|e| e.to_string())?;
+        settings.swarm = Some(SwarmSettings {
+            mode,
+            topic: swarm.topic.trim().to_string(),
+        });
+    } else {
+        settings.swarm = None;
+        state
+            .secret_store
+            .delete(SWARM_SHARED_KEY_SECRET)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
     *state.settings.lock().await = settings;
     *state.wizard_completed.lock().await = true;
 
