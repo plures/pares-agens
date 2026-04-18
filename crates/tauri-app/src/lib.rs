@@ -168,7 +168,7 @@ impl ModelClient for AppModelClient {
                 id: call.id,
                 name: call.function.name,
                 arguments: serde_json::from_str(&call.function.arguments)
-                    .unwrap_or_else(|_| serde_json::Value::String(call.function.arguments)),
+                    .unwrap_or(serde_json::Value::String(call.function.arguments)),
             })
             .collect();
 
