@@ -1,0 +1,119 @@
+{
+  "version": "1.0.0",
+  "source": "plures/development-guide",
+  "description": "Plures org development constraints — machine-enforceable rules",
+  "constraints": [
+    {
+      "id": "C-COP-001",
+      "name": "Zero Nudges",
+      "severity": "error",
+      "rule": "Never post comments on issues/PRs to prompt the SWE agent. Close and recreate instead.",
+      "source": "lessons-learned/2026-03-copilot-tainted-issues.md",
+      "enforcement": "before_tool_call"
+    },
+    {
+      "id": "C-COP-ASSIGN",
+      "name": "Single Assignment Authority",
+      "severity": "error",
+      "rule": "Lifecycle workflow is the ONLY assignment authority for the SWE agent.",
+      "source": "lessons-learned/2026-03-single-assignment-authority.md",
+      "enforcement": "before_tool_call"
+    },
+    {
+      "id": "ADR-0004",
+      "name": "Issue Label + Type Required",
+      "severity": "error",
+      "rule": "Every GitHub issue MUST have both a label AND an issue type.",
+      "source": "practices/copilot-delegation.md",
+      "enforcement": "after_tool_call"
+    },
+    {
+      "id": "C-FORK-001",
+      "name": "Never Touch Forks",
+      "severity": "error",
+      "rule": "Never deploy org automation to forked repos. Filter with isFork == false.",
+      "source": "practices/repo-routing-validation.md",
+      "enforcement": "before_tool_call"
+    },
+    {
+      "id": "C-HARDCODED-001",
+      "name": "No Hardcoded Lists",
+      "severity": "warning",
+      "rule": "Never hardcode repo lists, model lists, or counts. Always discover dynamically.",
+      "source": "practices/automation-first.md",
+      "enforcement": "review"
+    },
+    {
+      "id": "C-NIX-001",
+      "name": "No Permanent noChroot",
+      "severity": "error",
+      "rule": "Never use sandbox escape as permanent solution. Prefetch as fixed-output derivation.",
+      "source": "guides/NIX-INTUITION.md",
+      "enforcement": "review"
+    },
+    {
+      "id": "C-REACTIVE-001",
+      "name": "Reactive Over Cron",
+      "severity": "warning",
+      "rule": "Prefer event-driven over scheduled. Workflows should trigger on state changes, not timers.",
+      "source": "lessons-learned/2026-03-reactive-over-cron.md",
+      "enforcement": "review"
+    },
+    {
+      "id": "C-CI-001",
+      "name": "CI Fixes First",
+      "severity": "error",
+      "rule": "CI failure issues get top priority. A broken CI blocks ALL other work.",
+      "source": "practices/automation-first.md",
+      "enforcement": "lifecycle"
+    },
+    {
+      "id": "C-MEMORY-001",
+      "name": "Facts Not Corrections",
+      "severity": "warning",
+      "rule": "Memory stores facts, not corrections. 'X is Y' improves recall. Corrections degrade performance.",
+      "source": "practices/praxis-logic.md",
+      "enforcement": "before_store"
+    },
+    {
+      "id": "C-AUTO-DIRECT",
+      "name": "Fix Automation Directly",
+      "severity": "warning",
+      "rule": "Never handle automation gaps with issues. Fix directly. Issues are for feature work.",
+      "source": "practices/automation-first.md",
+      "enforcement": "review"
+    },
+    {
+      "id": "C-PUSH-001",
+      "name": "Always Push",
+      "severity": "info",
+      "rule": "Always push commits to GitHub without asking.",
+      "source": "practices/dogfooding.md",
+      "enforcement": "after_tool_call"
+    },
+    {
+      "id": "C-ADR-0014",
+      "name": "Full Plures Stack",
+      "severity": "error",
+      "rule": "ALL state in PluresDB. ALL logic through Praxis. ALL routing through Cerebellum.",
+      "source": "design/ADR-0014-full-plures-stack.md",
+      "enforcement": "review"
+    },
+    {
+      "id": "C-MERGE-001",
+      "name": "Merge Conflict Prevention",
+      "severity": "warning",
+      "rule": "Keep PRs small (~10 files). Rebase before merge. Don't let PRs sit >24h.",
+      "source": "practices/MERGE-CONFLICT-PREVENTION.md",
+      "enforcement": "lifecycle"
+    },
+    {
+      "id": "C-STALE-PR",
+      "name": "Stale PR Process",
+      "severity": "warning",
+      "rule": "PRs open >48h with failing CI: close, recreate from fresh branch.",
+      "source": "practices/stale-pr-process.md",
+      "enforcement": "lifecycle"
+    }
+  ]
+}
