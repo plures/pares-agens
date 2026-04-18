@@ -1,3 +1,7 @@
+## [0.12.0] — 2026-04-18
+
+- feat: Praxis-driven lifecycle rules — replaces JS with Rust (dc0e8d2)
+
 ## [0.11.0] — 2026-04-18
 
 - feat(lifecycle v12): auto-release when milestone completes (44bf5a4)
