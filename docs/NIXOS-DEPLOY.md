@@ -171,4 +171,4 @@ Verify:
 - `systemctl status pares-agens` shows `active (running)`
 - Telegram bot responds to `/status`
 - Memory survives restarts (`sudo systemctl restart pares-agens` then re-check prior context)
-- Copilot OAuth is authenticated (one-time device flow code appears via `journalctl -u pares-agens -f`)
+- Copilot OAuth is authenticated (for first boot, run `journalctl -u pares-agens -f`, open the printed device-flow URL, and submit the shown code)

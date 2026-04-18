@@ -242,12 +242,18 @@ tar.extractall(os.environ['out'] + '/lib')
                   syncArg = if cfg.syncTopicKey != null
                     then "--sync-topic-key ${cfg.syncTopicKey}"
                     else "";
+                  escapedBraveApiKeyFile = if cfg.braveApiKeyFile != null
+                    then lib.escapeShellArg (toString cfg.braveApiKeyFile)
+                    else null;
+                  escapedSyncSharedKeyFile = if cfg.syncSharedKeyFile != null
+                    then lib.escapeShellArg (toString cfg.syncSharedKeyFile)
+                    else null;
                   telegramTokenExport = "export PARES_TELEGRAM_TOKEN=\"$(tr -d '\\r\\n' < ${escapedTelegramTokenFile})\"";
                   braveApiKeyExport = if cfg.braveApiKeyFile != null
-                    then "export BRAVE_API_KEY=\"$(tr -d '\\r\\n' < ${lib.escapeShellArg (toString cfg.braveApiKeyFile)})\""
+                    then "export BRAVE_API_KEY=\"$(tr -d '\\r\\n' < ${escapedBraveApiKeyFile})\""
                     else "";
                   syncSharedKeyExport = if cfg.syncSharedKeyFile != null
-                    then "export PARES_SYNC_SHARED_KEY=\"$(tr -d '\\r\\n' < ${lib.escapeShellArg (toString cfg.syncSharedKeyFile)})\""
+                    then "export PARES_SYNC_SHARED_KEY=\"$(tr -d '\\r\\n' < ${escapedSyncSharedKeyFile})\""
                     else "";
                   extraArgs = lib.concatStringsSep " " cfg.extraFlags;
                 in
