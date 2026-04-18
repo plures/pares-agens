@@ -54,6 +54,7 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const botId = 'BOT_kgDOC9w8XQ';
+            const directFixLabelColor = 'B60205';
 
             // ── Schedule guard: exit fast if no active Copilot work ──
             if (context.eventName === 'schedule') {
@@ -282,7 +283,9 @@ jobs:
                 } catch (e) {
                   if ((e.message || '').includes('Validation Failed')) {
                     try {
-                      await github.rest.issues.createLabel({ owner, repo, name: 'direct-fix-needed', color: 'B60205' });
+                      await github.rest.issues.createLabel({
+                        owner, repo, name: 'direct-fix-needed', color: directFixLabelColor
+                      });
                       await github.rest.issues.addLabels({
                         owner, repo, issue_number: pr.number, labels: ['ci-failure', 'direct-fix-needed']
                       });
