@@ -19,9 +19,12 @@ pub mod quality;
 /// Memory store trait and backend implementations.
 pub mod store;
 
-use std::sync::Arc;
+use std::{
+    path::Path,
+    sync::Arc,
+};
 
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use self::{
@@ -39,6 +42,9 @@ pub enum Error {
     /// The backing memory store returned an error.
     #[error("store operation failed: {0}")]
     Store(String),
+    /// Filesystem operation failed while ingesting documents.
+    #[error("io operation failed: {0}")]
+    Io(String),
 }
 
 /// PluresLM memory system — native (non-MCP) memory operations for Pares Agens.
@@ -295,6 +301,137 @@ impl PluresLm {
         Ok(Some(id))
     }
 
+    /// Ingest a file or directory of supported documents into memory.
+    ///
+    /// Supported file types:
+    /// - Markdown (`.md`, `.markdown`)
+    /// - Text (`.txt`, `.text`)
+    /// - Source code files (common language/config extensions)
+    ///
+    /// Returns the number of chunks indexed.
+    pub async fn ingest_documents_path(&self, path: impl AsRef<Path>) -> Result<usize, Error> {
+        let path = path.as_ref();
+        let metadata = tokio::fs::metadata(path)
+            .await
+            .map_err(|e| Error::Io(format!("failed to read metadata for {}: {e}", path.display())))?;
+
+        if metadata.is_dir() {
+            self.ingest_documents_dir(path).await
+        } else if metadata.is_file() {
+            self.ingest_document_file(path).await
+        } else {
+            Ok(0)
+        }
+    }
+
+    async fn ingest_documents_dir(&self, root: &Path) -> Result<usize, Error> {
+        let mut indexed = 0usize;
+        let mut stack = vec![root.to_path_buf()];
+
+        while let Some(dir) = stack.pop() {
+            let mut entries = tokio::fs::read_dir(&dir).await.map_err(|e| {
+                Error::Io(format!("failed to read directory {}: {e}", dir.display()))
+            })?;
+
+            while let Some(entry) = entries
+                .next_entry()
+                .await
+                .map_err(|e| Error::Io(format!("failed to read directory entry: {e}")))?
+            {
+                let file_type = entry
+                    .file_type()
+                    .await
+                    .map_err(|e| Error::Io(format!("failed to get file type: {e}")))?;
+                let entry_path = entry.path();
+
+                if file_type.is_dir() {
+                    stack.push(entry_path);
+                } else if file_type.is_file() {
+                    indexed += self.ingest_document_file(&entry_path).await?;
+                }
+            }
+        }
+
+        Ok(indexed)
+    }
+
+    async fn ingest_document_file(&self, path: &Path) -> Result<usize, Error> {
+        let Some(kind) = classify_document_kind(path) else {
+            return Ok(0);
+        };
+
+        let canonical_path = match tokio::fs::canonicalize(path).await {
+            Ok(p) => p,
+            Err(e) => {
+                warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "failed to canonicalize document path; using provided path"
+                );
+                path.to_path_buf()
+            }
+        };
+        let source = canonical_path.to_string_lossy().to_string();
+        self.remove_existing_document_chunks(&source).await?;
+
+        let raw = tokio::fs::read_to_string(path)
+            .await
+            .map_err(|e| Error::Io(format!("failed to read file {}: {e}", path.display())))?;
+        let chunks = split_document_chunks(&raw, DOCUMENT_CHUNK_SIZE_CHARS, DOCUMENT_CHUNK_OVERLAP_CHARS);
+        if chunks.is_empty() {
+            return Ok(0);
+        }
+
+        let total_chunks = chunks.len();
+        for (idx, chunk) in chunks.into_iter().enumerate() {
+            let content = format_document_chunk_content(&source, idx + 1, total_chunks, &chunk);
+            let embedding = self
+                .embedder
+                .embed(&content)
+                .await
+                .map_err(|e| Error::Embed(e.to_string()))?;
+
+            let entry = MemoryEntry {
+                id: Uuid::new_v4().to_string(),
+                content,
+                category: kind.category(),
+                tags: vec![
+                    format!("source:{source}"),
+                    format!("source-kind:{}", kind.as_str()),
+                    format!("chunk:{}/{}", idx + 1, total_chunks),
+                ],
+                embedding,
+                score: 0.0,
+                created_at: chrono::Utc::now().to_rfc3339(),
+            };
+
+            self.store
+                .insert(entry)
+                .await
+                .map_err(|e| Error::Store(e.to_string()))?;
+        }
+
+        Ok(total_chunks)
+    }
+
+    async fn remove_existing_document_chunks(&self, source: &str) -> Result<(), Error> {
+        let source_tag = format!("source:{source}");
+        let all = self
+            .store
+            .all()
+            .await
+            .map_err(|e| Error::Store(e.to_string()))?;
+        for entry in all {
+            if entry.tags.iter().any(|tag| tag == &source_tag) {
+                self.store
+                    .remove(&entry.id)
+                    .await
+                    .map_err(|e| Error::Store(e.to_string()))?;
+            }
+        }
+        Ok(())
+    }
+
     /// Return all stored memory entries (unordered).
     ///
     /// Used by maintenance procedures such as `cerebellum-sweep` that need to
@@ -435,6 +572,97 @@ fn is_git_noise(text: &str) -> bool {
         || lower.contains("index ") && lower.contains("+++")
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DocumentKind {
+    Markdown,
+    Text,
+    SourceCode,
+}
+
+impl DocumentKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Markdown => "markdown",
+            Self::Text => "text",
+            Self::SourceCode => "source-code",
+        }
+    }
+
+    fn category(self) -> MemoryCategory {
+        match self {
+            Self::SourceCode => MemoryCategory::CodePattern,
+            Self::Markdown | Self::Text => MemoryCategory::Fact,
+        }
+    }
+}
+
+const DOCUMENT_CHUNK_SIZE_CHARS: usize = 1_200;
+const DOCUMENT_CHUNK_OVERLAP_CHARS: usize = 200;
+
+fn classify_document_kind(path: &Path) -> Option<DocumentKind> {
+    let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
+    match ext.as_str() {
+        "md" | "markdown" => Some(DocumentKind::Markdown),
+        "txt" | "text" => Some(DocumentKind::Text),
+        "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "java" | "c" | "cc" | "cpp"
+        | "h" | "hpp" | "cs" | "swift" | "kt" | "kts" | "rb" | "php" | "scala" | "sh"
+        | "bash" | "zsh" | "fish" | "sql" | "toml" | "json" | "yaml" | "yml" => {
+            Some(DocumentKind::SourceCode)
+        }
+        _ => None,
+    }
+}
+
+fn floor_char_boundary(s: &str, mut idx: usize) -> usize {
+    if idx >= s.len() {
+        return s.len();
+    }
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
+}
+
+fn split_document_chunks(text: &str, max_chars: usize, overlap_chars: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let trimmed = text.trim();
+    if trimmed.is_empty() || max_chars == 0 {
+        return out;
+    }
+
+    let mut start = 0usize;
+    let len = trimmed.len();
+    while start < len {
+        let mut end = (start + max_chars).min(len);
+        end = floor_char_boundary(trimmed, end);
+        if end <= start {
+            break;
+        }
+
+        let chunk = trimmed[start..end].trim();
+        if !chunk.is_empty() {
+            out.push(chunk.to_string());
+        }
+
+        if end == len {
+            break;
+        }
+
+        let mut next_start = end.saturating_sub(overlap_chars);
+        next_start = floor_char_boundary(trimmed, next_start);
+        if next_start <= start {
+            next_start = end;
+        }
+        start = next_start;
+    }
+
+    out
+}
+
+fn format_document_chunk_content(source: &str, chunk_index: usize, total_chunks: usize, chunk: &str) -> String {
+    format!("Source: {source}\nChunk: {chunk_index}/{total_chunks}\n\n{chunk}")
+}
+
 /// Extract simple keyword tags from the exchange.
 fn extract_tags(exchange: &Exchange) -> Vec<String> {
 
@@ -494,6 +722,8 @@ pub trait MemoryClient: Send + Sync {
 mod tests {
     use super::*;
     use crate::memory::{embed::MockEmbedder, store::InMemoryStore};
+    use std::path::PathBuf;
+    use tempfile::tempdir;
 
     fn lm() -> PluresLm {
         PluresLm::new(
@@ -654,5 +884,84 @@ mod tests {
             detect_category("Actually, that's wrong — use Vec instead"),
             MemoryCategory::Correction
         );
+    }
+
+    #[tokio::test]
+    async fn ingest_documents_path_indexes_markdown_text_and_source() {
+        let lm = lm();
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let nested = root.join("src");
+        tokio::fs::create_dir_all(&nested).await.unwrap();
+
+        let md = root.join("guide.md");
+        let txt = root.join("notes.txt");
+        let rs = nested.join("lib.rs");
+        let bin = root.join("image.png");
+
+        tokio::fs::write(&md, "# Deployment runbook\nUse staging first.\n")
+            .await
+            .unwrap();
+        tokio::fs::write(&txt, "Remember to rotate secrets monthly.\n")
+            .await
+            .unwrap();
+        tokio::fs::write(
+            &rs,
+            "pub async fn start_server() { tokio::spawn(async move {}); }\n",
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(&bin, [0_u8, 1_u8, 2_u8, 3_u8]).await.unwrap();
+
+        let indexed = lm.ingest_documents_path(root).await.unwrap();
+        assert!(indexed >= 3, "expected supported files to be indexed");
+
+        let deployment = lm.recall("deployment runbook staging", 5, &[]).await.unwrap();
+        assert!(deployment.iter().any(|m| m.content.contains("guide.md")));
+
+        let secret_notes = lm
+            .recall("rotate secrets monthly", 5, &[])
+            .await
+            .unwrap();
+        assert!(secret_notes.iter().any(|m| m.content.contains("notes.txt")));
+
+        let rust_code = lm
+            .recall("tokio spawn async fn server", 5, &[])
+            .await
+            .unwrap();
+        assert!(rust_code.iter().any(|m| {
+            m.content.contains("lib.rs") && m.category == MemoryCategory::CodePattern
+        }));
+    }
+
+    #[tokio::test]
+    async fn ingest_documents_path_replaces_existing_chunks_for_same_source() {
+        let lm = lm();
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("kb.txt");
+        tokio::fs::write(&file, "alpha release notes and rollout checklist")
+            .await
+            .unwrap();
+
+        let first = lm.ingest_documents_path(&file).await.unwrap();
+        assert!(first > 0);
+
+        tokio::fs::write(&file, "beta release notes and rollback checklist")
+            .await
+            .unwrap();
+        let second = lm.ingest_documents_path(&file).await.unwrap();
+        assert!(second > 0);
+
+        let canonical: PathBuf = tokio::fs::canonicalize(&file).await.unwrap();
+        let source_tag = format!("source:{}", canonical.to_string_lossy());
+        let entries = lm.scan_all().await.unwrap();
+        let source_entries: Vec<_> = entries
+            .iter()
+            .filter(|m| m.tags.iter().any(|t| t == &source_tag))
+            .collect();
+
+        assert_eq!(source_entries.len(), second);
+        assert!(source_entries.iter().all(|m| m.content.contains("beta")));
+        assert!(source_entries.iter().all(|m| !m.content.contains("alpha")));
     }
 }
