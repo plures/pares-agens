@@ -361,7 +361,7 @@ fn build_authorization_context(event: &Event) -> RuleContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pares_agens_praxis::rule::{RuleContext, RuleResult};
+    use pares_agens_praxis::rule::RuleResult;
 
     #[test]
     fn extract_query_from_message() {

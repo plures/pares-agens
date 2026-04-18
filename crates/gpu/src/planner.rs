@@ -100,7 +100,7 @@ impl CapacityPlanner {
 
         // Sort descending by VRAM footprint (greedy largest-first).
         let mut sorted = candidates.to_vec();
-        sorted.sort_by(|a, b| b.vram_mb.cmp(&a.vram_mb));
+        sorted.sort_by_key(|s| std::cmp::Reverse(s.vram_mb));
 
         let mut selected: Vec<ModelSpec> = Vec::new();
         let mut used_mb: u64 = 0;
