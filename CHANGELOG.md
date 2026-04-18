@@ -1,3 +1,8 @@
+## [0.15.0] — 2026-04-18
+
+- feat: .px parser — PEG grammar + AST types for Praxis Intent Language (398482c)
+- docs: Praxis Intent Language (.px) grammar specification v0.1 (a3ba86d)
+
 ## [0.14.0] — 2026-04-18
 
 - feat: harden daemon runtime with recovery loop, watchdog, and health surface (#553) (f94f0ae)
