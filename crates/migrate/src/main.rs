@@ -9,6 +9,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
@@ -27,7 +28,7 @@ use pares_agens_core::delegation::{broker::DelegationBroker, registry::AgentRegi
 use pares_agens_core::memory::{
     embed::{EmbeddingProvider, MockEmbedder, OllamaEmbedder},
     entry::Exchange,
-    store::PluresDbStore,
+    store::{HostAdapterConfig, HostAdapterRecord, PluresDbStore},
     PluresLm,
 };
 use pares_agens_core::model::{
@@ -762,6 +763,128 @@ fn parse_sync_topic_key(raw: &str) -> Result<[u8; 32], String> {
     Ok(key)
 }
 
+const ADAPTER_DISCOVERY_TIMEOUT: Duration = Duration::from_millis(1200);
+const ADAPTER_DISCOVERY_INTERVAL: Duration = Duration::from_millis(200);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SingleConnectionConflict {
+    kind: String,
+    connection_id: String,
+    hosts: Vec<String>,
+}
+
+fn sanitize_hostname(raw: &str) -> String {
+    let mut value: String = raw
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if value.is_empty() {
+        value = "unknown-host".to_string();
+    }
+    value
+}
+
+fn current_hostname() -> String {
+    if let Ok(value) = std::env::var("HOSTNAME") {
+        let clean = sanitize_hostname(&value);
+        if clean != "unknown-host" {
+            return clean;
+        }
+    }
+    if let Ok(value) = std::fs::read_to_string("/etc/hostname") {
+        let clean = sanitize_hostname(&value);
+        if clean != "unknown-host" {
+            return clean;
+        }
+    }
+    "unknown-host".to_string()
+}
+
+async fn read_host_adapter_configs(
+    store: &PluresDbStore,
+    local_host: &str,
+    sync_enabled: bool,
+) -> Result<Vec<HostAdapterRecord>, String> {
+    let mut records = store
+        .list_host_adapters()
+        .await
+        .map_err(|e| format!("failed to list host adapter configs: {e}"))?;
+    if !sync_enabled {
+        return Ok(records);
+    }
+
+    let deadline = tokio::time::Instant::now() + ADAPTER_DISCOVERY_TIMEOUT;
+    while tokio::time::Instant::now() < deadline {
+        if records.iter().any(|record| record.host != local_host) {
+            break;
+        }
+        tokio::time::sleep(ADAPTER_DISCOVERY_INTERVAL).await;
+        records = store
+            .list_host_adapters()
+            .await
+            .map_err(|e| format!("failed to list host adapter configs: {e}"))?;
+    }
+    Ok(records)
+}
+
+fn detect_single_connection_conflicts(
+    local_host: &str,
+    records: &[HostAdapterRecord],
+) -> Vec<SingleConnectionConflict> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let mut owners: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
+    for record in records {
+        for adapter in &record.adapters {
+            if !adapter.single_connection || adapter.connection_id.trim().is_empty() {
+                continue;
+            }
+            owners
+                .entry((adapter.kind.clone(), adapter.connection_id.clone()))
+                .or_default()
+                .insert(record.host.clone());
+        }
+    }
+
+    owners
+        .into_iter()
+        .filter_map(|((kind, connection_id), hosts)| {
+            if hosts.len() < 2 || !hosts.contains(local_host) {
+                return None;
+            }
+            Some(SingleConnectionConflict {
+                kind,
+                connection_id,
+                hosts: hosts.into_iter().collect(),
+            })
+        })
+        .collect()
+}
+
+fn redact_connection_id(value: &str) -> String {
+    let len = value.chars().count();
+    if len <= 8 {
+        return "********".to_string();
+    }
+    let start: String = value.chars().take(4).collect();
+    let end: String = value
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    format!("{start}…{end}")
+}
+
 #[derive(Debug, Subcommand)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
@@ -891,6 +1014,7 @@ async fn main() {
             sync_shared_key,
         } => {
             tracing::info!("Starting Pares Agens daemon");
+            let sync_enabled = sync_topic_key.is_some();
 
             let system_prompt = match build_system_prompt(system_prompt) {
                 Ok(prompt) => prompt,
@@ -1048,6 +1172,47 @@ async fn main() {
                 }
             };
 
+            let hostname = current_hostname();
+            if let Err(e) = store
+                .set_host_adapters(
+                    &hostname,
+                    vec![HostAdapterConfig {
+                        kind: "telegram".to_string(),
+                        connection_id: telegram_token.clone(),
+                        single_connection: true,
+                    }],
+                )
+                .await
+            {
+                tracing::error!("failed to persist local adapter config for host {hostname}: {e}");
+                std::process::exit(1);
+            }
+
+            let host_configs =
+                match read_host_adapter_configs(&store, &hostname, sync_enabled).await {
+                    Ok(configs) => configs,
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        std::process::exit(1);
+                    }
+                };
+
+            let conflicts = detect_single_connection_conflicts(&hostname, &host_configs);
+            for conflict in &conflicts {
+                tracing::error!(
+                    adapter = %conflict.kind,
+                    connection = %redact_connection_id(&conflict.connection_id),
+                    hosts = %conflict.hosts.join(", "),
+                    "single-connection adapter conflict detected"
+                );
+            }
+            if !conflicts.is_empty() {
+                tracing::error!(
+                    "headless mode: refusing to start adapter; resolve by assigning this adapter to a single host via setup wizard"
+                );
+                std::process::exit(1);
+            }
+
             let embedder: Box<dyn EmbeddingProvider> = match embed_url {
                 Some(url) => Box::new(OllamaEmbedder::new(
                     url,
@@ -1124,5 +1289,63 @@ async fn main() {
                 std::process::exit(1);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_single_connection_conflicts_for_local_host() {
+        let records = vec![
+            HostAdapterRecord {
+                host: "alpha".to_string(),
+                adapters: vec![HostAdapterConfig {
+                    kind: "telegram".to_string(),
+                    connection_id: "token-a".to_string(),
+                    single_connection: true,
+                }],
+            },
+            HostAdapterRecord {
+                host: "beta".to_string(),
+                adapters: vec![HostAdapterConfig {
+                    kind: "telegram".to_string(),
+                    connection_id: "token-a".to_string(),
+                    single_connection: true,
+                }],
+            },
+        ];
+        let conflicts = detect_single_connection_conflicts("alpha", &records);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].kind, "telegram");
+        assert_eq!(
+            conflicts[0].hosts,
+            vec!["alpha".to_string(), "beta".to_string()]
+        );
+    }
+
+    #[test]
+    fn detect_single_connection_conflicts_ignores_non_single_connections() {
+        let records = vec![
+            HostAdapterRecord {
+                host: "alpha".to_string(),
+                adapters: vec![HostAdapterConfig {
+                    kind: "local".to_string(),
+                    connection_id: "n/a".to_string(),
+                    single_connection: false,
+                }],
+            },
+            HostAdapterRecord {
+                host: "beta".to_string(),
+                adapters: vec![HostAdapterConfig {
+                    kind: "local".to_string(),
+                    connection_id: "n/a".to_string(),
+                    single_connection: false,
+                }],
+            },
+        ];
+        let conflicts = detect_single_connection_conflicts("alpha", &records);
+        assert!(conflicts.is_empty());
     }
 }
