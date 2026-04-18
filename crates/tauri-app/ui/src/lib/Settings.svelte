@@ -9,12 +9,12 @@
   let dialog = $state(null);
 
   // ── Tab state ───────────────────────────────────────────────────────────
-  /** @type {'providers'|'routing'|'channels'|'preferences'|'mcp'|'license'|'marketplace'} */
+  /** @type {'providers'|'routing'|'channels'|'preferences'|'mcp'|'telemetry'|'license'|'marketplace'} */
   let activeTab = $state('providers');
   /** @type {HTMLButtonElement[]} */
   let tabButtons = $state([]);
 
-  const TABS = /** @type {const} */ (['providers', 'routing', 'channels', 'preferences', 'mcp', 'license', 'marketplace']);
+  const TABS = /** @type {const} */ (['providers', 'routing', 'channels', 'preferences', 'mcp', 'telemetry', 'license', 'marketplace']);
 
   // ── Provider state ───────────────────────────────────────────────────────
   /**
@@ -95,6 +95,14 @@
   let licenseError = $state('');
   let licenseActivating = $state(false);
 
+  // ── Telemetry state ──────────────────────────────────────────────────────
+  let telemetryEnabled = $state(false);
+  let telemetryUploadEnabled = $state(false);
+  let telemetryUploadEndpoint = $state('');
+  /** @type {{ modelCallsByDay?: Record<string, number>, toolUsageFrequency?: Record<string, number>, avgLatencyMs?: number|null, latencySampleCount?: number, latencyMinMs?: number|null, latencyMaxMs?: number|null, lastUploadAt?: string|null }} */
+  let telemetrySnapshot = $state({});
+  let telemetryUploading = $state(false);
+
   // ── Dialog lifecycle ─────────────────────────────────────────────────────
   $effect(() => {
     if (!dialog) return;
@@ -163,6 +171,17 @@
       licenseStatus = await invoke('get_license_status');
     } catch {
       licenseStatus = { tier: 'free', valid: true };
+    }
+
+    // Telemetry
+    const t = s.telemetry ?? {};
+    telemetryEnabled = t.enabled ?? false;
+    telemetryUploadEnabled = t.uploadEnabled ?? false;
+    telemetryUploadEndpoint = t.uploadEndpoint ?? '';
+    try {
+      telemetrySnapshot = await invoke('get_telemetry_snapshot');
+    } catch {
+      telemetrySnapshot = {};
     }
   }
 
@@ -347,6 +366,11 @@
             captureCategories:    prefCaptureCategories,
             notificationsEnabled: prefNotificationsEnabled,
           },
+          telemetry: {
+            enabled: telemetryEnabled,
+            uploadEnabled: telemetryUploadEnabled,
+            uploadEndpoint: telemetryUploadEndpoint.trim() || null,
+          },
         },
       });
 
@@ -433,6 +457,31 @@
       licenseError = `Activation failed: ${err}`;
     } finally {
       licenseActivating = false;
+    }
+  }
+
+  function telemetryTodayKey() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  function telemetryModelCallsToday() {
+    const byDay = telemetrySnapshot.modelCallsByDay ?? {};
+    return byDay[telemetryTodayKey()] ?? 0;
+  }
+
+  function telemetryToolEntries() {
+    return Object.entries(telemetrySnapshot.toolUsageFrequency ?? {}).sort((a, b) => b[1] - a[1]);
+  }
+
+  async function uploadTelemetryNow() {
+    telemetryUploading = true;
+    try {
+      await invoke('upload_telemetry_snapshot');
+      telemetrySnapshot = await invoke('get_telemetry_snapshot');
+    } catch (err) {
+      alert(`Telemetry upload failed: ${err}`);
+    } finally {
+      telemetryUploading = false;
     }
   }
 </script>
@@ -848,6 +897,106 @@
           </div>
         </div>
       {/if}
+    </div>
+
+    <!-- Telemetry panel -->
+    <div
+      role="tabpanel"
+      id="panel-telemetry"
+      aria-labelledby="tab-telemetry"
+      class="settings-panel"
+      hidden={activeTab !== 'telemetry'}>
+
+      <div class="pref-section">
+        <p class="pref-section-title">Privacy-first telemetry</p>
+        <p class="pref-hint">Anonymous metrics only. No conversation content, prompts, tool arguments, or personal identifiers are collected.</p>
+
+        <div class="pref-toggle-row">
+          <div class="pref-toggle-text">
+            <span class="pref-label">Enable telemetry (opt-in)</span>
+            <span class="pref-hint">Off by default</span>
+          </div>
+          <label class="toggle" aria-label="Enable anonymous telemetry">
+            <input class="toggle-input" type="checkbox" bind:checked={telemetryEnabled} />
+            <span class="toggle-slider" aria-hidden="true"></span>
+          </label>
+        </div>
+
+        <div class="pref-toggle-row">
+          <div class="pref-toggle-text">
+            <span class="pref-label">Enable upload</span>
+            <span class="pref-hint">Manual upload of local aggregate metrics</span>
+          </div>
+          <label class="toggle" aria-label="Enable telemetry upload">
+            <input class="toggle-input" type="checkbox" bind:checked={telemetryUploadEnabled} disabled={!telemetryEnabled} />
+            <span class="toggle-slider" aria-hidden="true"></span>
+          </label>
+        </div>
+
+        <label>
+          Upload endpoint
+          <input
+            type="url"
+            bind:value={telemetryUploadEndpoint}
+            placeholder="https://example.com/telemetry"
+            disabled={!telemetryEnabled || !telemetryUploadEnabled}
+            aria-label="Telemetry upload endpoint" />
+        </label>
+        <button
+          type="button"
+          class="btn-secondary"
+          onclick={uploadTelemetryNow}
+          disabled={!telemetryEnabled || !telemetryUploadEnabled || !telemetryUploadEndpoint.trim() || telemetryUploading}>
+          {telemetryUploading ? 'Uploading…' : 'Upload now'}
+        </button>
+      </div>
+
+      <div class="pref-section">
+        <p class="pref-section-title">Local telemetry dashboard</p>
+        <div class="routing-row">
+          <span class="routing-label">Model calls today</span>
+          <strong>{telemetryModelCallsToday()}</strong>
+        </div>
+        <div class="routing-row">
+          <span class="routing-label">Avg response latency</span>
+          <strong>{telemetrySnapshot.avgLatencyMs == null ? '—' : `${Math.round(telemetrySnapshot.avgLatencyMs)} ms`}</strong>
+        </div>
+        <div class="routing-row">
+          <span class="routing-label">Latency range</span>
+          <strong>{telemetrySnapshot.latencyMinMs == null ? '—' : `${telemetrySnapshot.latencyMinMs}–${telemetrySnapshot.latencyMaxMs} ms`}</strong>
+        </div>
+        <div class="routing-row">
+          <span class="routing-label">Samples</span>
+          <strong>{telemetrySnapshot.latencySampleCount ?? 0}</strong>
+        </div>
+        <div class="routing-row">
+          <span class="routing-label">Last upload</span>
+          <strong>{telemetrySnapshot.lastUploadAt ? new Date(telemetrySnapshot.lastUploadAt).toLocaleString() : 'Never'}</strong>
+        </div>
+
+        <hr class="section-divider" aria-hidden="true" />
+        <p class="pref-hint">Tool usage frequency</p>
+        {#if telemetryToolEntries().length === 0}
+          <p class="panel-empty">No tool usage recorded yet.</p>
+        {:else}
+          <table class="provider-table">
+            <thead>
+              <tr>
+                <th>Tool</th>
+                <th>Calls</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each telemetryToolEntries() as [toolName, count] (toolName)}
+                <tr>
+                  <td class="provider-name">{toolName}</td>
+                  <td>{count}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        {/if}
+      </div>
     </div>
 
     <!-- License panel -->

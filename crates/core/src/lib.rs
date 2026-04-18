@@ -30,10 +30,10 @@
 //! # }
 //! ```
 
-/// Authentication helpers for external providers.
-pub mod auth;
 /// High-level agent abstraction and in-memory storage.
 pub mod agent;
+/// Authentication helpers for external providers.
+pub mod auth;
 /// Cerebellum orchestrator — autorecall, routing, and pipeline execution.
 pub mod cerebellum;
 /// Local multi-agent delegation and concurrent sub-task execution.
@@ -66,6 +66,8 @@ pub mod setup;
 pub mod source;
 /// Key-value state store backed by PluresDB.
 pub mod state;
+/// Privacy-first anonymous telemetry aggregation primitives.
+pub mod telemetry;
 
 pub use agent::Memory as AgentMemory;
 pub use agent::{Agent, InMemory};
