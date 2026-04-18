@@ -22,6 +22,9 @@
   let clipboardText = $state('');
   let clipboardFresh = $state(false);
   let clipboardDismissed = $state(false);
+  const CLIPBOARD_CONTEXT_PREFIX = 'Clipboard context:';
+  const CLIPBOARD_EMPTY_MESSAGE = '⚠️ Clipboard is empty.';
+  const CLIPBOARD_POLL_INTERVAL_MS = 2000;
 
   /** Format a Date as HH:MM */
   function fmtTime(date = new Date()) {
@@ -73,7 +76,7 @@
 
   function addClipboardAsContext() {
     if (!clipboardText) return;
-    const context = `Clipboard context:\n${clipboardText.trimEnd()}`;
+    const context = `${CLIPBOARD_CONTEXT_PREFIX}\n${clipboardText.trimEnd()}`;
     inputValue = inputValue.trim()
       ? `${context}\n\n${inputValue}`
       : context;
@@ -161,7 +164,7 @@
   $effect(() => {
     if (!hasTauriRuntime()) return;
     refreshClipboard();
-    const interval = setInterval(() => { refreshClipboard(); }, 1000);
+    const interval = setInterval(() => { refreshClipboard(); }, CLIPBOARD_POLL_INTERVAL_MS);
     const handleFocus = () => { refreshClipboard(); };
     window.addEventListener('focus', handleFocus);
     return () => {
@@ -177,7 +180,7 @@
     if (content === '/paste') {
       const clipboard = await readClipboard();
       if (!clipboard.trim()) {
-        messages = [...messages, { role: 'system', content: '⚠️ Clipboard is empty.', time: fmtTime(), id: msgId() }];
+        messages = [...messages, { role: 'system', content: CLIPBOARD_EMPTY_MESSAGE, time: fmtTime(), id: msgId() }];
         return;
       }
       clipboardText = clipboard;
