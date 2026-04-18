@@ -1,0 +1,154 @@
+name: Org Proactive Monitor
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.COPILOT_PAT || secrets.PLURES_GITHUB_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - name: Check required secrets
+        id: preflight
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "Missing GitHub token; aborting monitor run"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Missing Telegram secrets; monitor scan will run but alerts are disabled"
+            echo "alerts_enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "alerts_enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+      - name: Monitor org PRs and CI
+        if: steps.preflight.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+
+          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          stalled_cutoff="$(date -u -d '2 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+          ci_cutoff="$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ)"
+          # Keep Telegram messages compact and below size limits; additional
+          # matches are still counted, but only the first N are shown.
+          max_alert_items=20
+
+          stalled_file="$(mktemp)"
+          ci_file="$(mktemp)"
+          repos_file="$(mktemp)"
+
+          repos_scanned=0
+          total_open_prs=0
+
+          page=1
+          while :; do
+            repos_page="$(gh api "/orgs/plures/repos?per_page=100&page=${page}")"
+            page_count="$(jq 'length' <<<"$repos_page")"
+            if [ "$page_count" -eq 0 ]; then
+              break
+            fi
+            jq -r '.[] | select(.fork == false and .archived == false) | .name' <<<"$repos_page" >> "$repos_file"
+            page=$((page + 1))
+          done
+
+          while IFS= read -r repo; do
+            [ -z "$repo" ] && continue
+            full_repo="plures/$repo"
+            repos_scanned=$((repos_scanned + 1))
+
+            pr_page=1
+            while :; do
+              pr_json="$(gh api "/repos/${full_repo}/pulls?state=open&per_page=100&page=${pr_page}")"
+              pr_count="$(jq 'length' <<<"$pr_json")"
+              if [ "$pr_count" -eq 0 ]; then
+                break
+              fi
+              total_open_prs=$((total_open_prs + pr_count))
+              jq --arg repo "$full_repo" --arg cutoff "$stalled_cutoff" -r '
+                .[]
+                | select(
+                    (.user.login | test("(^Copilot$|copilot-swe-agent\\[bot\\]|app/copilot-swe-agent|copilot-pull-request-reviewer\\[bot\\])"; "i"))
+                    and .updated_at < $cutoff
+                  )
+                | "- [\($repo)] PR #\(.number): \(.title) | \(.html_url) | last update: \(.updated_at)"
+              ' <<<"$pr_json" >> "$stalled_file"
+              pr_page=$((pr_page + 1))
+            done
+
+            run_page=1
+            while :; do
+              runs_json="$(gh api "/repos/${full_repo}/actions/runs?status=failure&per_page=100&page=${run_page}")"
+              run_count="$(jq '.workflow_runs | length' <<<"$runs_json")"
+              if [ "$run_count" -eq 0 ]; then
+                break
+              fi
+              jq --arg repo "$full_repo" --arg cutoff "$ci_cutoff" -r '
+                  .workflow_runs[]
+                  | select(.updated_at >= $cutoff)
+                  | "- [\($repo)] \(.name): \(.display_title) | \(.html_url) | failed at: \(.updated_at)"
+                ' <<<"$runs_json" >> "$ci_file"
+              run_page=$((run_page + 1))
+            done
+          done < "$repos_file"
+
+          stalled_count="$(grep -c '^- \[' "$stalled_file" || true)"
+          ci_count="$(grep -c '^- \[' "$ci_file" || true)"
+
+          echo "Scanned $repos_scanned repos; open PRs: $total_open_prs; stalled Copilot PRs: $stalled_count; recent CI failures: $ci_count"
+
+          if [ "$stalled_count" -eq 0 ] && [ "$ci_count" -eq 0 ]; then
+            echo "No proactive issues found"
+            exit 0
+          fi
+
+          if [ "${{ steps.preflight.outputs.alerts_enabled }}" != "true" ]; then
+            echo "Alerts disabled due to missing Telegram secrets"
+            exit 0
+          fi
+
+          message_file="$(mktemp)"
+          {
+            printf '🚨 Pares Agens proactive monitor\n'
+            printf 'time: %s\n' "$now"
+            printf 'repos scanned: %s\n' "$repos_scanned"
+            printf 'open PRs: %s\n\n' "$total_open_prs"
+
+            if [ "$stalled_count" -gt 0 ]; then
+              printf 'Stalled Copilot PRs (>2h no progress): %s\n' "$stalled_count"
+              head -n "$max_alert_items" "$stalled_file"
+              printf '\n'
+            fi
+
+            if [ "$ci_count" -gt 0 ]; then
+              printf 'Recent CI failures (last 30m): %s\n' "$ci_count"
+              head -n "$max_alert_items" "$ci_file"
+            fi
+          } > "$message_file"
+
+          message="$(cat "$message_file")"
+          telegram_response="$(
+            curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+              --data-urlencode "text=${message}" \
+              --data-urlencode "disable_web_page_preview=true" \
+              --write-out "\n%{http_code}"
+          )"
+          http_code="$(printf '%s\n' "$telegram_response" | tail -n 1)"
+          response_body="$(printf '%s\n' "$telegram_response" | sed '$d')"
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            echo "Telegram alert failed (HTTP $http_code): $response_body"
+            exit 1
+          fi
+
+          echo "Telegram alert sent"

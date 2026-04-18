@@ -81,7 +81,14 @@ All non-forked repos have the Copilot PR Lifecycle workflow.
 ### Lifecycle Workflow
 - Canonical copy: `plures/pares-agens/.github/workflows/copilot-pr-lifecycle.yml`
 - Deployed to ALL non-forked repos (inline, not reusable)
-- Triggers: pull_request, pull_request_review, check_suite, issues, schedule (*/30)
+- Triggers: pull_request, pull_request_review, check_suite, issues, schedule (*/15)
+
+### Proactive Monitoring (org controller)
+- Every 15 minutes, scan ALL non-forked/non-archived repos in `plures`
+- Check all open PRs and flag stalled Copilot PRs (`updated_at` older than 2h)
+- Monitor CI failures across repos and surface active failures
+- Send Telegram alerts when stalled PRs or CI failures are detected
+- Use `gh` CLI for GitHub operations
 
 ## Model Assignments (benchmarked 2026-04-16 on Copilot Enterprise)
 
