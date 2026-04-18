@@ -195,7 +195,7 @@ impl ChannelAdapter for TelegramAdapter {
                         let cmd = cmd.split('@').next().unwrap_or(cmd);
                         match cmd {
                             "start" | "help" => {
-                                let _ = bot.send_message(msg.chat.id, 
+                                let _ = bot.send_message(msg.chat.id,
                                     "Pares Agens commands:\n/status - health info\n/repos - org repos with open PRs\n/ci - CI status\n/update - self-update\n\nOr just send a message."
                                 ).await;
                                 return respond(());
