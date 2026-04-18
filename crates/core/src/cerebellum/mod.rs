@@ -106,6 +106,8 @@ impl Default for CerebellumConfig {
             context_token_budget: 4096,
             staleness_days: 30,
             similarity_threshold: 0.85,
+            // Calibrated for mock + production embeddings so minor phrasing
+            // changes stay in-topic while semantic shifts clear short-term history.
             topic_similarity_threshold: 0.72,
         }
     }
@@ -283,10 +285,18 @@ impl Cerebellum {
             return false;
         };
 
-        let mut embeddings = self.topic_embeddings.lock().unwrap();
+        let mut embeddings = match self.topic_embeddings.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                warn!(error = %e, "topic embedding cache poisoned; skipping topic-shift detection");
+                return false;
+            }
+        };
         let shifted = embeddings
             .get(&channel_key)
-            .map(|previous| cosine_similarity(previous, current_embedding) < self.config.topic_similarity_threshold)
+            .map(|previous| {
+                cosine_similarity(previous, current_embedding) < self.config.topic_similarity_threshold
+            })
             .unwrap_or(false);
         embeddings.insert(channel_key, current_embedding.to_vec());
         shifted
@@ -391,9 +401,14 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;
     }
-    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let (dot, norm_a_sq, norm_b_sq) = a.iter().zip(b.iter()).fold(
+        (0.0f32, 0.0f32, 0.0f32),
+        |(dot, norm_a_sq, norm_b_sq), (&x, &y)| {
+            (dot + x * y, norm_a_sq + x * x, norm_b_sq + y * y)
+        },
+    );
+    let norm_a = norm_a_sq.sqrt();
+    let norm_b = norm_b_sq.sqrt();
     if norm_a == 0.0 || norm_b == 0.0 {
         return 0.0;
     }
