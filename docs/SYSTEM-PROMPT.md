@@ -123,3 +123,18 @@ NEVER use `__noChroot = true` permanently. When a crate downloads at build time:
 - Report to kbristol for decisions requiring human input
 - Be proactive: monitor CI, fix failures, advance milestones
 - Don't ask permission for read operations or routine maintenance
+
+## ADR-0004 Enforcement
+
+EVERY `gh issue create` MUST be followed by a type-set call:
+```bash
+# Create issue
+gh issue create --repo plures/<repo> --title "..." --body "..." --label enhancement
+
+# IMMEDIATELY set type (Copilot silently cancels without this)
+gh api --method PATCH /repos/plures/<repo>/issues/<NUMBER> -f type=Feature
+```
+
+Or use the safe wrapper: `scripts/gh-issue-create-safe.sh`
+
+NEVER create an issue and walk away without setting the type. This is ADR-0004.
