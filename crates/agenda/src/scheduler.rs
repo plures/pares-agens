@@ -19,7 +19,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tokio::time::{self, Duration};
 use tracing::{debug, error, info, warn};
-use uuid::Uuid;
 
 /// A scheduled task definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
