@@ -765,6 +765,9 @@ fn parse_sync_topic_key(raw: &str) -> Result<[u8; 32], String> {
 
 const ADAPTER_DISCOVERY_TIMEOUT: Duration = Duration::from_millis(1200);
 const ADAPTER_DISCOVERY_INTERVAL: Duration = Duration::from_millis(200);
+const DEFAULT_NIX_FLAKE_DIR: &str = ".";
+const DEFAULT_NIX_HOST: &str = "praxisbot";
+const DEFAULT_SELF_UPDATE_INTERVAL_SECS: u64 = 3600;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SingleConnectionConflict {
@@ -820,6 +823,49 @@ fn current_hostname() -> String {
         }
     }
     "unknown-host".to_string()
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn build_nixos_update_command(flake_dir: &str, host: &str) -> String {
+    let flake_dir = shell_single_quote(flake_dir);
+    let host = shell_single_quote(host);
+    format!(
+        "set -eu; cd {flake_dir}; lock_before=$(sha256sum flake.lock 2>/dev/null | cut -d' ' -f1 || true); sudo nix flake update pares-agens; lock_after=$(sha256sum flake.lock 2>/dev/null | cut -d' ' -f1 || true); if [ \"$lock_before\" != \"$lock_after\" ]; then sudo nixos-rebuild switch --flake .#{host}; echo \"Self-update applied\"; else echo \"No new pares-agens commits on main\"; fi"
+    )
+}
+
+fn build_self_update_task(
+    flake_dir: &str,
+    host: &str,
+    interval_secs: u64,
+) -> pares_agens_agenda::scheduler::Task {
+    pares_agens_agenda::scheduler::Task {
+        id: "self-update.nixos-rebuild".to_string(),
+        name: "Self-update via NixOS rebuild".to_string(),
+        schedule: pares_agens_agenda::scheduler::Schedule::Interval {
+            every_secs: interval_secs,
+        },
+        command: build_nixos_update_command(flake_dir, host),
+        enabled: true,
+        last_run: None,
+        last_result: None,
+    }
+}
+
+fn self_update_task_from_env() -> pares_agens_agenda::scheduler::Task {
+    let flake_dir =
+        std::env::var("PARES_NIX_FLAKE_DIR").unwrap_or_else(|_| DEFAULT_NIX_FLAKE_DIR.into());
+    let host = std::env::var("PARES_NIX_HOST").unwrap_or_else(|_| DEFAULT_NIX_HOST.into());
+    let interval = std::env::var("PARES_SELF_UPDATE_INTERVAL_SECS")
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .unwrap_or(DEFAULT_SELF_UPDATE_INTERVAL_SECS);
+
+    build_self_update_task(&flake_dir, &host, interval)
 }
 
 async fn read_host_adapter_configs(
@@ -1292,8 +1338,8 @@ async fn main() {
             tracing::info!("Telegram adapter starting — bot is live");
 
             // Start the task scheduler in the background
-            let scheduler = pares_agens_agenda::scheduler::Scheduler::new()
-                .with_executor(std::sync::Arc::new(|cmd: String| {
+            let scheduler = pares_agens_agenda::scheduler::Scheduler::new().with_executor(
+                std::sync::Arc::new(|cmd: String| {
                     tokio::spawn(async move {
                         match tokio::process::Command::new("sh")
                             .arg("-c")
@@ -1313,7 +1359,11 @@ async fn main() {
                             Err(e) => format!("EXEC ERROR: {e}"),
                         }
                     })
-                }));
+                }),
+            );
+
+            scheduler.add(self_update_task_from_env()).await;
+            tracing::info!("Registered scheduled NixOS self-update task");
 
             // Spawn scheduler loop
             tokio::spawn(async move {
@@ -1416,5 +1466,30 @@ mod tests {
         ];
         let conflicts = detect_single_connection_conflicts("alpha", &records);
         assert!(conflicts.is_empty());
+    }
+
+    #[test]
+    fn build_nixos_update_command_includes_required_commands() {
+        let command = build_nixos_update_command("/etc/nixos", "praxisbot");
+        assert!(command.contains("sudo nix flake update pares-agens"));
+        assert!(command.contains("sudo nixos-rebuild switch --flake .#'praxisbot'"));
+        assert!(command.contains("No new pares-agens commits on main"));
+    }
+
+    #[test]
+    fn self_update_task_defaults_are_applied() {
+        let task = build_self_update_task(
+            DEFAULT_NIX_FLAKE_DIR,
+            DEFAULT_NIX_HOST,
+            DEFAULT_SELF_UPDATE_INTERVAL_SECS,
+        );
+        assert_eq!(task.id, "self-update.nixos-rebuild");
+        assert!(task.enabled);
+        match task.schedule {
+            pares_agens_agenda::scheduler::Schedule::Interval { every_secs } => {
+                assert_eq!(every_secs, DEFAULT_SELF_UPDATE_INTERVAL_SECS);
+            }
+            _ => panic!("expected interval schedule"),
+        }
     }
 }

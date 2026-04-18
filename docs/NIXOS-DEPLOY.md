@@ -158,6 +158,20 @@ sudo nixos-rebuild switch --flake .#myhost
 
 The service restarts automatically after rebuild.
 
+When running `pares-agens serve`, the runtime now also registers a scheduled self-update task that:
+- runs `sudo nix flake update pares-agens`
+- checks whether `flake.lock` changed (new commits on `main`)
+- runs `sudo nixos-rebuild switch --flake .#<host>` only when changed
+
+You can trigger the same flow on demand from Telegram with:
+- `/update`
+
+Optional environment variables:
+- `PARES_NIX_FLAKE_DIR` (default: `.`)
+- `PARES_NIX_HOST` (default: `praxisbot`)
+- `PARES_SELF_UPDATE_INTERVAL_SECS` (default: `3600`)
+- `PARES_TELEGRAM_UPDATE_ALLOWED_USERS` (required for `/update`; comma-separated Telegram usernames or numeric user IDs)
+
 ## Praxisbot rollout checklist
 
 ```bash
