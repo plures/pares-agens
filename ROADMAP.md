@@ -1,68 +1,59 @@
 # Pares Agens Roadmap
 
-## ✅ Completed: v0.5.x (Dogfood Ready)
-- [x] PluresDB-backed memory with native fastembed (BAAI/bge-small-en-v1.5)
-- [x] Telegram adapter (teloxide)
-- [x] 3-consciousness Cerebellum (GPT-4.1 conscious + Opus 4.6 deep)
-- [x] 7 tools (run_command, read/write/edit_file, web_search/fetch, list_directory)
-- [x] Copilot OAuth device flow
-- [x] Conversation persistence in PluresDB (ChatTurn)
-- [x] DelegationBroker with 3 built-in subagents
-- [x] Logprobs confidence escalation
-- [x] Fact autocapture + procedure writer
+## ✅ v0.5.0 — Dogfood Ready (10/10 closed)
+## ✅ v0.6.0 — Cognitive Architecture (7/7 closed)
+## ✅ v0.6.0 — Production Hardening (10/10 closed)
+## ✅ v0.7.0 — Multi-Host Sync (8/8 closed)
 
-## Phase 1: Core Runtime (v0.6)
-- [x] PluresDB Praxis gate — constraint-aware procedure execution
-- [x] Model router — Cerebellum routes to GPT-4.1/Opus 4.6/subagents
-- [ ] Streaming responses — SSE/WebSocket for chat UI (#510)
-- [x] Tool execution — 7 tools via ProcedureToolDispatcher
-- [x] Session persistence — ChatTurn in PluresDB
+## v0.8.0 — Ecosystem
+- [x] Agent marketplace — /install from pares-modulus (#514, #536)
+- [ ] Audit trail — Chronos decision logging (#515, partial)
 
-## Phase 2: Memory & Context (v0.7)
-- [x] PluresDB integration — native fastembed, auto-embed on every put()
-- [ ] Context window management — auto-summarize at token limit (#511)
-- [ ] RAG pipeline — document ingestion + retrieval (#512)
-- [ ] Conversation branching — alternative response paths (#513)
-- [x] Memory decay — forgetting engine with retention policies
-- [ ] Hyperswarm sync — multi-host memory replication (#495)
-- [ ] Encrypted PluresDB — at rest + in transit (#496)
-- [ ] Slash commands for topic/key management (#497)
-- [ ] Adapter conflict detection C-ADAPTER-001 (#498)
-- [ ] Setup wizard for Hyperswarm (#499)
-
-## Phase 3: Multi-Agent (v0.8)
-- [x] Agent-to-agent communication — DelegationBroker
-- [x] Coordinator agent — Cerebellum routes to specialists
-- [x] Shared memory — all agents share PluresDB
-- [ ] Agent marketplace — install from pares-modulus (#514)
-- [ ] Audit trail — Chronos decision logging (#515)
-
-## Phase 4: Desktop Experience (v0.9)
+## v0.9.0 — Desktop Experience
 - [x] System tray — crates/tauri-app/src/tray.rs
 - [x] Chat UI — Svelte 5 + design-dojo + PluresDB history
-- [ ] Hotkey activation — global shortcut (#516)
-- [ ] Clipboard integration — auto-capture context (#517)
-- [ ] Notification actions — actionable desktop notifications (#518)
+- [ ] Hotkey activation (#516, PR #537 in progress)
+- [ ] Clipboard integration (#517)
+- [ ] Notification actions (#518)
 
-## Phase 5: Production (v1.0)
-- [ ] NixOS service deployed on praxisbot (#502)
-- [ ] Context management — topic detection (#503)
-- [ ] Proactive org monitoring — CI, PRs, issues (#504)
-- [ ] Direct code fixes — clone, fix, push (#505)
-- [ ] Self-update via NixOS rebuild (#506)
-- [x] Telegram slash commands — /start /help /status (#507)
-- [ ] Production hardening — error recovery, logging (#508)
-- [ ] Opt-in telemetry (#519)
-- [ ] Plugin API stable (#520)
-- [ ] Cross-platform installers (#521)
+## v1.0.0 — The Replacement (OpenClaw feature parity + superiority)
+
+### Critical Path (blocks daily workflow)
+
+| # | Feature | Leverages | Priority |
+|---|---|---|---|
+| #538 | **crates/agenda — task scheduler** | automation-infrastructure scripts, pares-rector patterns | 🔴 P0 |
+| #539 | **pares-manus integration — browser/GUI control** | pares-manus v0.5.0 (7 crates, cross-platform) | 🔴 P0 |
+| #540 | **Session management — multi-session, compaction** | pares-saxum memory module | 🔴 P0 |
+
+### Core Features
+
+| # | Feature | Status |
+|---|---|---|
+| #502 | NixOS service on praxisbot | Blocked (needs praxisbot rebuild) |
+| #503 | Context management — topic detection | Open |
+| #504 | Proactive org monitoring | Depends on #538 (scheduler) |
+| #505 | Direct code fixes | Open |
+| #506 | Self-update via NixOS rebuild | Open |
+| #507 | Telegram slash commands | ✅ Done |
+| #508 | Production hardening — error recovery | Open |
+
+### Polish & Ecosystem
+
+| # | Feature | Status |
+|---|---|---|
+| #519 | Opt-in telemetry | Open |
+| #520 | Plugin API stable | Open |
+| #521 | Cross-platform installers | Open |
+| #522 | Default procedures library | Partial (6 exported) |
+| #541 | Telegram rich formatting (buttons, reactions, reply_to) | New |
 
 ## Summary
 
 | Phase | Total | Done | Remaining |
 |-------|-------|------|-----------|
-| v0.6 | 5 | 4 | 1 |
-| v0.7 | 10 | 2 | 8 |
-| v0.8 | 5 | 3 | 2 |
-| v0.9 | 5 | 2 | 3 |
-| v1.0 | 10 | 1 | 9 |
-| **Total** | **35** | **12** | **23** |
+| v0.5.0–v0.7.0 | 35 | 35 | 0 ✅ |
+| v0.8.0 | 2 | 1 | 1 |
+| v0.9.0 | 5 | 2 | 3 |
+| v1.0.0 | 16 | 1 | 15 |
+| **Total** | **58** | **39** | **19** |
