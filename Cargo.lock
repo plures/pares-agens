@@ -3941,7 +3941,6 @@ version = "0.6.1"
 dependencies = [
  "async-trait",
  "pares-agens-core",
- "serde_json",
  "teloxide",
  "thiserror 2.0.18",
  "tokio",
