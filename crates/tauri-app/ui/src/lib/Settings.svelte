@@ -62,6 +62,7 @@
   let prefCaptureCategories = $state(/** @type {string[]} */ ([]));
   let prefNotificationsEnabled = $state(true);
   let prefAutoStart = $state(false);
+  let prefActivationHotkey = $state('Ctrl+Space');
   let prefSystemPrompt = $state('');
 
   const ALL_CAPTURE_CATEGORIES = ['code-pattern', 'preference', 'decision', 'error'];
@@ -146,6 +147,7 @@
     prefCaptureCategories      = p.captureCategories     ?? [];
     prefNotificationsEnabled   = p.notificationsEnabled  ?? true;
     prefAutoStart              = s.autoStart             ?? false;
+    prefActivationHotkey       = s.activationHotkey      ?? 'Ctrl+Space';
     prefSystemPrompt           = s.systemPrompt          ?? '';
 
     // MCP servers
@@ -333,6 +335,7 @@
           model:           ollamaModelVal,
           endpoint:        ollamaBaseUrl,
           autoStart:       prefAutoStart,
+          activationHotkey: prefActivationHotkey.trim() || 'Ctrl+Space',
           systemPrompt:    prefSystemPrompt,
           routing,
           channelAdapters: channelAdapters,
@@ -738,6 +741,10 @@
             <span class="toggle-slider" aria-hidden="true"></span>
           </label>
         </div>
+        <label>
+          Activation hotkey
+          <input type="text" bind:value={prefActivationHotkey} placeholder="Ctrl+Space" />
+        </label>
       </div>
     </div>
 

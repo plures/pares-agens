@@ -7,7 +7,8 @@ use pares_agens_core::license::{
 use pares_agens_core::optimization::{EvidenceRequest, OptimizationSafety, OptimizationTelemetry};
 use pares_agens_core::praxis::{AnalysisEvent, GuidanceCategory, GuidanceEntry, SourceSpan};
 
-use crate::state::{rebuild_model_router, AppState, Settings};
+use crate::apply_activation_hotkey;
+use crate::state::{rebuild_model_router, sanitize_activation_hotkey, AppState, Settings};
 
 /// Send a user message through the core agent runtime and return the response.
 ///
@@ -95,6 +96,8 @@ pub async fn set_settings(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    settings.activation_hotkey = sanitize_activation_hotkey(&settings.activation_hotkey);
+
     #[cfg(desktop)]
     {
         use tauri_plugin_autostart::ManagerExt;
@@ -107,6 +110,8 @@ pub async fn set_settings(
     }
     #[cfg(not(desktop))]
     let _ = app;
+    #[cfg(desktop)]
+    apply_activation_hotkey(&app, &settings.activation_hotkey)?;
 
     let mut current = state.settings.lock().await;
     // Re-attach secrets the frontend never received so they are not cleared.

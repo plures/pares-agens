@@ -121,6 +121,19 @@ fn default_true() -> bool {
     true
 }
 
+pub fn default_activation_hotkey() -> String {
+    "Ctrl+Space".to_string()
+}
+
+pub fn sanitize_activation_hotkey(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        default_activation_hotkey()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Agent preferences
 // ---------------------------------------------------------------------------
@@ -195,6 +208,9 @@ pub struct Settings {
     pub telegram_token: Option<String>,
     /// Launch at system startup, minimised to the system tray.
     pub auto_start: bool,
+    /// Global keyboard shortcut used to summon/focus the window.
+    #[serde(default = "default_activation_hotkey")]
+    pub activation_hotkey: String,
     /// Configured model providers (ordered list).
     #[serde(default)]
     pub providers: Vec<ProviderEntry>,
@@ -225,6 +241,7 @@ impl Default for Settings {
             api_key: None,
             telegram_token: None,
             auto_start: false,
+            activation_hotkey: default_activation_hotkey(),
             providers: vec![ProviderEntry {
                 name: "ollama".to_string(),
                 base_url: "http://localhost:11434".to_string(),
@@ -491,6 +508,17 @@ mod tests {
 
         assert!(config.providers.is_empty());
         assert_eq!(config.default_provider, "ollama");
+    }
+
+    #[test]
+    fn sanitize_activation_hotkey_uses_default_for_blank_values() {
+        assert_eq!(sanitize_activation_hotkey(""), "Ctrl+Space");
+        assert_eq!(sanitize_activation_hotkey("   "), "Ctrl+Space");
+    }
+
+    #[test]
+    fn sanitize_activation_hotkey_trims_custom_values() {
+        assert_eq!(sanitize_activation_hotkey(" Alt+Space "), "Alt+Space");
     }
 
     #[tokio::test]
