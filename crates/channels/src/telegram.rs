@@ -19,9 +19,8 @@
 use async_trait::async_trait;
 use pares_agens_core::Event;
 use teloxide::{
-    payloads::SendMessageSetters,
     prelude::*,
-    types::{InlineKeyboardButton, InlineKeyboardMarkup, Message, MessageKind, ParseMode},
+    types::{InlineKeyboardButton, InlineKeyboardMarkup, Message, MessageKind},
 };
 use tracing::{debug, error, info};
 use uuid::Uuid;
