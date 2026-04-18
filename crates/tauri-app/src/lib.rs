@@ -513,7 +513,7 @@ pub fn run() {
 
             // ── System tray ───────────────────────────────────────────────
             tray::setup_tray(app)?;
-            setup_global_shortcut(&app.handle(), &activation_hotkey)?;
+            setup_global_shortcut(app.handle(), &activation_hotkey)?;
 
             Ok(())
         })
