@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use tauri::Manager;
+use serde::Serialize;
+use tauri::{Emitter, Manager};
 use tokio::sync::{Mutex, RwLock};
 use tracing::info;
 
@@ -12,7 +13,9 @@ use pares_agens_core::memory::embed::MockEmbedder;
 use pares_agens_core::memory::store::PluresDbStore;
 use pares_agens_core::memory::store::{InMemoryStore, MemoryStore};
 use pares_agens_core::memory::PluresLm;
-use pares_agens_core::model::{ChatMessage, ChatOptions, ModelClient, ModelCompletion, ToolDefinition, ToolDispatcher};
+use pares_agens_core::model::{
+    ChatMessage, ChatOptions, ModelClient, ModelCompletion, ToolDefinition, ToolDispatcher,
+};
 use pares_agens_core::optimization::OptimizationSafetyGate;
 use pares_agens_core::praxis::GuidanceService;
 use pares_agens_core::secrets::InMemorySecretStore;
@@ -30,6 +33,41 @@ mod settings;
 mod state;
 pub mod tray;
 mod wizard;
+
+#[derive(Serialize)]
+struct ModelChunkPayload {
+    request_id: String,
+    content: String,
+    done: bool,
+}
+
+#[derive(Serialize)]
+struct ModelResponsePayload {
+    request_id: String,
+    content: String,
+}
+
+#[derive(Serialize)]
+struct ModelErrorPayload {
+    request_id: String,
+    error: String,
+}
+
+fn split_stream_chunks(content: &str) -> Vec<String> {
+    if content.is_empty() {
+        return Vec::new();
+    }
+    content
+        .split_inclusive(char::is_whitespace)
+        .map(str::to_string)
+        .collect()
+}
+
+fn emit_with_warn<T: Serialize>(app_handle: &tauri::AppHandle, event: &str, payload: &T) {
+    if let Err(err) = app_handle.emit(event, payload) {
+        tracing::warn!(event, error = %err, "failed to emit tauri event");
+    }
+}
 
 struct AppModelClient {
     router: Arc<RwLock<ModelRouter>>,
@@ -91,7 +129,13 @@ impl ModelClient for AppModelClient {
             request.tools = Some(
                 tools
                     .iter()
-                    .map(|tool| Tool::function(tool.name.clone(), tool.description.clone(), tool.parameters.clone()))
+                    .map(|tool| {
+                        Tool::function(
+                            tool.name.clone(),
+                            tool.description.clone(),
+                            tool.parameters.clone(),
+                        )
+                    })
                     .collect(),
             );
         }
@@ -103,7 +147,10 @@ impl ModelClient for AppModelClient {
         }
 
         let router_guard = self.router.read().await;
-        let response = router_guard.chat(&request).await.map_err(|e| e.to_string())?;
+        let response = router_guard
+            .chat(&request)
+            .await
+            .map_err(|e| e.to_string())?;
         drop(router_guard);
 
         let choice = response
@@ -220,11 +267,8 @@ pub fn run() {
             // The resulting `Arc<dyn MemoryStore>` is shared between `AppState`
             // and the `PluresLm` inside the agent so that autorecall sees all
             // captured memories.
-            let memory_store: Arc<dyn MemoryStore> = match app
-                .path()
-                .app_data_dir()
-                .ok()
-                .and_then(|dir| {
+            let memory_store: Arc<dyn MemoryStore> =
+                match app.path().app_data_dir().ok().and_then(|dir| {
                     PluresDbStore::open(dir.join("memory.db"))
                         .map_err(|e| {
                             tracing::warn!(
@@ -235,9 +279,9 @@ pub fn run() {
                         })
                         .ok()
                 }) {
-                Some(store) => Arc::new(store),
-                None => Arc::new(InMemoryStore::new()),
-            };
+                    Some(store) => Arc::new(store),
+                    None => Arc::new(InMemoryStore::new()),
+                };
 
             // ── Shared settings & model router ────────────────────────────
             let default_settings = Settings::default();
@@ -285,12 +329,85 @@ pub fn run() {
             );
 
             // Spawn the adapter run-loop, routing all events through the agent
+            let frontend_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 info!("Tauri IPC adapter starting (cerebellum + model client enabled)");
                 adapter
                     .run(move |event: Event| {
                         let agent = Arc::clone(&agent);
-                        Box::pin(async move { agent.handle_event(event).await })
+                        let app_handle = frontend_handle.clone();
+                        Box::pin(async move {
+                            let request_id = match &event {
+                                Event::Message { id, .. } => Some(id.clone()),
+                                _ => None,
+                            };
+
+                            let response = agent.handle_event(event).await;
+
+                            if let Some(request_id) = request_id {
+                                match &response {
+                                    Some(Event::ModelResponse { content, .. })
+                                    | Some(Event::Message { content, .. }) => {
+                                        for chunk in split_stream_chunks(content) {
+                                            emit_with_warn(
+                                                &app_handle,
+                                                "model-chunk",
+                                                &ModelChunkPayload {
+                                                    request_id: request_id.clone(),
+                                                    content: chunk,
+                                                    done: false,
+                                                },
+                                            );
+                                        }
+
+                                        emit_with_warn(
+                                            &app_handle,
+                                            "model-chunk",
+                                            &ModelChunkPayload {
+                                                request_id: request_id.clone(),
+                                                content: String::new(),
+                                                done: true,
+                                            },
+                                        );
+
+                                        emit_with_warn(
+                                            &app_handle,
+                                            "model-response",
+                                            &ModelResponsePayload {
+                                                request_id,
+                                                content: content.clone(),
+                                            },
+                                        );
+                                    }
+                                    Some(other) => {
+                                        emit_with_warn(
+                                            &app_handle,
+                                            "model-error",
+                                            &ModelErrorPayload {
+                                                request_id: request_id.clone(),
+                                                error: format!(
+                                                    "request {request_id} received unexpected event '{}'; expected model response content",
+                                                    other.kind()
+                                                ),
+                                            },
+                                        );
+                                    }
+                                    None => {
+                                        emit_with_warn(
+                                            &app_handle,
+                                            "model-error",
+                                            &ModelErrorPayload {
+                                                request_id,
+                                                error: "agent did not return a response"
+                                                    .to_string(),
+                                            },
+                                        );
+                                    }
+                                }
+                            }
+
+                            response
+                        })
                     })
                     .await
                     .ok();
@@ -325,9 +442,9 @@ pub fn run() {
             // The router was created from Settings::default() above.  Rebuild
             // it now that AppState (including the vault-backed SecretStore) is
             // managed so the initial router includes any persisted API keys.
-            let app_handle = app.handle().clone();
+            let startup_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let state = app_handle.state::<AppState>();
+                let state = startup_handle.state::<AppState>();
                 rebuild_model_router(&state).await;
                 mcp::start_mcp_servers(&state).await;
             });
@@ -385,3 +502,19 @@ pub fn run() {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+#[cfg(test)]
+mod tests {
+    use super::split_stream_chunks;
+
+    #[test]
+    fn split_stream_chunks_preserves_whitespace() {
+        let chunks = split_stream_chunks("Hello world!\nNext");
+        assert_eq!(chunks, vec!["Hello ", "world!\n", "Next"]);
+    }
+
+    #[test]
+    fn split_stream_chunks_single_token() {
+        let chunks = split_stream_chunks("token");
+        assert_eq!(chunks, vec!["token"]);
+    }
+}
