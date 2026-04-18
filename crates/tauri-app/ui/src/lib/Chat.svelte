@@ -16,6 +16,7 @@
   let busy = $state(false);
   let connectionState = $state('connected');
   let messagesEl = $state(null);
+  let inputEl = $state(null);
   let historyLoaded = $state(false);
 
   /** Format a Date as HH:MM */
@@ -159,7 +160,13 @@
 
   $effect(() => {
     const unlisten = listen('show-settings', () => { settingsOpen = true; });
-    return () => { unlisten.then(fn => fn?.()); };
+    const unlistenFocusInput = listen('focus-chat-input', () => {
+      requestAnimationFrame(() => inputEl?.focus());
+    });
+    return () => {
+      unlisten.then(fn => fn?.());
+      unlistenFocusInput.then(fn => fn?.());
+    };
   });
 </script>
 
@@ -222,6 +229,7 @@
         rows="1"
         aria-label="Message input"
         bind:value={inputValue}
+        bind:this={inputEl}
         onkeydown={handleKeydown}
         disabled={false}
       ></textarea>

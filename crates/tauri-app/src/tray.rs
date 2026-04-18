@@ -62,8 +62,24 @@ fn toggle_window(app: &tauri::AppHandle) {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
         } else {
-            let _ = window.show();
-            let _ = window.set_focus();
+            show_and_focus_main_window(app, true);
+        }
+    }
+}
+
+/// Show, restore and focus the main window.
+///
+/// When `focus_input` is true, also emits `focus-chat-input` so the frontend
+/// can place keyboard focus in the chat textbox.
+pub fn show_and_focus_main_window(app: &tauri::AppHandle, focus_input: bool) {
+    if let Some(window) = app.get_webview_window("main") {
+        if window.is_minimized().unwrap_or(false) {
+            let _ = window.unminimize();
+        }
+        let _ = window.show();
+        let _ = window.set_focus();
+        if focus_input {
+            let _ = window.emit("focus-chat-input", ());
         }
     }
 }
@@ -72,8 +88,7 @@ fn toggle_window(app: &tauri::AppHandle) {
 /// the Settings dialog immediately.
 fn open_settings_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
+        show_and_focus_main_window(app, false);
         let _ = window.emit("show-settings", ());
     }
 }

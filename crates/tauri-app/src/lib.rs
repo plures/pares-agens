@@ -23,7 +23,9 @@ use pares_agens_core::Event;
 use pares_models::types::{ChatCompletionRequest, Role, Tool};
 use pares_models::ModelRouter;
 
-use crate::state::{build_router_config, rebuild_model_router, AppState, Settings};
+use crate::state::{
+    build_router_config, rebuild_model_router, sanitize_activation_hotkey, AppState, Settings,
+};
 
 mod commands;
 mod mcp;
@@ -67,6 +69,46 @@ fn emit_with_warn<T: Serialize>(app_handle: &tauri::AppHandle, event: &str, payl
     if let Err(err) = app_handle.emit(event, payload) {
         tracing::warn!(event, error = %err, "failed to emit tauri event");
     }
+}
+
+#[cfg(desktop)]
+fn setup_global_shortcut(app: &tauri::AppHandle, activation_hotkey: &str) -> tauri::Result<()> {
+    app.plugin(tauri_plugin_global_shortcut::Builder::new().build())?;
+    if let Err(err) = apply_activation_hotkey(app, activation_hotkey) {
+        tracing::warn!(hotkey = activation_hotkey, error = %err, "failed to register activation hotkey");
+    }
+
+    Ok(())
+}
+
+#[cfg(not(desktop))]
+fn setup_global_shortcut(_: &tauri::AppHandle, _: &str) -> tauri::Result<()> {
+    Ok(())
+}
+
+#[cfg(desktop)]
+pub(crate) fn apply_activation_hotkey(
+    app: &tauri::AppHandle,
+    activation_hotkey: &str,
+) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+    let global_shortcut = app.global_shortcut();
+    global_shortcut
+        .unregister_all()
+        .map_err(|e| e.to_string())?;
+    global_shortcut
+        .on_shortcut(activation_hotkey, |app, _, event| {
+            if event.state == ShortcutState::Pressed {
+                tray::show_and_focus_main_window(app, true);
+            }
+        })
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(desktop))]
+pub(crate) fn apply_activation_hotkey(_: &tauri::AppHandle, _: &str) -> Result<(), String> {
+    Ok(())
 }
 
 struct AppModelClient {
@@ -285,6 +327,7 @@ pub fn run() {
 
             // ── Shared settings & model router ────────────────────────────
             let default_settings = Settings::default();
+            let activation_hotkey = sanitize_activation_hotkey(&default_settings.activation_hotkey);
             let router_config = build_router_config(&default_settings);
             let system_prompt = default_settings.system_prompt.clone();
             let settings: Arc<Mutex<Settings>> = Arc::new(Mutex::new(default_settings));
@@ -451,6 +494,7 @@ pub fn run() {
 
             // ── System tray ───────────────────────────────────────────────
             tray::setup_tray(app)?;
+            setup_global_shortcut(&app.handle(), &activation_hotkey)?;
 
             Ok(())
         })
