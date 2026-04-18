@@ -383,6 +383,7 @@ pub fn run() {
                     .run(move |event: Event| {
                         let agent = Arc::clone(&agent);
                         let app_handle = frontend_handle.clone();
+                        let notification_settings = Arc::clone(&notification_settings);
                         Box::pin(async move {
                             let request_id = match &event {
                                 Event::Message { id, .. } => Some(id.clone()),
