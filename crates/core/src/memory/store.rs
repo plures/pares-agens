@@ -3,9 +3,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use pluresdb::{CrdtStore, MemoryStorage, SledStorage, StorageEngine};
+use pluresdb_sync::{create_transport, GunMessage, Replicator, TransportConfig, TransportMode};
 use tokio::sync::RwLock;
 
-use super::{entry::{ChatTurn, MemoryEntry}, Error};
+use super::{
+    entry::{ChatTurn, MemoryEntry},
+    Error,
+};
 
 /// Backing store for [`super::PluresLm`].
 ///
@@ -113,6 +117,7 @@ const TURN_PREFIX: &str = "turn:";
 /// leverage the index directly.
 pub struct PluresDbStore {
     store: Arc<CrdtStore>,
+    _sync_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl PluresDbStore {
@@ -126,7 +131,10 @@ impl PluresDbStore {
             SledStorage::open(path).map_err(|e| Error::Store(format!("open failed: {e}")))?,
         );
         let store = CrdtStore::default().with_persistence(storage);
-        Ok(Self { store: Arc::new(store) })
+        Ok(Self {
+            store: Arc::new(store),
+            _sync_task: None,
+        })
     }
 
     /// Open a PluresDB store with native fastembed embeddings.
@@ -159,7 +167,10 @@ impl PluresDbStore {
         );
         // The worker holds an Arc, and we hold a clone of the CrdtStore.
         // CrdtStore is Clone — both share the same underlying data via Arc internals.
-        Ok(Self { store: arc_store })
+        Ok(Self {
+            store: arc_store,
+            _sync_task: None,
+        })
     }
 
     /// Open a PluresDB store with Hyperswarm peer sync enabled.
@@ -168,23 +179,16 @@ impl PluresDbStore {
     /// instances sharing the same key will automatically replicate memory
     /// entries.  The local database is persisted at `path`.
     ///
-    /// > **Note:** Full Hyperswarm transport is pending the `hyperswarm-rs`
-    /// > integration in `pluresdb-sync`.  Until that integration lands this
-    /// > constructor behaves identically to [`open`][Self::open] but is
-    /// > provided now so call-sites do not need to change later.
-    ///
     /// # Errors
-    /// Returns [`Error::Store`] if the store cannot be opened.
-    pub fn open_with_sync(path: impl AsRef<Path>, _topic_key: &[u8; 32]) -> Result<Self, Error> {
-        // Hyperswarm DHT transport is a stub inside pluresdb-sync while the
-        // hyperswarm-rs crate is being finalised.  We open the persistent store
-        // normally; the sync layer will be wired in transparently once the
-        // transport implementation lands.
-        tracing::info!(
-            "PluresDbStore: Hyperswarm sync requested; \
-             transport stub active — opening persistent store only"
+    /// Returns [`Error::Store`] if the store cannot be opened or sync cannot
+    /// be initialized.
+    pub fn open_with_sync(path: impl AsRef<Path>, topic_key: &[u8; 32]) -> Result<Self, Error> {
+        let mut store = Self::open(path)?;
+        store._sync_task = Some(
+            spawn_sync_task(Arc::clone(&store.store), *topic_key)
+                .map_err(|e| Error::Store(format!("sync init failed: {e}")))?,
         );
-        Self::open(path)
+        Ok(store)
     }
 
     /// Create an ephemeral in-memory PluresDB store.
@@ -194,8 +198,87 @@ impl PluresDbStore {
     pub fn in_memory() -> Self {
         let storage: Arc<dyn StorageEngine> = Arc::new(MemoryStorage::default());
         let store = CrdtStore::default().with_persistence(storage);
-        Self { store: Arc::new(store) }
+        Self {
+            store: Arc::new(store),
+            _sync_task: None,
+        }
     }
+}
+
+fn spawn_sync_task(
+    store: Arc<CrdtStore>,
+    topic_key: [u8; 32],
+) -> Result<tokio::task::JoinHandle<()>, String> {
+    let runtime = tokio::runtime::Handle::try_current()
+        .map_err(|e| format!("open_with_sync requires an active Tokio runtime: {e}"))?;
+    Ok(runtime.spawn(async move {
+        let mut transport = create_transport(TransportConfig {
+            mode: TransportMode::Hyperswarm,
+            ..Default::default()
+        });
+        let mut connections = match transport.connect(topic_key).await {
+            Ok(rx) => rx,
+            Err(e) => {
+                tracing::error!("failed to connect Hyperswarm transport: {e}");
+                return;
+            }
+        };
+        tracing::info!("PluresDbStore: Hyperswarm sync active");
+        while let Some(mut connection) = connections.recv().await {
+            if let Err(e) = sync_connection(Arc::clone(&store), &mut *connection).await {
+                tracing::warn!("sync connection failed: {e}");
+            }
+        }
+    }))
+}
+
+async fn sync_connection(
+    store: Arc<CrdtStore>,
+    connection: &mut dyn pluresdb_sync::Connection,
+) -> Result<(), String> {
+    let replicator = Replicator::new(ACTOR);
+    for record in store.list() {
+        let payload = replicator
+            .encode_put(&record.id, record.data)
+            .map_err(|e| format!("encode_put failed: {e}"))?;
+        connection
+            .send(&payload)
+            .await
+            .map_err(|e| format!("send failed: {e}"))?;
+    }
+    connection
+        .close()
+        .await
+        .map_err(|e| format!("close failed: {e}"))?;
+
+    loop {
+        let maybe_payload = match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            connection.receive(),
+        )
+        .await
+        {
+            Ok(result) => result.map_err(|e| format!("receive failed: {e}"))?,
+            Err(_) => {
+                tracing::debug!("sync receive timeout reached; ending peer sync loop");
+                break;
+            }
+        };
+        let Some(payload) = maybe_payload else {
+            break;
+        };
+        let message = GunMessage::decode(&payload).map_err(|e| format!("decode failed: {e}"))?;
+        if let GunMessage::Put(put) = message {
+            for (id, node) in put.put {
+                store.put(
+                    id,
+                    ACTOR,
+                    serde_json::Value::Object(node.fields.into_iter().collect()),
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -350,6 +433,33 @@ mod tests {
         store.insert(make_entry("s1", "synced")).await.unwrap();
         let all = store.all().await.unwrap();
         assert_eq!(all.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn pluresdb_store_open_with_sync_replicates_existing_entries() {
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        let key = [7u8; 32];
+
+        let store_a = PluresDbStore::open_with_sync(dir_a.path(), &key).unwrap();
+        store_a
+            .insert(make_entry("shared-1", "from-a"))
+            .await
+            .unwrap();
+
+        let store_b = PluresDbStore::open_with_sync(dir_b.path(), &key).unwrap();
+
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let all = store_b.all().await.unwrap();
+            if all.iter().any(|entry| entry.id == "shared-1") {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                panic!("expected synced entry to replicate to peer store");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
     }
 
     // ── remove ───────────────────────────────────────────────────────────────

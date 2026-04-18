@@ -30,7 +30,9 @@ use pares_agens_core::memory::{
     store::PluresDbStore,
     PluresLm,
 };
-use pares_agens_core::model::{ChatMessage as CoreChatMessage, ChatOptions, ModelClient, ToolDefinition, ToolDispatcher};
+use pares_agens_core::model::{
+    ChatMessage as CoreChatMessage, ChatOptions, ModelClient, ToolDefinition, ToolDispatcher,
+};
 use pares_agens_core::procedure::{Procedure, ProcedureRegistry};
 use pares_agens_core::Event;
 use pares_agens_migrate::{migrate, openclaw};
@@ -106,7 +108,11 @@ impl ModelClient for RouterModelClient {
                 tools
                     .iter()
                     .map(|tool| {
-                        Tool::function(tool.name.clone(), tool.description.clone(), tool.parameters.clone())
+                        Tool::function(
+                            tool.name.clone(),
+                            tool.description.clone(),
+                            tool.parameters.clone(),
+                        )
                     })
                     .collect(),
             );
@@ -444,7 +450,8 @@ impl Procedure for ListDirectoryProcedure {
                 let result = match parse_tool_args(content) {
                     Ok(args) => match args.get("path").and_then(|v| v.as_str()) {
                         Some(path) => {
-                            let entries = tokio::fs::read_dir(path).await.map_err(|e| e.to_string());
+                            let entries =
+                                tokio::fs::read_dir(path).await.map_err(|e| e.to_string());
                             match entries {
                                 Ok(mut entries) => {
                                     let mut names = Vec::new();
@@ -507,17 +514,19 @@ impl Procedure for WebFetchProcedure {
                         Some(url) => {
                             let response = reqwest::get(url).await.map_err(|e| e.to_string());
                             match response {
-                                Ok(response) => match response.text().await.map_err(|e| e.to_string()) {
-                                    Ok(body) => {
-                                        let truncated = if body.len() > 10_000 {
-                                            body.chars().take(10_000).collect::<String>()
-                                        } else {
-                                            body
-                                        };
-                                        Ok(truncated)
+                                Ok(response) => {
+                                    match response.text().await.map_err(|e| e.to_string()) {
+                                        Ok(body) => {
+                                            let truncated = if body.len() > 10_000 {
+                                                body.chars().take(10_000).collect::<String>()
+                                            } else {
+                                                body
+                                            };
+                                            Ok(truncated)
+                                        }
+                                        Err(e) => Err(e),
                                     }
-                                    Err(e) => Err(e),
-                                },
+                                }
                                 Err(e) => Err(e),
                             }
                         }
@@ -559,7 +568,8 @@ impl Procedure for WebSearchProcedure {
                         match (query, api_key) {
                             (Some(query), Some(api_key)) => {
                                 let mut headers = HeaderMap::new();
-                                let token = HeaderValue::from_str(&api_key).map_err(|e| e.to_string());
+                                let token =
+                                    HeaderValue::from_str(&api_key).map_err(|e| e.to_string());
                                 match token {
                                     Ok(token) => {
                                         headers.insert("X-Subscription-Token", token);
@@ -573,10 +583,11 @@ impl Procedure for WebSearchProcedure {
                                             .map_err(|e| e.to_string());
                                         match response {
                                             Ok(response) => {
-                                                let value: Result<serde_json::Value, String> = response
-                                                    .json()
-                                                    .await
-                                                    .map_err(|e| e.to_string());
+                                                let value: Result<serde_json::Value, String> =
+                                                    response
+                                                        .json()
+                                                        .await
+                                                        .map_err(|e| e.to_string());
                                                 match value {
                                                     Ok(value) => {
                                                         let results = value
@@ -740,6 +751,22 @@ fn build_system_prompt(path: Option<PathBuf>) -> Result<String, String> {
     Ok("You are Pares Agens, an AI agent built on the plures technology stack. Be direct, use tools proactively, and push commits without asking.".to_string())
 }
 
+fn parse_sync_topic_key(raw: &str) -> Result<[u8; 32], String> {
+    let trimmed = raw.trim();
+    let value = trimmed.strip_prefix("0x").unwrap_or(trimmed);
+    if value.len() != 64 {
+        return Err("sync topic key must be 64 hex characters (32 bytes)".to_string());
+    }
+
+    let mut key = [0u8; 32];
+    for i in 0..32 {
+        let pair = &value[(i * 2)..(i * 2 + 2)];
+        key[i] = u8::from_str_radix(pair, 16)
+            .map_err(|_| format!("invalid hex byte at position {}: {pair}", i * 2))?;
+    }
+    Ok(key)
+}
+
 #[derive(Debug, Subcommand)]
 enum Commands {
     /// Migrate data from an existing OpenClaw installation.
@@ -806,15 +833,17 @@ enum Commands {
         /// Brave Search API key (falls back to BRAVE_API_KEY env var).
         #[arg(long, env = "BRAVE_API_KEY")]
         brave_api_key: Option<String>,
+
+        /// 32-byte Hyperswarm sync topic key (hex) for multi-host replication.
+        #[arg(long, env = "PARES_SYNC_TOPIC_KEY")]
+        sync_topic_key: Option<String>,
     },
 }
 
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::from_default_env().add_directive("info".parse().unwrap()),
-        )
+        .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
         .init();
 
     let cli = Cli::parse();
@@ -858,6 +887,7 @@ async fn main() {
             embed_model,
             system_prompt,
             brave_api_key,
+            sync_topic_key,
         } => {
             tracing::info!("Starting Pares Agens daemon");
 
@@ -952,7 +982,8 @@ async fn main() {
                     let model_router = Arc::new(ModelRouter::new(router_config));
 
                     let deep_model_url = deep_model_url.unwrap_or_else(|| model_url.clone());
-                    let deep_provider_config = ProviderConfig::new(&deep_model_url, api_key.clone());
+                    let deep_provider_config =
+                        ProviderConfig::new(&deep_model_url, api_key.clone());
                     let deep_router_config = RouterConfig::single("deep", deep_provider_config);
                     let deep_model_router = Arc::new(ModelRouter::new(deep_router_config));
 
@@ -970,25 +1001,49 @@ async fn main() {
 
             // Set up PluresDB memory store + PluresLM (native)
             let memory_path = PathBuf::from(home).join(".pares-agens/memory");
-            let store = match PluresDbStore::open_with_embeddings(&memory_path) {
-                Ok(store) => {
-                    tracing::info!("PluresDB with native fastembed (auto-embed on every write)");
-                    Arc::new(store)
+            let store = if let Some(topic_key_raw) = sync_topic_key {
+                let topic_key = match parse_sync_topic_key(&topic_key_raw) {
+                    Ok(key) => key,
+                    Err(e) => {
+                        tracing::error!("invalid --sync-topic-key: {e}");
+                        std::process::exit(1);
+                    }
+                };
+                tracing::info!("PluresDB Hyperswarm sync enabled");
+                match PluresDbStore::open_with_sync(&memory_path, &topic_key) {
+                    Ok(store) => Arc::new(store),
+                    Err(e) => {
+                        tracing::error!("failed to open sync-enabled memory store: {e}");
+                        std::process::exit(1);
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!("fastembed unavailable ({e}), falling back to basic store");
-                    match PluresDbStore::open(&memory_path) {
-                        Ok(store) => Arc::new(store),
-                        Err(e2) => {
-                            tracing::error!("failed to open memory store: {e2}");
-                            std::process::exit(1);
+            } else {
+                match PluresDbStore::open_with_embeddings(&memory_path) {
+                    Ok(store) => {
+                        tracing::info!(
+                            "PluresDB with native fastembed (auto-embed on every write)"
+                        );
+                        Arc::new(store)
+                    }
+                    Err(e) => {
+                        tracing::warn!("fastembed unavailable ({e}), falling back to basic store");
+                        match PluresDbStore::open(&memory_path) {
+                            Ok(store) => Arc::new(store),
+                            Err(e2) => {
+                                tracing::error!("failed to open memory store: {e2}");
+                                std::process::exit(1);
+                            }
                         }
                     }
                 }
             };
 
             let embedder: Box<dyn EmbeddingProvider> = match embed_url {
-                Some(url) => Box::new(OllamaEmbedder::new(url, embed_model.clone(), api_key.clone())),
+                Some(url) => Box::new(OllamaEmbedder::new(
+                    url,
+                    embed_model.clone(),
+                    api_key.clone(),
+                )),
                 None => Box::new(MockEmbedder),
             };
 
@@ -1032,15 +1087,13 @@ async fn main() {
                 Arc::clone(&tool_dispatcher),
             );
 
-            let agent = Arc::new(Agent::with_cerebellum(
-                memory,
-                cerebellum,
-                Arc::clone(&plures_lm),
-            )
-            .with_model(model_client, tool_dispatcher, system_prompt)
-            .with_deep_model(deep_model_client)
-            .with_delegation(delegation_broker)
-            .with_turn_store(turn_store));
+            let agent = Arc::new(
+                Agent::with_cerebellum(memory, cerebellum, Arc::clone(&plures_lm))
+                    .with_model(model_client, tool_dispatcher, system_prompt)
+                    .with_deep_model(deep_model_client)
+                    .with_delegation(delegation_broker)
+                    .with_turn_store(turn_store),
+            );
 
             // Set up Telegram adapter
             let config = TelegramConfig::new(telegram_token);

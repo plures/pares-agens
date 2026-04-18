@@ -154,6 +154,12 @@ tar.extractall(os.environ['out'] + '/lib')
               description = "Path to file containing the Brave Search API key.";
             };
 
+            syncTopicKey = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "32-byte Hyperswarm sync topic key in hex for multi-host memory replication.";
+            };
+
             systemPromptFile = lib.mkOption {
               type = lib.types.nullOr lib.types.path;
               default = null;
@@ -221,6 +227,9 @@ tar.extractall(os.environ['out'] + '/lib')
                   promptArg = if cfg.systemPromptFile != null
                     then "--system-prompt ${cfg.systemPromptFile}"
                     else "";
+                  syncArg = if cfg.syncTopicKey != null
+                    then "--sync-topic-key ${cfg.syncTopicKey}"
+                    else "";
                   extraArgs = lib.concatStringsSep " " cfg.extraFlags;
                 in
                 ''
@@ -230,6 +239,7 @@ tar.extractall(os.environ['out'] + '/lib')
                     ${braveArg} \
                     ${modelArg} \
                     ${promptArg} \
+                    ${syncArg} \
                     ${extraArgs}
                 '';
             };
