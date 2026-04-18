@@ -54,25 +54,19 @@ struct ModelErrorPayload {
 }
 
 fn split_stream_chunks(content: &str) -> Vec<String> {
-    let mut chunks = Vec::new();
-    let mut current = String::new();
-
-    for ch in content.chars() {
-        current.push(ch);
-        if ch.is_whitespace() {
-            chunks.push(std::mem::take(&mut current));
-        }
+    if content.is_empty() {
+        return Vec::new();
     }
+    content
+        .split_inclusive(char::is_whitespace)
+        .map(str::to_string)
+        .collect()
+}
 
-    if !current.is_empty() {
-        chunks.push(current);
+fn emit_with_warn<T: Serialize>(app_handle: &tauri::AppHandle, event: &str, payload: &T) {
+    if let Err(err) = app_handle.emit(event, payload) {
+        tracing::warn!(event, error = %err, "failed to emit tauri event");
     }
-
-    if chunks.is_empty() && !content.is_empty() {
-        chunks.push(content.to_string());
-    }
-
-    chunks
 }
 
 struct AppModelClient {
@@ -352,9 +346,10 @@ pub fn run() {
                                     Some(Event::ModelResponse { content, .. })
                                     | Some(Event::Message { content, .. }) => {
                                         for chunk in split_stream_chunks(content) {
-                                            let _ = app_handle.emit(
+                                            emit_with_warn(
+                                                &app_handle,
                                                 "model-chunk",
-                                                ModelChunkPayload {
+                                                &ModelChunkPayload {
                                                     request_id: request_id.clone(),
                                                     content: chunk,
                                                     done: false,
@@ -362,39 +357,43 @@ pub fn run() {
                                             );
                                         }
 
-                                        let _ = app_handle.emit(
+                                        emit_with_warn(
+                                            &app_handle,
                                             "model-chunk",
-                                            ModelChunkPayload {
+                                            &ModelChunkPayload {
                                                 request_id: request_id.clone(),
                                                 content: String::new(),
                                                 done: true,
                                             },
                                         );
 
-                                        let _ = app_handle.emit(
+                                        emit_with_warn(
+                                            &app_handle,
                                             "model-response",
-                                            ModelResponsePayload {
+                                            &ModelResponsePayload {
                                                 request_id,
                                                 content: content.clone(),
                                             },
                                         );
                                     }
                                     Some(other) => {
-                                        let _ = app_handle.emit(
+                                        emit_with_warn(
+                                            &app_handle,
                                             "model-error",
-                                            ModelErrorPayload {
-                                                request_id,
+                                            &ModelErrorPayload {
+                                                request_id: request_id.clone(),
                                                 error: format!(
-                                                    "unexpected response event: {}",
+                                                    "request {request_id} received unexpected event '{}'; expected model response content",
                                                     other.kind()
                                                 ),
                                             },
                                         );
                                     }
                                     None => {
-                                        let _ = app_handle.emit(
+                                        emit_with_warn(
+                                            &app_handle,
                                             "model-error",
-                                            ModelErrorPayload {
+                                            &ModelErrorPayload {
                                                 request_id,
                                                 error: "agent did not return a response"
                                                     .to_string(),
