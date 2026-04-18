@@ -221,6 +221,30 @@ fn format_update_command_output(output: &std::process::Output) -> String {
     }
 }
 
+fn is_update_authorized(msg: &Message) -> bool {
+    let allowlist = std::env::var("PARES_TELEGRAM_UPDATE_ALLOWED_USERS")
+        .ok()
+        .unwrap_or_default();
+    if allowlist.trim().is_empty() {
+        return false;
+    }
+    let Some(from) = msg.from.as_ref() else {
+        return false;
+    };
+
+    let username = from.username.as_deref().unwrap_or_default();
+    let user_id = from.id.0.to_string();
+
+    allowlist
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .any(|entry| {
+            let normalized = entry.trim_start_matches('@');
+            normalized.eq_ignore_ascii_case(username) || normalized == user_id
+        })
+}
+
 /// Configuration for the Telegram adapter.
 ///
 /// The bot token should be stored in PluresDB state and passed here at
@@ -482,6 +506,15 @@ impl ChannelAdapter for TelegramAdapter {
                                 return respond(());
                             }
                             "update" => {
+                                if !is_update_authorized(&msg) {
+                                    let _ = bot
+                                        .send_message(
+                                            msg.chat.id,
+                                            "Update denied. Configure PARES_TELEGRAM_UPDATE_ALLOWED_USERS with approved Telegram usernames or numeric IDs.",
+                                        )
+                                        .await;
+                                    return respond(());
+                                }
                                 let _ = bot
                                     .send_message(
                                         msg.chat.id,
@@ -685,5 +718,40 @@ mod tests {
         let input = "a".repeat(TELEGRAM_MAX_MESSAGE_CHARS + 10);
         let truncated = truncate_telegram_message(input);
         assert!(truncated.ends_with("…(truncated)"));
+    }
+
+    #[test]
+    fn format_update_command_output_success_without_stdout() {
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("true")
+            .output()
+            .unwrap();
+        assert_eq!(
+            format_update_command_output(&output),
+            "Self-update completed.".to_string()
+        );
+    }
+
+    #[test]
+    fn format_update_command_output_success_with_stdout() {
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("printf 'updated'")
+            .output()
+            .unwrap();
+        assert_eq!(format_update_command_output(&output), "updated".to_string());
+    }
+
+    #[test]
+    fn format_update_command_output_failure_includes_stderr() {
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("echo boom >&2; exit 7")
+            .output()
+            .unwrap();
+        let formatted = format_update_command_output(&output);
+        assert!(formatted.contains("Self-update failed"));
+        assert!(formatted.contains("boom"));
     }
 }
