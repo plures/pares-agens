@@ -982,13 +982,13 @@ impl Agent {
                     let mut guard = self.branch_state.lock().unwrap();
                     let state = guard.entry(channel.to_string()).or_default();
                     let mut branch = if requested_name.is_empty() {
-                        let mut idx = state.branches.len();
+                        let mut idx = 1usize;
                         loop {
-                            idx += 1;
                             let candidate = format!("branch-{idx}");
                             if !state.branches.contains(&candidate) {
                                 break candidate;
                             }
+                            idx += 1;
                         }
                     } else {
                         requested_name.to_string()
@@ -1093,7 +1093,7 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::memory::store::InMemoryStore as TurnInMemoryStore;
+    use crate::memory::store::InMemoryStore as InMemoryTurnStore;
     use crate::model::{ChatOptions, ModelCompletion, ToolDefinition};
     use serde_json::json;
 
@@ -1345,7 +1345,7 @@ mod tests {
 
     #[tokio::test]
     async fn branch_turns_are_persisted_to_separate_channels() {
-        let turn_store = Arc::new(TurnInMemoryStore::new());
+        let turn_store = Arc::new(InMemoryTurnStore::new());
         let agent = Agent::new(Arc::new(InMemory::new()))
             .with_model(
                 Arc::new(MockModel),
