@@ -75,8 +75,8 @@ All non-forked repos have the Copilot PR Lifecycle workflow.
 
 ### CI Retry Behavior
 - Failed CI → auto-rerun with label tracking (ci-retry-1, ci-retry-2)
-- After 2 retries → force merge + create ci-feedback issue
-- ci-feedback issues get top queue priority
+- After 2 retries on a Copilot PR → keep PR open and run direct fix flow on that branch
+- Direct fix flow: clone/use cached repo copy → read CI error output → fix code with `edit_file` → run `cargo check`/`cargo clippy` → commit + push (same PR branch)
 
 ### Lifecycle Workflow
 - Canonical copy: `plures/pares-agens/.github/workflows/copilot-pr-lifecycle.yml`
