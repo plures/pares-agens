@@ -58,6 +58,7 @@ abstractions for memory/model/tool integrations.
   - `new(store, embedder, context_window)`
   - `recall(query, limit, exclude_categories)`
   - `capture(exchange)`
+  - `ingest_documents_path(path)` (indexes markdown/txt/source files with embeddings)
   - `inject_context(entries, budget_override)`
 
 ### Agent convenience types
