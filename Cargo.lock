@@ -4325,7 +4325,9 @@ dependencies = [
 name = "pares-agens-agenda"
 version = "0.16.0"
 dependencies = [
+ "async-trait",
  "chrono",
+ "pluresdb 2.9.10",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
