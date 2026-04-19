@@ -3,8 +3,8 @@
 //! Each rule is a function: facts → Option<RuleResult>.
 //! Rules are evaluated in priority order. First match wins.
 
+use super::facts::{classify_failure, CIStatus, FailureClass, IssueFacts, MilestoneFacts, PRFacts};
 use super::{LifecycleAction, LifecycleFact, RuleResult};
-use super::facts::{PRFacts, CIStatus, IssueFacts, MilestoneFacts, FailureClass, classify_failure};
 
 /// Evaluate all PR rules against the given facts. Returns the first matching result.
 pub fn evaluate_pr(facts: &PRFacts) -> RuleResult {
@@ -29,7 +29,9 @@ pub fn evaluate_pr(facts: &PRFacts) -> RuleResult {
     }
 
     RuleResult {
-        actions: vec![LifecycleAction::Noop { reason: "no rule matched".into() }],
+        actions: vec![LifecycleAction::Noop {
+            reason: "no rule matched".into(),
+        }],
         new_facts: vec![],
         matched_rule: "none".into(),
     }
@@ -39,16 +41,24 @@ pub fn evaluate_pr(facts: &PRFacts) -> RuleResult {
 
 fn rule_skip_draft(facts: &PRFacts) -> Option<Vec<LifecycleAction>> {
     if facts.is_draft && !facts.is_copilot {
-        Some(vec![LifecycleAction::Noop { reason: "draft PR, not Copilot".into() }])
+        Some(vec![LifecycleAction::Noop {
+            reason: "draft PR, not Copilot".into(),
+        }])
     } else {
         None
     }
 }
 
 fn rule_ci_green_merge(facts: &PRFacts) -> Option<Vec<LifecycleAction>> {
-    if !matches!(facts.ci_status, CIStatus::Green) { return None; }
-    if !facts.has_review { return None; }
-    if !facts.is_copilot { return None; }
+    if !matches!(facts.ci_status, CIStatus::Green) {
+        return None;
+    }
+    if !facts.has_review {
+        return None;
+    }
+    if !facts.is_copilot {
+        return None;
+    }
 
     let mut actions = vec![];
 
@@ -69,18 +79,32 @@ fn rule_ci_green_merge(facts: &PRFacts) -> Option<Vec<LifecycleAction>> {
 }
 
 fn rule_ci_green_request_review(facts: &PRFacts) -> Option<Vec<LifecycleAction>> {
-    if !matches!(facts.ci_status, CIStatus::Green) { return None; }
-    if facts.has_review { return None; }
-    if !facts.is_copilot { return None; }
+    if !matches!(facts.ci_status, CIStatus::Green) {
+        return None;
+    }
+    if facts.has_review {
+        return None;
+    }
+    if !facts.is_copilot {
+        return None;
+    }
 
     // Copilot review is automatic via org ruleset — just wait
-    Some(vec![LifecycleAction::Noop { reason: "CI green, waiting for Copilot review".into() }])
+    Some(vec![LifecycleAction::Noop {
+        reason: "CI green, waiting for Copilot review".into(),
+    }])
 }
 
 fn rule_ci_failing_retry(facts: &PRFacts) -> Option<Vec<LifecycleAction>> {
-    if !matches!(facts.ci_status, CIStatus::Failing) { return None; }
-    if !facts.is_copilot { return None; }
-    if facts.retry_count >= 2 { return None; } // exhausted retries
+    if !matches!(facts.ci_status, CIStatus::Failing) {
+        return None;
+    }
+    if !facts.is_copilot {
+        return None;
+    }
+    if facts.retry_count >= 2 {
+        return None;
+    } // exhausted retries
 
     let next_retry = facts.retry_count + 1;
     let mut actions = vec![];
@@ -106,9 +130,15 @@ fn rule_ci_failing_retry(facts: &PRFacts) -> Option<Vec<LifecycleAction>> {
 }
 
 fn rule_ci_failing_force_merge(facts: &PRFacts) -> Option<Vec<LifecycleAction>> {
-    if !matches!(facts.ci_status, CIStatus::Failing) { return None; }
-    if !facts.is_copilot { return None; }
-    if facts.retry_count < 2 { return None; } // not exhausted yet
+    if !matches!(facts.ci_status, CIStatus::Failing) {
+        return None;
+    }
+    if !facts.is_copilot {
+        return None;
+    }
+    if facts.retry_count < 2 {
+        return None;
+    } // not exhausted yet
 
     let failure_class = classify_failure(&facts.failing_checks, "");
     let is_infra = failure_class == FailureClass::Infrastructure;
@@ -132,23 +162,30 @@ fn rule_ci_failing_force_merge(facts: &PRFacts) -> Option<Vec<LifecycleAction>> 
 }
 
 fn rule_ci_pending_wait(facts: &PRFacts) -> Option<Vec<LifecycleAction>> {
-    if !matches!(facts.ci_status, CIStatus::Pending) { return None; }
+    if !matches!(facts.ci_status, CIStatus::Pending) {
+        return None;
+    }
 
-    Some(vec![LifecycleAction::Noop { reason: "CI still running".into() }])
+    Some(vec![LifecycleAction::Noop {
+        reason: "CI still running".into(),
+    }])
 }
 
 fn rule_non_copilot_skip(facts: &PRFacts) -> Option<Vec<LifecycleAction>> {
-    if facts.is_copilot { return None; }
-    if !matches!(facts.ci_status, CIStatus::Failing) { return None; }
+    if facts.is_copilot {
+        return None;
+    }
+    if !matches!(facts.ci_status, CIStatus::Failing) {
+        return None;
+    }
 
-    Some(vec![LifecycleAction::Noop { reason: "non-Copilot PR with CI failures — skipping".into() }])
+    Some(vec![LifecycleAction::Noop {
+        reason: "non-Copilot PR with CI failures — skipping".into(),
+    }])
 }
 
 /// Evaluate queue-advance rules: which issue should Copilot work on next?
-pub fn evaluate_queue(
-    issues: &[IssueFacts],
-    has_active_copilot_pr: bool,
-) -> Option<RuleResult> {
+pub fn evaluate_queue(issues: &[IssueFacts], has_active_copilot_pr: bool) -> Option<RuleResult> {
     if has_active_copilot_pr {
         return None; // busy
     }
@@ -165,9 +202,10 @@ pub fn evaluate_queue(
     ];
 
     for (label, desc) in &priority_labels {
-        if let Some(issue) = issues.iter().find(|i|
-            i.labels.iter().any(|l| l == *label) && !i.is_copilot_assigned
-        ) {
+        if let Some(issue) = issues
+            .iter()
+            .find(|i| i.labels.iter().any(|l| l == *label) && !i.is_copilot_assigned)
+        {
             return Some(RuleResult {
                 actions: vec![LifecycleAction::AssignCopilot {
                     repo: issue.repo.clone(),
@@ -201,7 +239,10 @@ pub fn evaluate_milestone(ms: &MilestoneFacts) -> Option<RuleResult> {
                 repo: ms.repo.clone(),
                 tag: tag.clone(),
                 title: format!("{tag} — {}", ms.title),
-                body: format!("Milestone **{}** complete. {} issues closed.", ms.title, ms.closed_issues),
+                body: format!(
+                    "Milestone **{}** complete. {} issues closed.",
+                    ms.title, ms.closed_issues
+                ),
             },
             LifecycleAction::Notify {
                 message: format!("🚀 Released {tag} for {}", ms.repo),
@@ -209,7 +250,10 @@ pub fn evaluate_milestone(ms: &MilestoneFacts) -> Option<RuleResult> {
         ],
         new_facts: vec![LifecycleFact {
             category: "decision".into(),
-            content: format!("Released {tag} from milestone '{}' ({} issues)", ms.title, ms.closed_issues),
+            content: format!(
+                "Released {tag} from milestone '{}' ({} issues)",
+                ms.title, ms.closed_issues
+            ),
             tags: vec!["release".into(), "milestone".into()],
         }],
         matched_rule: "milestone-complete-release".into(),
@@ -233,7 +277,10 @@ mod tests {
         };
         let result = evaluate_pr(&facts);
         assert_eq!(result.matched_rule, "ci-green-reviewed-merge");
-        assert!(result.actions.iter().any(|a| matches!(a, LifecycleAction::MergePR { .. })));
+        assert!(result
+            .actions
+            .iter()
+            .any(|a| matches!(a, LifecycleAction::MergePR { .. })));
     }
 
     #[test]
@@ -263,7 +310,10 @@ mod tests {
         };
         let result = evaluate_pr(&facts);
         assert_eq!(result.matched_rule, "ci-failing-force-merge");
-        assert!(result.actions.iter().any(|a| matches!(a, LifecycleAction::MergePR { .. })));
+        assert!(result
+            .actions
+            .iter()
+            .any(|a| matches!(a, LifecycleAction::MergePR { .. })));
     }
 
     #[test]
@@ -284,7 +334,13 @@ mod tests {
         ];
         let result = evaluate_queue(&issues, false).unwrap();
         assert_eq!(result.matched_rule, "queue-ci-failure");
-        assert!(matches!(&result.actions[0], LifecycleAction::AssignCopilot { issue_number: 11, .. }));
+        assert!(matches!(
+            &result.actions[0],
+            LifecycleAction::AssignCopilot {
+                issue_number: 11,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -299,6 +355,9 @@ mod tests {
         };
         let result = evaluate_milestone(&ms).unwrap();
         assert_eq!(result.matched_rule, "milestone-complete-release");
-        assert!(result.actions.iter().any(|a| matches!(a, LifecycleAction::CreateRelease { .. })));
+        assert!(result
+            .actions
+            .iter()
+            .any(|a| matches!(a, LifecycleAction::CreateRelease { .. })));
     }
 }

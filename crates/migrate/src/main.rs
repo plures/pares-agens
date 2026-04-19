@@ -13,7 +13,10 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
@@ -241,6 +244,19 @@ struct ListDirectoryProcedure;
 struct WebFetchProcedure;
 struct WebSearchProcedure {
     brave_api_key: Option<String>,
+}
+struct ParesManusToolProcedure {
+    tool_name: &'static str,
+    manus_ws_url: Arc<String>,
+}
+
+impl ParesManusToolProcedure {
+    fn new(tool_name: &'static str, manus_ws_url: Arc<String>) -> Self {
+        Self {
+            tool_name,
+            manus_ws_url,
+        }
+    }
 }
 
 #[async_trait]
@@ -636,6 +652,183 @@ impl Procedure for WebSearchProcedure {
     }
 }
 
+#[async_trait]
+impl Procedure for ParesManusToolProcedure {
+    fn name(&self) -> &str {
+        self.tool_name
+    }
+
+    fn handles(&self) -> &str {
+        self.tool_name
+    }
+
+    async fn execute(&self, event: &Event) -> Vec<Event> {
+        match event {
+            Event::Message { id, content, .. } => {
+                let result = match parse_tool_args(content) {
+                    Ok(args) => match manus_request_for_tool(self.tool_name, args) {
+                        Ok((method, params)) => {
+                            call_pares_manus(self.manus_ws_url.as_str(), method, params).await
+                        }
+                        Err(e) => Err(e),
+                    },
+                    Err(e) => Err(e),
+                };
+
+                vec![Event::ToolResult {
+                    tool_call_id: id.clone(),
+                    tool_name: self.tool_name.to_string(),
+                    content: result
+                        .as_ref()
+                        .map(value_to_tool_content)
+                        .unwrap_or_else(|e| e.clone()),
+                    is_error: result.is_err(),
+                }]
+            }
+            _ => vec![],
+        }
+    }
+}
+
+fn value_to_tool_content(value: &serde_json::Value) -> String {
+    value
+        .as_str()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| value.to_string())
+}
+
+fn manus_request_for_tool(
+    tool_name: &str,
+    args: serde_json::Value,
+) -> Result<(&'static str, serde_json::Value), String> {
+    match tool_name {
+        "browser_open" => {
+            let url = args
+                .get("url")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "missing 'url'".to_string())?;
+            Ok(("browser.open", serde_json::json!({ "url": url })))
+        }
+        "browser_screenshot" => Ok(("browser.screenshot", serde_json::json!({}))),
+        "browser_click" => {
+            let x = args
+                .get("x")
+                .and_then(|v| v.as_i64())
+                .ok_or_else(|| "missing 'x'".to_string())?;
+            let y = args
+                .get("y")
+                .and_then(|v| v.as_i64())
+                .ok_or_else(|| "missing 'y'".to_string())?;
+            Ok(("gui.click", serde_json::json!({ "x": x, "y": y })))
+        }
+        "browser_type" => {
+            let text = args
+                .get("text")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "missing 'text'".to_string())?;
+            Ok(("gui.type", serde_json::json!({ "text": text })))
+        }
+        "screen_capture" => {
+            let monitor = args.get("monitor").and_then(|v| v.as_u64());
+            let window = args.get("window").and_then(|v| v.as_str());
+            let mut params = serde_json::Map::new();
+            if let Some(monitor) = monitor {
+                params.insert("monitor".to_string(), serde_json::Value::from(monitor));
+            }
+            if let Some(window) = window {
+                params.insert("window".to_string(), serde_json::Value::from(window));
+            }
+            Ok(("screen.capture", serde_json::Value::Object(params)))
+        }
+        "cdp_execute" => {
+            let script = args
+                .get("script")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "missing 'script'".to_string())?;
+            Ok(("cdp.execute", serde_json::json!({ "script": script })))
+        }
+        _ => Err(format!("unsupported pares-manus tool '{tool_name}'")),
+    }
+}
+
+async fn call_pares_manus(
+    ws_url: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+    const RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
+
+    let request_id = Uuid::new_v4().to_string();
+    let payload = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": method,
+        "params": params
+    })
+    .to_string();
+
+    let (mut socket, _) = tokio::time::timeout(CONNECT_TIMEOUT, connect_async(ws_url))
+        .await
+        .map_err(|_| format!("timed out connecting to pares-manus at {ws_url}"))?
+        .map_err(|e| format!("failed to connect to pares-manus at {ws_url}: {e}"))?;
+
+    socket
+        .send(Message::Text(payload.into()))
+        .await
+        .map_err(|e| format!("failed to send request to pares-manus: {e}"))?;
+
+    let deadline = tokio::time::Instant::now() + RESPONSE_TIMEOUT;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(format!(
+                "timed out waiting for pares-manus response for method {method}"
+            ));
+        }
+
+        let message = tokio::time::timeout(remaining, socket.next())
+            .await
+            .map_err(|_| format!("timed out waiting for pares-manus response for method {method}"))?
+            .ok_or_else(|| "pares-manus closed websocket connection".to_string())?
+            .map_err(|e| format!("failed to read pares-manus response: {e}"))?;
+
+        let maybe_value = match message {
+            Message::Text(text) => serde_json::from_str::<serde_json::Value>(&text)
+                .map(Some)
+                .map_err(|e| format!("invalid JSON from pares-manus: {e}"))?,
+            Message::Binary(bytes) => serde_json::from_slice::<serde_json::Value>(&bytes)
+                .map(Some)
+                .map_err(|e| format!("invalid binary JSON from pares-manus: {e}"))?,
+            Message::Ping(_) | Message::Pong(_) => None,
+            Message::Close(_) => {
+                return Err("pares-manus websocket closed before returning a response".to_string())
+            }
+            Message::Frame(_) => None,
+        };
+
+        if let Some(value) = maybe_value {
+            let id_matches = value
+                .get("id")
+                .and_then(|id| id.as_str())
+                .map(|id| id == request_id)
+                .unwrap_or(false);
+            if !id_matches {
+                continue;
+            }
+
+            if let Some(error) = value.get("error") {
+                return Err(format!("pares-manus error: {error}"));
+            }
+
+            return value
+                .get("result")
+                .cloned()
+                .ok_or_else(|| "pares-manus response missing 'result'".to_string());
+        }
+    }
+}
+
 fn parse_tool_args(raw: &str) -> Result<serde_json::Value, String> {
     serde_json::from_str(raw).map_err(|e| format!("invalid tool arguments: {e}"))
 }
@@ -710,6 +903,70 @@ fn tool_definitions() -> Vec<ToolDefinition> {
                     "count": {"type": "integer"}
                 },
                 "required": ["query"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_open".into(),
+            description: "Open a URL in the default browser via pares-manus".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string"}
+                },
+                "required": ["url"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_screenshot".into(),
+            description: "Capture a screenshot of the active browser via pares-manus".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        ToolDefinition {
+            name: "browser_click".into(),
+            description: "Click browser coordinates via pares-manus GUI automation".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "x": {"type": "integer"},
+                    "y": {"type": "integer"}
+                },
+                "required": ["x", "y"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_type".into(),
+            description: "Type text into the active browser via pares-manus GUI automation".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"}
+                },
+                "required": ["text"]
+            }),
+        },
+        ToolDefinition {
+            name: "screen_capture".into(),
+            description: "Capture the full screen or a window via pares-manus".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "monitor": {"type": "integer"},
+                    "window": {"type": "string"}
+                }
+            }),
+        },
+        ToolDefinition {
+            name: "cdp_execute".into(),
+            description: "Execute a Chrome DevTools Protocol script via pares-manus".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "script": {"type": "string"}
+                },
+                "required": ["script"]
             }),
         },
         ToolDefinition {
@@ -1162,6 +1419,14 @@ enum Commands {
         #[arg(long, env = "BRAVE_API_KEY")]
         brave_api_key: Option<String>,
 
+        /// Pares Manus WebSocket endpoint for browser/GUI automation tools.
+        #[arg(
+            long,
+            env = "PARES_MANUS_WS_URL",
+            default_value = "ws://127.0.0.1:18790"
+        )]
+        manus_ws_url: String,
+
         /// 32-byte Hyperswarm sync topic key (hex) for multi-host replication.
         #[arg(long, env = "PARES_SYNC_TOPIC_KEY")]
         sync_topic_key: Option<String>,
@@ -1222,6 +1487,7 @@ async fn main() {
             embed_model,
             system_prompt,
             brave_api_key,
+            manus_ws_url,
             sync_topic_key,
             sync_shared_key,
         } => {
@@ -1450,6 +1716,7 @@ async fn main() {
             let cerebellum = Cerebellum::new(CerebellumConfig::default());
 
             let brave_api_key = brave_api_key.or_else(|| std::env::var("BRAVE_API_KEY").ok());
+            let manus_ws_url = Arc::new(manus_ws_url);
 
             // Register native tool procedures
             let mut procedure_registry = ProcedureRegistry::new();
@@ -1459,6 +1726,30 @@ async fn main() {
             procedure_registry.register(Box::new(ListDirectoryProcedure));
             procedure_registry.register(Box::new(WebFetchProcedure));
             procedure_registry.register(Box::new(WebSearchProcedure { brave_api_key }));
+            procedure_registry.register(Box::new(ParesManusToolProcedure::new(
+                "browser_open",
+                Arc::clone(&manus_ws_url),
+            )));
+            procedure_registry.register(Box::new(ParesManusToolProcedure::new(
+                "browser_screenshot",
+                Arc::clone(&manus_ws_url),
+            )));
+            procedure_registry.register(Box::new(ParesManusToolProcedure::new(
+                "browser_click",
+                Arc::clone(&manus_ws_url),
+            )));
+            procedure_registry.register(Box::new(ParesManusToolProcedure::new(
+                "browser_type",
+                Arc::clone(&manus_ws_url),
+            )));
+            procedure_registry.register(Box::new(ParesManusToolProcedure::new(
+                "screen_capture",
+                Arc::clone(&manus_ws_url),
+            )));
+            procedure_registry.register(Box::new(ParesManusToolProcedure::new(
+                "cdp_execute",
+                Arc::clone(&manus_ws_url),
+            )));
             procedure_registry.register(Box::new(RunCommandProcedure));
             let procedure_registry = Arc::new(procedure_registry);
 
@@ -1685,5 +1976,32 @@ mod tests {
     fn parse_watchdog_ping_interval_has_safe_minimum() {
         let interval = parse_watchdog_ping_interval("1000").expect("watchdog interval");
         assert_eq!(interval, Duration::from_secs(1));
+    }
+
+    #[test]
+    fn manus_request_maps_browser_click_to_gui_click() {
+        let (method, params) =
+            manus_request_for_tool("browser_click", serde_json::json!({"x": 21, "y": 34}))
+                .expect("request should map");
+        assert_eq!(method, "gui.click");
+        assert_eq!(params, serde_json::json!({"x": 21, "y": 34}));
+    }
+
+    #[test]
+    fn manus_request_requires_browser_open_url() {
+        let err = manus_request_for_tool("browser_open", serde_json::json!({}))
+            .expect_err("missing url should fail");
+        assert!(err.contains("missing 'url'"));
+    }
+
+    #[test]
+    fn manus_request_maps_screen_capture_optional_fields() {
+        let (method, params) = manus_request_for_tool(
+            "screen_capture",
+            serde_json::json!({"monitor": 1, "window": "Edge"}),
+        )
+        .expect("request should map");
+        assert_eq!(method, "screen.capture");
+        assert_eq!(params, serde_json::json!({"monitor": 1, "window": "Edge"}));
     }
 }

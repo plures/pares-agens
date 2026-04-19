@@ -12,7 +12,9 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 
-use crate::model::{ChatMessage, ChatOptions, ModelClient, ModelCompletion, ToolDefinition, ToolCall};
+use crate::model::{
+    ChatMessage, ChatOptions, ModelClient, ModelCompletion, ToolCall, ToolDefinition,
+};
 
 const COPILOT_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
 const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
@@ -80,10 +82,7 @@ impl CopilotAuth {
         let response = client
             .post(DEVICE_CODE_URL)
             .header(ACCEPT, "application/json")
-            .form(&[
-                ("client_id", COPILOT_CLIENT_ID),
-                ("scope", "copilot"),
-            ])
+            .form(&[("client_id", COPILOT_CLIENT_ID), ("scope", "copilot")])
             .send()
             .await?
             .error_for_status()?;
@@ -140,9 +139,7 @@ impl CopilotAuth {
                         let detail = payload
                             .error_description
                             .unwrap_or_else(|| "unknown error".into());
-                        return Err(CopilotAuthError::OAuth(format!(
-                            "{error}: {detail}"
-                        )));
+                        return Err(CopilotAuthError::OAuth(format!("{error}: {detail}")));
                     }
                 }
             }
@@ -176,12 +173,12 @@ impl CopilotAuth {
 
         let payload: CopilotTokenResponse = response.json().await?;
         let expires_at = match payload.expires_at {
-            Value::Number(num) => num.as_u64().ok_or_else(|| {
-                CopilotAuthError::InvalidResponse("invalid expires_at".into())
-            })?,
-            Value::String(s) => s.parse::<u64>().map_err(|_| {
-                CopilotAuthError::InvalidResponse("invalid expires_at".into())
-            })?,
+            Value::Number(num) => num
+                .as_u64()
+                .ok_or_else(|| CopilotAuthError::InvalidResponse("invalid expires_at".into()))?,
+            Value::String(s) => s
+                .parse::<u64>()
+                .map_err(|_| CopilotAuthError::InvalidResponse("invalid expires_at".into()))?,
             _ => {
                 return Err(CopilotAuthError::InvalidResponse(
                     "invalid expires_at".into(),
@@ -189,8 +186,8 @@ impl CopilotAuth {
             }
         };
 
-        let api_base = extract_api_base_url(&payload.token)
-            .unwrap_or_else(|| DEFAULT_API_BASE.to_string());
+        let api_base =
+            extract_api_base_url(&payload.token).unwrap_or_else(|| DEFAULT_API_BASE.to_string());
 
         Ok((payload.token, expires_at, api_base))
     }
@@ -208,9 +205,10 @@ impl CopilotAuth {
         };
 
         if needs_refresh {
-            let oauth_token = self.oauth_token.clone().ok_or_else(|| {
-                CopilotAuthError::InvalidResponse("missing oauth token".into())
-            })?;
+            let oauth_token = self
+                .oauth_token
+                .clone()
+                .ok_or_else(|| CopilotAuthError::InvalidResponse("missing oauth token".into()))?;
             let (session_token, expires_at, api_base) =
                 Self::exchange_copilot_token(&oauth_token).await?;
             self.session_token = Some(session_token);
@@ -218,8 +216,7 @@ impl CopilotAuth {
             self.api_base_url = api_base;
         }
 
-        self
-            .session_token
+        self.session_token
             .as_deref()
             .ok_or_else(|| CopilotAuthError::InvalidResponse("missing session token".into()))
     }
@@ -313,7 +310,9 @@ impl ModelClient for CopilotModelClient {
         }
 
         if let Some(temp) = options.temperature {
-            body["temperature"] = Value::Number(serde_json::Number::from_f64(temp).unwrap_or_else(|| serde_json::Number::from(0)));
+            body["temperature"] = Value::Number(
+                serde_json::Number::from_f64(temp).unwrap_or_else(|| serde_json::Number::from(0)),
+            );
         }
         if options.logprobs {
             body["logprobs"] = Value::Bool(true);
@@ -327,7 +326,10 @@ impl ModelClient for CopilotModelClient {
         );
         headers.insert("Editor-Version", HeaderValue::from_static(EDITOR_VERSION));
         headers.insert("User-Agent", HeaderValue::from_static(USER_AGENT));
-        headers.insert("X-Github-Api-Version", HeaderValue::from_static(API_VERSION));
+        headers.insert(
+            "X-Github-Api-Version",
+            HeaderValue::from_static(API_VERSION),
+        );
         headers.insert(
             "Copilot-Integration-Id",
             HeaderValue::from_static(INTEGRATION_ID),
@@ -359,7 +361,10 @@ impl ModelClient for CopilotModelClient {
             .get("message")
             .ok_or_else(|| "model returned no message".to_string())?;
 
-        let content = message.get("content").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let content = message
+            .get("content")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
 
         let tool_calls = message
             .get("tool_calls")
@@ -389,11 +394,7 @@ impl ModelClient for CopilotModelClient {
             .get("logprobs")
             .and_then(|v| v.get("token_logprobs"))
             .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_f64())
-                    .collect::<Vec<f64>>()
-            });
+            .map(|arr| arr.iter().filter_map(|v| v.as_f64()).collect::<Vec<f64>>());
 
         Ok(ModelCompletion {
             content,

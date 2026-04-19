@@ -236,9 +236,7 @@ impl AgentInvoke {
         // ── Call the model with timeout ───────────────────────────────────────
         let duration = Duration::from_millis(self.config.timeout_ms);
         let options = ChatOptions::default();
-        let call = self
-            .model_client
-            .complete(&messages, &[], &options);
+        let call = self.model_client.complete(&messages, &[], &options);
 
         let completion = timeout(duration, call)
             .await
