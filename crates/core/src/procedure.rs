@@ -302,7 +302,31 @@ pub fn plugin_template_generator(plugin_name: &str, event_type: &str) -> String 
     let sanitized_event = event_type.trim();
     let definition = ProcedureDefinition::new(sanitized_name, sanitized_event);
     format!(
-        "use async_trait::async_trait;\nuse pares_agens_core::{{event::Event, procedure::{{Procedure, ProcedureDefinition}}}};\n\npub struct {struct_name};\n\npub fn definition() -> ProcedureDefinition {{\n    ProcedureDefinition {{\n        name: \"{name}\".to_string(),\n        event_type: \"{event_type}\".to_string(),\n        version: \"{version}\".to_string(),\n        registry_api_version: \"{api_version}\".to_string(),\n    }}\n}}\n\n#[async_trait]\nimpl Procedure for {struct_name} {{\n    fn name(&self) -> &str {{ \"{name}\" }}\n\n    fn handles(&self) -> &str {{ \"{event_type}\" }}\n\n    async fn execute(&self, _event: &Event) -> Vec<Event> {{\n        vec![]\n    }}\n}}\n",
+        r#"use async_trait::async_trait;
+use pares_agens_core::{{event::Event, procedure::{{Procedure, ProcedureDefinition}}}};
+
+pub struct {struct_name};
+
+pub fn definition() -> ProcedureDefinition {{
+    ProcedureDefinition {{
+        name: "{name}".to_string(),
+        event_type: "{event_type}".to_string(),
+        version: "{version}".to_string(),
+        registry_api_version: "{api_version}".to_string(),
+    }}
+}}
+
+#[async_trait]
+impl Procedure for {struct_name} {{
+    fn name(&self) -> &str {{ "{name}" }}
+
+    fn handles(&self) -> &str {{ "{event_type}" }}
+
+    async fn execute(&self, _event: &Event) -> Vec<Event> {{
+        vec![]
+    }}
+}}
+"#,
         struct_name = to_pascal_case(sanitized_name),
         name = definition.name,
         event_type = definition.event_type,
@@ -314,7 +338,7 @@ pub fn plugin_template_generator(plugin_name: &str, event_type: &str) -> String 
 fn to_pascal_case(input: &str) -> String {
     let mut out = String::new();
     for segment in input
-        .split(|c: char| !(c.is_ascii_alphanumeric()))
+        .split(|c: char| !c.is_ascii_alphanumeric())
         .filter(|s| !s.is_empty())
     {
         let mut chars = segment.chars();
