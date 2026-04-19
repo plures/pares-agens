@@ -79,7 +79,7 @@ model = "gpt-5"
 # Download for your platform
 # Windows: pares-agens-setup.msi
 # macOS: pares-agens.dmg
-# Linux: pares-agens.AppImage
+# Linux: pares-agens.AppImage or pares-agens_<version>_amd64.deb
 
 # First run opens a setup wizard:
 # 1. Name your agent
