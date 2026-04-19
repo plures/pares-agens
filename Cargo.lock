@@ -4419,6 +4419,7 @@ dependencies = [
  "pluresdb-sea",
  "pluresdb-sync 3.6.0",
  "reqwest 0.12.28",
+ "semver",
  "serde",
  "serde_json",
  "subtle",

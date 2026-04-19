@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
+use semver::Version;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::event::Event;
 
@@ -16,6 +18,89 @@ pub trait Procedure: Send + Sync {
 
     /// Execute the procedure in response to the given event.
     async fn execute(&self, event: &Event) -> Vec<Event>;
+}
+
+/// Semantic version of the stable `ProcedureRegistry` public API.
+pub const PROCEDURE_REGISTRY_API_VERSION: &str = "1.0.0";
+
+/// Versioned metadata for loading a procedure definition from a plugin package.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcedureDefinition {
+    /// Unique procedure name.
+    pub name: String,
+    /// The event kind this procedure handles (e.g. `"message"`).
+    pub event_type: String,
+    /// Semantic version of this procedure definition.
+    pub version: String,
+    /// Minimum compatible `ProcedureRegistry` API version this procedure needs.
+    pub registry_api_version: String,
+}
+
+impl ProcedureDefinition {
+    /// Create a new definition with stable defaults.
+    ///
+    /// Defaults:
+    /// - `version = "1.0.0"`
+    /// - `registry_api_version = PROCEDURE_REGISTRY_API_VERSION`
+    pub fn new(name: impl Into<String>, event_type: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            event_type: event_type.into(),
+            version: "1.0.0".to_string(),
+            registry_api_version: PROCEDURE_REGISTRY_API_VERSION.to_string(),
+        }
+    }
+}
+
+/// Errors returned when loading semver-versioned procedure definitions.
+#[derive(Debug, Error)]
+pub enum ProcedureLoadError {
+    /// Procedure definition `version` is not valid semantic versioning.
+    #[error("procedure '{name}' has invalid semantic version '{version}': {source}")]
+    InvalidProcedureVersion {
+        /// Name of the failing procedure definition.
+        name: String,
+        /// Raw invalid version string.
+        version: String,
+        /// Parse failure details.
+        source: semver::Error,
+    },
+    /// Required registry API version is not valid semantic versioning.
+    #[error("procedure '{name}' has invalid registry API version '{version}': {source}")]
+    InvalidRegistryApiVersion {
+        /// Name of the failing procedure definition.
+        name: String,
+        /// Raw invalid API version string.
+        version: String,
+        /// Parse failure details.
+        source: semver::Error,
+    },
+    /// Procedure definition does not match the loaded implementation.
+    #[error(
+        "procedure implementation mismatch: definition ('{definition_name}', '{definition_event_type}') vs implementation ('{implementation_name}', '{implementation_event_type}')"
+    )]
+    DefinitionMismatch {
+        /// Name declared in the definition.
+        definition_name: String,
+        /// Event type declared in the definition.
+        definition_event_type: String,
+        /// Name returned by [`Procedure::name`].
+        implementation_name: String,
+        /// Event type returned by [`Procedure::handles`].
+        implementation_event_type: String,
+    },
+    /// Loaded procedure requires a newer or incompatible registry API version.
+    #[error(
+        "procedure '{name}' requires registry API {required}, current API is {current} (incompatible)"
+    )]
+    IncompatibleRegistryApi {
+        /// Name of the procedure definition.
+        name: String,
+        /// Registry API version requested by the definition.
+        required: String,
+        /// Current registry API version.
+        current: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +168,64 @@ impl ProcedureRegistry {
         self.procedures.push(procedure);
     }
 
+    /// Stable semantic version for this registry interface.
+    pub fn api_version(&self) -> &'static str {
+        PROCEDURE_REGISTRY_API_VERSION
+    }
+
+    /// Load a versioned procedure definition and enforce compatibility checks.
+    ///
+    /// This method preserves backward compatibility:
+    /// - [`register`][Self::register] is still available and unchanged.
+    /// - New plugin/procedure loaders should prefer this method to validate
+    ///   semantic versions and API compatibility.
+    pub fn load_definition(
+        &mut self,
+        definition: ProcedureDefinition,
+        procedure: Box<dyn Procedure>,
+    ) -> Result<(), ProcedureLoadError> {
+        let impl_name = procedure.name().to_string();
+        let impl_event_type = procedure.handles().to_string();
+
+        if definition.name != impl_name || definition.event_type != impl_event_type {
+            return Err(ProcedureLoadError::DefinitionMismatch {
+                definition_name: definition.name,
+                definition_event_type: definition.event_type,
+                implementation_name: impl_name,
+                implementation_event_type: impl_event_type,
+            });
+        }
+
+        let _procedure_version = Version::parse(&definition.version).map_err(|source| {
+            ProcedureLoadError::InvalidProcedureVersion {
+                name: definition.name.clone(),
+                version: definition.version.clone(),
+                source,
+            }
+        })?;
+        let required_registry_api =
+            Version::parse(&definition.registry_api_version).map_err(|source| {
+                ProcedureLoadError::InvalidRegistryApiVersion {
+                    name: definition.name.clone(),
+                    version: definition.registry_api_version.clone(),
+                    source,
+                }
+            })?;
+        let current_registry_api = Version::parse(PROCEDURE_REGISTRY_API_VERSION)
+            .expect("PROCEDURE_REGISTRY_API_VERSION must be valid semver");
+
+        if !is_semver_compatible(&required_registry_api, &current_registry_api) {
+            return Err(ProcedureLoadError::IncompatibleRegistryApi {
+                name: definition.name,
+                required: required_registry_api.to_string(),
+                current: current_registry_api.to_string(),
+            });
+        }
+
+        self.register(procedure);
+        Ok(())
+    }
+
     /// Return all procedures that handle the given event kind, skipping
     /// disabled ones, sorted by ascending priority.
     pub fn matching<'a>(&'a self, event_kind: &'a str) -> impl Iterator<Item = &'a dyn Procedure> {
@@ -142,6 +285,74 @@ impl ProcedureRegistry {
     /// Whether the registry is empty.
     pub fn is_empty(&self) -> bool {
         self.procedures.is_empty()
+    }
+}
+
+fn is_semver_compatible(required: &Version, current: &Version) -> bool {
+    if required.major == 0 {
+        required.major == current.major && required.minor == current.minor && current >= required
+    } else {
+        required.major == current.major && current >= required
+    }
+}
+
+/// Generate a stable plugin template for implementing a versioned procedure.
+pub fn plugin_template_generator(plugin_name: &str, event_type: &str) -> String {
+    let sanitized_name = plugin_name.trim();
+    let sanitized_event = event_type.trim();
+    let definition = ProcedureDefinition::new(sanitized_name, sanitized_event);
+    format!(
+        r#"use async_trait::async_trait;
+use pares_agens_core::{{event::Event, procedure::{{Procedure, ProcedureDefinition}}}};
+
+pub struct {struct_name};
+
+pub fn definition() -> ProcedureDefinition {{
+    ProcedureDefinition {{
+        name: "{name}".to_string(),
+        event_type: "{event_type}".to_string(),
+        version: "{version}".to_string(),
+        registry_api_version: "{api_version}".to_string(),
+    }}
+}}
+
+#[async_trait]
+impl Procedure for {struct_name} {{
+    fn name(&self) -> &str {{ "{name}" }}
+
+    fn handles(&self) -> &str {{ "{event_type}" }}
+
+    async fn execute(&self, _event: &Event) -> Vec<Event> {{
+        vec![]
+    }}
+}}
+"#,
+        struct_name = to_pascal_case(sanitized_name),
+        name = definition.name,
+        event_type = definition.event_type,
+        version = definition.version,
+        api_version = definition.registry_api_version
+    )
+}
+
+fn to_pascal_case(input: &str) -> String {
+    let mut out = String::new();
+    for segment in input
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|s| !s.is_empty())
+    {
+        let mut chars = segment.chars();
+        if let Some(first) = chars.next() {
+            out.extend(first.to_uppercase());
+            out.push_str(chars.as_str());
+        }
+    }
+    if out.is_empty() {
+        "PluginProcedure".to_string()
+    } else if out.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        format!("Plugin{}", out)
+    } else {
+        out
     }
 }
 
@@ -290,5 +501,90 @@ mod tests {
 
         let matched: Vec<_> = registry.matching("timer").collect();
         assert!(matched.is_empty());
+    }
+
+    #[test]
+    fn procedure_definition_new_defaults_to_semver_and_registry_api() {
+        let def = ProcedureDefinition::new("p1", "message");
+        assert_eq!(def.version, "1.0.0");
+        assert_eq!(def.registry_api_version, PROCEDURE_REGISTRY_API_VERSION);
+    }
+
+    #[test]
+    fn registry_exposes_stable_api_version() {
+        let registry = ProcedureRegistry::new();
+        assert_eq!(registry.api_version(), PROCEDURE_REGISTRY_API_VERSION);
+    }
+
+    #[test]
+    fn load_definition_registers_when_semver_is_compatible() {
+        let mut registry = ProcedureRegistry::new();
+        let def = ProcedureDefinition::new("p1", "message");
+
+        registry
+            .load_definition(
+                def,
+                Box::new(Noop {
+                    name: "p1",
+                    handles: "message",
+                }),
+            )
+            .unwrap();
+
+        assert_eq!(registry.len(), 1);
+    }
+
+    #[test]
+    fn load_definition_rejects_invalid_procedure_semver() {
+        let mut registry = ProcedureRegistry::new();
+        let mut def = ProcedureDefinition::new("p1", "message");
+        def.version = "not-a-version".to_string();
+
+        let err = registry
+            .load_definition(
+                def,
+                Box::new(Noop {
+                    name: "p1",
+                    handles: "message",
+                }),
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            ProcedureLoadError::InvalidProcedureVersion { .. }
+        ));
+    }
+
+    #[test]
+    fn load_definition_rejects_incompatible_registry_api() {
+        let mut registry = ProcedureRegistry::new();
+        let mut def = ProcedureDefinition::new("p1", "message");
+        def.registry_api_version = "2.0.0".to_string();
+
+        let err = registry
+            .load_definition(
+                def,
+                Box::new(Noop {
+                    name: "p1",
+                    handles: "message",
+                }),
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            ProcedureLoadError::IncompatibleRegistryApi { .. }
+        ));
+    }
+
+    #[test]
+    fn plugin_template_generator_embeds_definition_and_trait_impl() {
+        let template = plugin_template_generator("hello_plugin", "message");
+        assert!(template.contains("pub fn definition() -> ProcedureDefinition"));
+        assert!(template.contains("name: \"hello_plugin\".to_string()"));
+        assert!(template.contains("event_type: \"message\".to_string()"));
+        assert!(template.contains("registry_api_version: \"1.0.0\".to_string()"));
+        assert!(template.contains("impl Procedure for HelloPlugin"));
     }
 }
