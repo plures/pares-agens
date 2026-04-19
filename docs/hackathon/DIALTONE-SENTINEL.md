@@ -162,3 +162,52 @@ Squad stays the orchestrator. Sentinel adds:
 - `sentinel-inference` MCP server (BitNet local model for offline decisions)
 
 Squad agents call Sentinel via MCP. Best of both worlds.
+
+## Judging Criteria Alignment
+
+| Criteria | Score Strategy | Evidence |
+|---|---|---|
+| **Inspiration** | "AI ops that runs on your existing CPUs — no GPU, no cloud" | BitNet 1.58-bit on Xeons is novel. Nobody else does this. |
+| **Business Value** | Reduces deployment incidents, saves cloud API costs, enables AI for air-gapped fleets | Quantify: X incidents/month → 0 with constraint gates |
+| **Customer Focus** | DTMS infrastructure engineers making deployment decisions daily | Real team, real problem, real users |
+| **Feasibility** | Running on praxisbot TODAY. .px rules already compile. | Live demo, not a prototype. Working code. |
+| **Make Something** | Full stack: .px compiler, PluresDB memory, BitNet inference, constraint engine | 60K lines Rust, 24 crates, deployed on NixOS |
+
+## 2-Minute Video Outline
+
+### 0:00-0:15 — The Problem (hook)
+"Every DTMS deployment is a human decision. No memory of what failed last
+time. No constraints enforced automatically. And our server fleet has CPUs
+but no GPUs — so cloud AI isn't an option."
+
+### 0:15-0:35 — The Solution (what we built)
+"Dialtone Sentinel: an AI operations agent that runs on your existing
+hardware." Show: the .px constraint file. "Deployment rules declared in
+plain English, enforced automatically."
+
+### 0:35-1:00 — The Demo (make something)
+Live demo:
+1. Trigger deployment → agent checks constraints → BLOCKED (AzSecPak window)
+2. Change target → agent queries memory → "Last corp deploy succeeded"
+3. Agent approves → shows blast radius → proceeds with monitoring
+4. Show Chronos audit trail — every decision with evidence
+
+### 1:00-1:20 — The Secret Sauce (inspiration)
+"This is running on a CPU. Microsoft's BitNet 1.58-bit model — 8 billion
+parameters in 1.6 gigabytes of RAM. No GPU. No cloud API. The same server
+that hosts your VMs is now making intelligent deployment decisions."
+
+### 1:20-1:40 — Business Value (why it matters)
+"Every AGC team managing on-prem infrastructure has this problem.
+Dialtone Sentinel gives them AI-powered operations without new hardware,
+without cloud dependencies, without compliance risk. The rules are
+auditable. The decisions are traceable. The memory is persistent."
+
+### 1:40-1:55 — Integration (feasibility)
+"It complements Squad — your agents gain memory, constraints, and offline
+inference. It runs as an Azure Local extension or systemd service.
+Deploy with one command."
+
+### 1:55-2:00 — Close
+"Dialtone Sentinel. AI ops that remembers, reasons, and runs on what you
+already have."
