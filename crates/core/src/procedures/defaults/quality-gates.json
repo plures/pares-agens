@@ -1,0 +1,50 @@
+{
+  "issue-quality-gate": {
+    "description": "On cue, validate issue quality against ADR-0004 requirements before creation.",
+    "trigger": {
+      "kind": "on_cue",
+      "cue": "issue_create"
+    },
+    "steps": [
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": ["$input"],
+          "instruction": "Verify label + issue type + acceptance criteria + constraints per ADR-0004.",
+          "mode": "structured"
+        },
+        "as": "gate"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "issue-quality-gate-result",
+          "data": "$gate"
+        }
+      }
+    ]
+  },
+  "praxis-constraint-enforce": {
+    "description": "Before search, surface active constraints relevant to the current operation.",
+    "trigger": {
+      "kind": "before_search"
+    },
+    "steps": [
+      {
+        "kind": "search",
+        "params": {
+          "query": "active constraints $input.query",
+          "limit": 15
+        },
+        "as": "constraints"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "constraints-surfaced",
+          "data": "$constraints"
+        }
+      }
+    ]
+  }
+}

@@ -1,6 +1,6 @@
 {
   "staleness-on-access": {
-    "description": "On every memory recall, check if returned results contain hardcoded lists, stale counts, or deprecated references. Flag stale results.",
+    "description": "Before search, flag stale results such as hardcoded lists and outdated counts.",
     "trigger": {
       "kind": "before_search"
     },
@@ -9,32 +9,30 @@
         "kind": "search",
         "params": {
           "query": "$input.query",
-          "limit": 5
+          "limit": 8
         },
         "as": "results"
       },
       {
         "kind": "transform",
         "params": {
-          "inputs": [
-            "$results"
-          ],
-          "instruction": "Check for hardcoded numbers, stale dates, deprecated references. Mark suspicious with possibly_stale flag.",
+          "inputs": ["$results"],
+          "instruction": "Flag likely stale memories: hardcoded lists, old counts, deprecated references.",
           "mode": "structured"
         },
-        "as": "stale_check"
+        "as": "staleness"
       },
       {
         "kind": "emit",
         "params": {
-          "event": "recall-with-staleness",
-          "data": "$stale_check"
+          "event": "memory-staleness-detected",
+          "data": "$staleness"
         }
       }
     ]
   },
   "supersede-on-store": {
-    "description": "When a new memory is stored, search for existing memories it might supersede.",
+    "description": "After store, detect and mark superseded memories.",
     "trigger": {
       "kind": "after_store"
     },
@@ -43,72 +41,105 @@
         "kind": "search",
         "params": {
           "query": "$input.text",
-          "limit": 1
+          "limit": 8
         },
-        "as": "new_memory"
-      },
-      {
-        "kind": "search",
-        "params": {
-          "query": "$input.text",
-          "limit": 5
-        },
-        "as": "existing"
+        "as": "candidate_matches"
       },
       {
         "kind": "transform",
         "params": {
-          "inputs": [
-            "$new_memory",
-            "$existing"
-          ],
-          "instruction": "Compare new vs existing. Output {id, action: supersede|keep|review, reason} for conflicts.",
+          "inputs": ["$candidate_matches", "$input"],
+          "instruction": "Identify records superseded by the new memory and output mark-superseded actions.",
           "mode": "structured"
         },
-        "as": "conflicts"
+        "as": "superseded"
       },
       {
-        "kind": "conditional",
+        "kind": "emit",
         "params": {
-          "condition": "$conflicts.length > 0",
-          "then_steps": [
-            {
-              "kind": "emit",
-              "params": {
-                "event": "memories-superseded",
-                "data": "$conflicts"
-              }
-            }
-          ],
-          "else_steps": []
+          "event": "memory-supersede-review",
+          "data": "$superseded"
         }
       }
     ]
   },
-  "memory-quality-check": {
-    "description": "After store: detect vague, incomplete, or low-quality memories and flag for enrichment.",
+  "memory-hygiene": {
+    "description": "Daily hygiene sweep for stale, duplicate, and missing-tag memories.",
     "trigger": {
-      "kind": "after_store",
-      "filter": {
-        "category": "conversation"
-      }
+      "kind": "cron",
+      "every": "24h"
     },
     "steps": [
       {
         "kind": "search",
         "params": {
-          "query": "$input.text",
-          "limit": 1
+          "query": "*",
+          "limit": 200
         },
-        "as": "stored"
+        "as": "memories"
       },
       {
         "kind": "transform",
         "params": {
-          "inputs": [
-            "$stored"
-          ],
-          "instruction": "Check: content length >50 chars, has specifics (names/numbers/dates), not just 'fixed the thing'. Flag low quality.",
+          "inputs": ["$memories"],
+          "instruction": "Report stale, duplicate, and untagged memories for maintenance.",
+          "mode": "structured"
+        },
+        "as": "hygiene_report"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "memory-hygiene-report",
+          "data": "$hygiene_report"
+        }
+      }
+    ]
+  },
+  "memory-relevance-decay": {
+    "description": "Daily relevance decay for unaccessed memories when newer duplicates exist.",
+    "trigger": {
+      "kind": "cron",
+      "every": "24h"
+    },
+    "steps": [
+      {
+        "kind": "search",
+        "params": {
+          "query": "*",
+          "limit": 200
+        },
+        "as": "all_memories"
+      },
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": ["$all_memories"],
+          "instruction": "Find unaccessed memories with fresher duplicates and produce relevance demotion updates.",
+          "mode": "structured"
+        },
+        "as": "decay_updates"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "memory-relevance-decay-applied",
+          "data": "$decay_updates"
+        }
+      }
+    ]
+  },
+  "memory-quality-check": {
+    "description": "After store, flag vague or incomplete memory captures.",
+    "trigger": {
+      "kind": "after_store"
+    },
+    "steps": [
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": ["$input"],
+          "instruction": "Validate specificity/completeness and flag low-quality memory entries.",
           "mode": "structured"
         },
         "as": "quality"

@@ -1,0 +1,145 @@
+{
+  "praxis-evidence-capture": {
+    "description": "After WIP store, surface forgotten tasks and contradictions.",
+    "trigger": {
+      "kind": "after_store",
+      "filter": {
+        "category": "work-in-progress"
+      }
+    },
+    "steps": [
+      {
+        "kind": "search",
+        "params": {
+          "query": "$input.text",
+          "limit": 20
+        },
+        "as": "related_wip"
+      },
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": ["$related_wip", "$input"],
+          "instruction": "Find forgotten dependent work and contradictions to active tasks.",
+          "mode": "structured"
+        },
+        "as": "evidence"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "praxis-evidence-captured",
+          "data": "$evidence"
+        }
+      }
+    ]
+  },
+  "decision-wip-reconcile": {
+    "description": "After architecture decision store, verify implementation tracking.",
+    "trigger": {
+      "kind": "after_store",
+      "filter": {
+        "category": "architecture-decision"
+      }
+    },
+    "steps": [
+      {
+        "kind": "search",
+        "params": {
+          "query": "$input.text",
+          "limit": 20
+        },
+        "as": "related"
+      },
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": ["$related", "$input"],
+          "instruction": "Verify implementation tasks/issues exist and are not contradicting the decision.",
+          "mode": "structured"
+        },
+        "as": "reconcile"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "decision-wip-reconciled",
+          "data": "$reconcile"
+        }
+      }
+    ]
+  },
+  "task-lifecycle": {
+    "description": "Manual procedure for constraint-aware task start/complete lifecycle.",
+    "trigger": {
+      "kind": "manual"
+    },
+    "steps": [
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": ["$input"],
+          "instruction": "Validate lifecycle transition (start/complete), required constraints, and evidence.",
+          "mode": "structured"
+        },
+        "as": "lifecycle_result"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "task-lifecycle-updated",
+          "data": "$lifecycle_result"
+        }
+      }
+    ]
+  },
+  "praxis-task-check": {
+    "description": "On cue, recall active constraints before task execution.",
+    "trigger": {
+      "kind": "on_cue",
+      "cue": "task_check"
+    },
+    "steps": [
+      {
+        "kind": "search",
+        "params": {
+          "query": "active constraints for $input.task",
+          "limit": 10
+        },
+        "as": "constraints"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "task-constraints-recalled",
+          "data": "$constraints"
+        }
+      }
+    ]
+  },
+  "praxis-acceptance-verify": {
+    "description": "On cue, verify outcomes satisfy acceptance and constraints.",
+    "trigger": {
+      "kind": "on_cue",
+      "cue": "acceptance_verify"
+    },
+    "steps": [
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": ["$input"],
+          "instruction": "Evaluate outcome against acceptance criteria and active constraints.",
+          "mode": "structured"
+        },
+        "as": "acceptance"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "acceptance-verified",
+          "data": "$acceptance"
+        }
+      }
+    ]
+  }
+}
