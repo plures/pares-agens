@@ -756,9 +756,6 @@ async fn call_pares_manus(
     method: &str,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-    const RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
-
     let request_id = Uuid::new_v4().to_string();
     let payload = serde_json::json!({
         "jsonrpc": "2.0",
@@ -768,7 +765,7 @@ async fn call_pares_manus(
     })
     .to_string();
 
-    let (mut socket, _) = tokio::time::timeout(CONNECT_TIMEOUT, connect_async(ws_url))
+    let (mut socket, _) = tokio::time::timeout(MANUS_CONNECT_TIMEOUT, connect_async(ws_url))
         .await
         .map_err(|_| format!("timed out connecting to pares-manus at {ws_url}"))?
         .map_err(|e| format!("failed to connect to pares-manus at {ws_url}: {e}"))?;
@@ -778,9 +775,10 @@ async fn call_pares_manus(
         .await
         .map_err(|e| format!("failed to send request to pares-manus: {e}"))?;
 
-    let deadline = tokio::time::Instant::now() + RESPONSE_TIMEOUT;
+    let deadline = tokio::time::Instant::now() + MANUS_RESPONSE_TIMEOUT;
     loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let now = tokio::time::Instant::now();
+        let remaining = deadline.saturating_duration_since(now);
         if remaining.is_zero() {
             return Err(format!(
                 "timed out waiting for pares-manus response for method {method}"
@@ -907,7 +905,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "browser_open".into(),
-            description: "Open a URL in the default browser via pares-manus".into(),
+            description: "Open a URL via pares-manus browser control".into(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1029,6 +1027,8 @@ const MEMORY_MONITOR_INTERVAL_SECS: u64 = 60;
 const DEFAULT_NIX_FLAKE_DIR: &str = ".";
 const DEFAULT_NIX_HOST: &str = "praxisbot";
 const DEFAULT_SELF_UPDATE_INTERVAL_SECS: u64 = 3600;
+const MANUS_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const MANUS_RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SingleConnectionConflict {
