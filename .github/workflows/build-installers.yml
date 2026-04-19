@@ -4,8 +4,6 @@ on:
   push:
     tags:
       - "v*"
-    branches:
-      - "release/**"
   workflow_dispatch:
     inputs:
       tag:
@@ -39,15 +37,14 @@ jobs:
             bundle_target: dmg
             artifact_glob: "target/universal-apple-darwin/release/bundle/dmg/*.dmg"
 
-          # ── Linux x86-64: AppImage + deb + rpm ─────────────────────────
-          - name: Linux AppImage
+          # ── Linux x86-64: AppImage + deb ───────────────────────────────
+          - name: Linux AppImage + DEB
             platform: ubuntu-22.04
             rust_target: x86_64-unknown-linux-gnu
-            bundle_target: appimage,deb,rpm
+            bundle_target: appimage,deb
             artifact_glob: |
               target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
               target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
-              target/x86_64-unknown-linux-gnu/release/bundle/rpm/*.rpm
 
     runs-on: ${{ matrix.platform }}
 
@@ -97,8 +94,7 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
-            libssl-dev \
-            rpm
+            libssl-dev
 
       # ── Tauri CLI (cached) ─────────────────────────────────────────────
       - name: Cache tauri-cli binary
