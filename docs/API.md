@@ -28,17 +28,38 @@ abstractions for memory/model/tool integrations.
 
 ### Procedures
 
+- **`PROCEDURE_REGISTRY_API_VERSION`** (`pares_agens_core::procedure`)
+  - Stable semver version for the public registry/plugin API (`"1.0.0"`).
+
 - **`Procedure`** (`pares_agens_core::procedure::Procedure`)
   - `name(&self) -> &str`
   - `handles(&self) -> &str`
   - `execute(&self, event: &Event) -> Vec<Event>`
 
+- **`ProcedureDefinition`** (`pares_agens_core::procedure::ProcedureDefinition`)
+  - `new(name, event_type) -> ProcedureDefinition`
+  - Fields:
+    - `name: String`
+    - `event_type: String`
+    - `version: String` (semantic version)
+    - `registry_api_version: String` (minimum compatible registry API version)
+
+- **`ProcedureLoadError`** (`pares_agens_core::procedure::ProcedureLoadError`)
+  - Compatibility and semver validation errors returned during plugin/procedure load.
+
 - **`ProcedureRegistry`** (`pares_agens_core::procedure::ProcedureRegistry`)
   - `register(Box<dyn Procedure>)`
+  - `api_version() -> &'static str`
+  - `load_definition(definition, procedure) -> Result<(), ProcedureLoadError>`
   - `matching(event_kind: &str) -> impl Iterator<Item = &dyn Procedure>`
   - `enable(name: &str)`, `disable(name: &str)`
   - `set_priority(name: &str, priority: i32)`
   - `list_configs() -> Vec<ProcedureConfig>`
+
+- **`plugin_template_generator`** (`pares_agens_core::procedure`)
+  - `plugin_template_generator(plugin_name, event_type) -> String`
+  - Generates a starter Rust plugin template with a semver versioned
+    `ProcedureDefinition`.
 
 ### Model + tools
 
