@@ -39,7 +39,7 @@
     "trigger": {
       "kind": "after_store",
       "filter": {
-        "category": "arch-decision"
+        "category": "architecture-decision"
       }
     },
     "steps": [
