@@ -133,3 +133,32 @@ Interface: Teams bot + ADO dashboard
 | .px deployment rules for DTMS/AGC | Microsoft (domain knowledge) |
 | Dialtone Sentinel configuration | Microsoft (hackathon project) |
 | Platform (compiler, runtime, agent, DB, UI) | Plures LLC (BSL-1.1) |
+
+## Positioning vs Squad + Agency
+
+DTMS currently uses **Squad** (multi-agent orchestrator on Copilot CLI) with
+**Agency** (MCP wiring for ADO, Teams, Mail). Dialtone Sentinel is
+**complementary, not competitive**.
+
+### What Squad Does Well
+- Multi-agent role orchestration (PM, Docs, Infra agents)
+- VS Code Copilot Chat integration
+- Agency MCP servers (WorkIQ for ADO, Teams, Calendar)
+
+### What Squad Can't Do (Sentinel fills these gaps)
+| Gap | Why It Matters | Sentinel Solution |
+|---|---|---|
+| **No persistent memory** | Can't learn from past deployments | PluresDB (vector search + P2P sync) |
+| **No constraint engine** | Can't enforce deployment gates | Praxis .px rules |
+| **No offline inference** | Requires cloud API | BitNet CPU (runs on existing Xeons) |
+| **No decision audit trail** | Can't prove why a decision was made | Chronos trace + decision ledger |
+| **No learning loop** | Same mistakes repeat | Facts captured, recalled next time |
+| **Stateless** | Every session starts fresh | PluresDB persists across restarts |
+
+### Integration Strategy
+Squad stays the orchestrator. Sentinel adds:
+- `sentinel-memory` MCP server (PluresDB facts accessible to Squad agents)
+- `sentinel-gate` MCP server (Praxis constraint checks before deployment)
+- `sentinel-inference` MCP server (BitNet local model for offline decisions)
+
+Squad agents call Sentinel via MCP. Best of both worlds.
