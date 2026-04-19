@@ -74,7 +74,7 @@ pub enum Schedule {
 pub type TaskExecutor = Arc<dyn Fn(String) -> tokio::task::JoinHandle<String> + Send + Sync>;
 
 const TASK_PREFIX: &str = "agenda/task/";
-const TASK_ACTOR: &str = "pares-agens-agenda";
+const TASK_ACTOR: &str = "plures-agenda";
 
 /// Errors produced by scheduler task persistence backends.
 #[derive(Debug, Error)]
@@ -157,8 +157,11 @@ impl TaskStore for PluresDbTaskStore {
             .into_iter()
             .filter(|record| record.id.starts_with(TASK_PREFIX))
         {
-            if let Ok(task) = serde_json::from_value::<Task>(record.data) {
-                tasks.push(task);
+            match serde_json::from_value::<Task>(record.data) {
+                Ok(task) => tasks.push(task),
+                Err(e) => {
+                    warn!(record_id = %record.id, error = %e, "skipping invalid persisted task record");
+                }
             }
         }
         Ok(tasks)
@@ -443,7 +446,10 @@ impl Scheduler {
             if parsed_step.is_none() {
                 return false;
             }
-            (lhs, parsed_step.unwrap_or(1))
+            (
+                lhs,
+                parsed_step.expect("parsed_step validated as Some and greater than zero"),
+            )
         } else {
             (part, 1)
         };
