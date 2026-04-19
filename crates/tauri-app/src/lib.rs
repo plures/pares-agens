@@ -20,12 +20,14 @@ use pares_agens_core::optimization::OptimizationSafetyGate;
 use pares_agens_core::praxis::GuidanceService;
 use pares_agens_core::secrets::InMemorySecretStore;
 use pares_agens_core::Event;
+use pares_agens_core::{PluresDbStateStore, StateStore};
 use pares_models::types::{ChatCompletionRequest, Role, Tool};
 use pares_models::ModelRouter;
 
 use crate::state::{
     build_router_config, rebuild_model_router, sanitize_activation_hotkey, AppState, Settings,
 };
+use crate::telemetry::TelemetryService;
 
 mod commands;
 mod mcp;
@@ -34,6 +36,7 @@ mod notifications;
 mod procedures;
 mod settings;
 mod state;
+mod telemetry;
 pub mod tray;
 mod wizard;
 
@@ -236,6 +239,8 @@ impl ModelClient for AppModelClient {
 struct McpToolDispatcher {
     mcp_tools: Arc<RwLock<Vec<(String, mcp_client::protocol::Tool)>>>,
     mcp_clients: Arc<Mutex<std::collections::HashMap<String, mcp_client::McpClient>>>,
+    settings: Arc<Mutex<Settings>>,
+    telemetry_service: Arc<TelemetryService>,
 }
 
 #[async_trait::async_trait]
@@ -253,6 +258,14 @@ impl ToolDispatcher for McpToolDispatcher {
     }
 
     async fn call_tool(&self, name: &str, arguments: serde_json::Value) -> String {
+        let telemetry_enabled = {
+            let settings = self.settings.lock().await;
+            settings.telemetry.enabled
+        };
+        if telemetry_enabled {
+            self.telemetry_service.record_tool_usage(name).await;
+        }
+
         let server_name = {
             let tool_list = self.mcp_tools.read().await;
             tool_list
@@ -342,6 +355,16 @@ pub fn run() {
                 Arc::new(Mutex::new(std::collections::HashMap::new()));
             let mcp_tools: Arc<RwLock<Vec<(String, mcp_client::protocol::Tool)>>> =
                 Arc::new(RwLock::new(Vec::new()));
+            let telemetry_store: Arc<dyn StateStore> = match app
+                .path()
+                .app_data_dir()
+                .ok()
+                .and_then(|dir| PluresDbStateStore::open(dir.join("telemetry-state.db")).ok())
+            {
+                Some(store) => Arc::new(store),
+                None => Arc::new(PluresDbStateStore::in_memory()),
+            };
+            let telemetry_service = Arc::new(TelemetryService::new(telemetry_store));
 
             // ── IPC bridge ────────────────────────────────────────────────
             let (adapter, handle) = tauri_ipc_channel("user");
@@ -361,6 +384,8 @@ pub fn run() {
             let tool_dispatcher = Arc::new(McpToolDispatcher {
                 mcp_tools: Arc::clone(&mcp_tools),
                 mcp_clients: Arc::clone(&mcp_clients),
+                settings: Arc::clone(&settings),
+                telemetry_service: Arc::clone(&telemetry_service),
             });
 
             // Build the Agent with a Cerebellum wired in so every message
@@ -499,6 +524,7 @@ pub fn run() {
                 mcp_clients: Arc::clone(&mcp_clients),
                 mcp_tools: Arc::clone(&mcp_tools),
                 license: Mutex::new(pares_agens_core::license::License::free()),
+                telemetry_service: Arc::clone(&telemetry_service),
             });
 
             // ── Initial router rebuild ─────────────────────────────────────
@@ -562,6 +588,8 @@ pub fn run() {
             commands::get_license_status,
             commands::activate_license,
             commands::get_conversation_history,
+            commands::get_telemetry_snapshot,
+            commands::upload_telemetry_snapshot,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Pares Agens");

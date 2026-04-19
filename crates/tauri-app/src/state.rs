@@ -16,6 +16,7 @@ use pares_models::config::{ProviderConfig, RouterConfig};
 use pares_models::ModelRouter;
 
 use crate::procedures::{ProcedureLogEntry, ProcedureRecord};
+use crate::telemetry::TelemetryService;
 
 // ---------------------------------------------------------------------------
 // Provider
@@ -229,6 +230,9 @@ pub struct Settings {
     /// Optional Hyperswarm topic configuration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub swarm: Option<SwarmSettings>,
+    /// Privacy-first telemetry preferences.
+    #[serde(default)]
+    pub telemetry: TelemetrySettings,
 }
 
 impl Default for Settings {
@@ -273,8 +277,24 @@ impl Default for Settings {
             preferences: AgentPreferences::default(),
             mcp_servers: Vec::new(),
             swarm: None,
+            telemetry: TelemetrySettings::default(),
         }
     }
+}
+
+/// Privacy-first telemetry preferences.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TelemetrySettings {
+    /// Whether anonymous telemetry collection is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Whether uploading local aggregates is enabled.
+    #[serde(default)]
+    pub upload_enabled: bool,
+    /// Optional upload endpoint used for manual telemetry uploads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upload_endpoint: Option<String>,
 }
 
 /// Shared application state managed by Tauri.
@@ -326,6 +346,8 @@ pub struct AppState {
     pub mcp_tools: Arc<RwLock<Vec<(String, McpTool)>>>,
     /// Current license — Free by default; updated on successful activation.
     pub license: Mutex<License>,
+    /// Anonymous telemetry aggregator backed by PluresDB state.
+    pub telemetry_service: Arc<TelemetryService>,
 }
 
 // ---------------------------------------------------------------------------
@@ -554,6 +576,9 @@ mod tests {
             mcp_clients: Arc::new(Mutex::new(HashMap::new())),
             mcp_tools: Arc::new(RwLock::new(Vec::new())),
             license: Mutex::new(pares_agens_core::license::License::free()),
+            telemetry_service: Arc::new(TelemetryService::new(Arc::new(
+                pares_agens_core::InMemoryStateStore::new(),
+            ))),
         };
 
         rebuild_model_router(&state).await;

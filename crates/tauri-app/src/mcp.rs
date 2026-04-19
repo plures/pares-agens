@@ -108,6 +108,14 @@ pub async fn call_tool(
     tool_name: &str,
     arguments: Option<Value>,
 ) -> ToolCallResult {
+    let telemetry_enabled = {
+        let settings = state.settings.lock().await;
+        settings.telemetry.enabled
+    };
+    if telemetry_enabled {
+        state.telemetry_service.record_tool_usage(tool_name).await;
+    }
+
     // Find which server owns this tool
     let server_name = {
         let tools = state.mcp_tools.read().await;

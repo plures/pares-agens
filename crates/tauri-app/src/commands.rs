@@ -6,6 +6,7 @@ use pares_agens_core::license::{
 };
 use pares_agens_core::optimization::{EvidenceRequest, OptimizationSafety, OptimizationTelemetry};
 use pares_agens_core::praxis::{AnalysisEvent, GuidanceCategory, GuidanceEntry, SourceSpan};
+use pares_agens_core::telemetry::TelemetrySnapshot;
 
 use crate::apply_activation_hotkey;
 use crate::state::{rebuild_model_router, sanitize_activation_hotkey, AppState, Settings};
@@ -25,6 +26,7 @@ pub async fn send_message(
     request_id: String,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    let started_at = std::time::Instant::now();
     let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
     state
@@ -38,10 +40,24 @@ pub async fn send_message(
         .await
         .map_err(|e| format!("IPC send failed: {e}"))?;
 
-    match response_rx
+    let response = response_rx
         .await
-        .map_err(|e| format!("IPC receive failed: {e}"))?
-    {
+        .map_err(|e| format!("IPC receive failed: {e}"))?;
+
+    let telemetry_enabled = {
+        let settings = state.settings.lock().await;
+        settings.telemetry.enabled
+    };
+    if telemetry_enabled {
+        let elapsed_ms = started_at
+            .elapsed()
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX);
+        state.telemetry_service.record_model_call(elapsed_ms).await;
+    }
+
+    match response {
         Some(pares_agens_core::Event::ModelResponse { content, .. }) => Ok(content),
         Some(pares_agens_core::Event::Message { content, .. }) => Ok(content),
         _ => Ok(String::new()),
@@ -379,6 +395,57 @@ pub async fn activate_license(
     let status = new_license.status();
     *state.license.lock().await = new_license;
     Ok(status)
+}
+
+/// Return a snapshot of local anonymous telemetry aggregates.
+#[tauri::command]
+pub async fn get_telemetry_snapshot(
+    state: State<'_, AppState>,
+) -> Result<TelemetrySnapshot, String> {
+    Ok(state.telemetry_service.snapshot().await)
+}
+
+/// Upload the local anonymous telemetry snapshot to the configured endpoint.
+#[tauri::command]
+pub async fn upload_telemetry_snapshot(state: State<'_, AppState>) -> Result<(), String> {
+    let (telemetry_enabled, upload_enabled, upload_endpoint) = {
+        let settings = state.settings.lock().await;
+        (
+            settings.telemetry.enabled,
+            settings.telemetry.upload_enabled,
+            settings.telemetry.upload_endpoint.clone(),
+        )
+    };
+
+    if !telemetry_enabled {
+        return Err("Telemetry collection is disabled".to_string());
+    }
+    if !upload_enabled {
+        return Err("Telemetry upload is disabled".to_string());
+    }
+
+    let endpoint = upload_endpoint
+        .map(|e| e.trim().to_string())
+        .filter(|e| !e.is_empty())
+        .ok_or_else(|| "Telemetry upload endpoint is not configured".to_string())?;
+
+    let payload = state.telemetry_service.snapshot().await;
+    let response = reqwest::Client::new()
+        .post(&endpoint)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Telemetry upload failed: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Telemetry upload returned status {}",
+            response.status()
+        ));
+    }
+
+    state.telemetry_service.mark_uploaded().await;
+    Ok(())
 }
 
 /// Return recent conversation turns for the chat UI.
