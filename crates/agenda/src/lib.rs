@@ -8,6 +8,8 @@
 //!
 //! - [`issue`] — [`Issue`](issue::Issue) work-item model and lifecycle.
 //! - [`manager`] — [`AgendaManager`](manager::AgendaManager): CRUD for issues and PRs.
+//! - [`scheduler`] — tokio-based scheduler with cron/interval tasks and optional
+//!   PluresDB persistence.
 
 #![warn(missing_docs)]
 
