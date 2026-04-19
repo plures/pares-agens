@@ -4,8 +4,8 @@ use pest::iterators::{Pair, Pairs};
 use std::collections::HashMap;
 
 use super::{
-    FunctionMode, PxAction, PxCapture, PxConstraint, PxContract, PxDocument, PxExample, PxFact,
-    PxField, PxFunction, PxImport, PxRule, PxTrigger, Rule,
+    FunctionMode, PxAction, PxCapture, PxConstraint, PxContract, PxDocument,
+    PxExample, PxFact, PxField, PxFunction, PxImport, PxRule, PxTrigger, Rule,
 };
 
 /// Build a PxDocument from parsed pest pairs.
@@ -39,10 +39,7 @@ pub fn build(pairs: Pairs<'_, Rule>) -> PxDocument {
 
 fn build_import(pair: Pair<'_, Rule>) -> PxImport {
     let mut inner = pair.into_inner();
-    let path = inner
-        .next()
-        .map(|p| p.as_str().to_string())
-        .unwrap_or_default();
+    let path = inner.next().map(|p| p.as_str().to_string()).unwrap_or_default();
     let alias = inner.next().map(|p| p.as_str().to_string());
     PxImport { path, alias }
 }
@@ -60,10 +57,7 @@ fn build_fact(pair: Pair<'_, Rule>) -> PxFact {
 fn build_field(pair: Pair<'_, Rule>) -> PxField {
     let mut inner = pair.into_inner();
     let name = next_str(&mut inner);
-    let type_expr = inner
-        .next()
-        .map(|p| p.as_str().to_string())
-        .unwrap_or_default();
+    let type_expr = inner.next().map(|p| p.as_str().to_string()).unwrap_or_default();
     PxField { name, type_expr }
 }
 
@@ -80,10 +74,7 @@ fn build_rule(pair: Pair<'_, Rule>) -> PxRule {
     for child in inner {
         match child.as_rule() {
             Rule::priority_clause => {
-                priority = child
-                    .into_inner()
-                    .next()
-                    .and_then(|p| p.as_str().parse().ok());
+                priority = child.into_inner().next().and_then(|p| p.as_str().parse().ok());
             }
             Rule::condition_list => {
                 conditions = child
@@ -95,10 +86,7 @@ fn build_rule(pair: Pair<'_, Rule>) -> PxRule {
             Rule::let_clause => {
                 let mut lc = child.into_inner();
                 let var = next_str(&mut lc);
-                let expr = lc
-                    .next()
-                    .map(|p| p.as_str().to_string())
-                    .unwrap_or_default();
+                let expr = lc.next().map(|p| p.as_str().to_string()).unwrap_or_default();
                 lets.push((var, expr));
             }
             Rule::action_list => {
@@ -119,14 +107,7 @@ fn build_rule(pair: Pair<'_, Rule>) -> PxRule {
         }
     }
 
-    PxRule {
-        name,
-        priority,
-        conditions,
-        lets,
-        actions,
-        captures,
-    }
+    PxRule { name, priority, conditions, lets, actions, captures }
 }
 
 fn build_action(pair: Pair<'_, Rule>) -> PxAction {
@@ -140,18 +121,11 @@ fn build_action(pair: Pair<'_, Rule>) -> PxAction {
                 .map(|p| {
                     let mut kv = p.into_inner();
                     let k = next_str(&mut kv);
-                    let v = kv
-                        .next()
-                        .map(|p| parse_value(p))
-                        .unwrap_or(serde_json::Value::Null);
+                    let v = kv.next().map(|p| parse_value(p)).unwrap_or(serde_json::Value::Null);
                     (k, v)
                 })
                 .collect();
-            PxAction {
-                kind,
-                params,
-                condition: None,
-            }
+            PxAction { kind, params, condition: None }
         }
         Rule::conditional_action => {
             let mut parts = inner.into_inner();
@@ -161,11 +135,7 @@ fn build_action(pair: Pair<'_, Rule>) -> PxAction {
             action.condition = cond;
             action
         }
-        _ => PxAction {
-            kind: "unknown".into(),
-            params: HashMap::new(),
-            condition: None,
-        },
+        _ => PxAction { kind: "unknown".into(), params: HashMap::new(), condition: None },
     }
 }
 
@@ -177,18 +147,11 @@ fn build_action_from_simple(pair: Pair<'_, Rule>) -> PxAction {
         .map(|p| {
             let mut kv = p.into_inner();
             let k = next_str(&mut kv);
-            let v = kv
-                .next()
-                .map(|p| parse_value(p))
-                .unwrap_or(serde_json::Value::Null);
+            let v = kv.next().map(|p| parse_value(p)).unwrap_or(serde_json::Value::Null);
             (k, v)
         })
         .collect();
-    PxAction {
-        kind,
-        params,
-        condition: None,
-    }
+    PxAction { kind, params, condition: None }
 }
 
 fn build_capture(pair: Pair<'_, Rule>) -> PxCapture {
@@ -214,45 +177,15 @@ fn build_constraint(pair: Pair<'_, Rule>) -> PxConstraint {
     for child in inner {
         match child.as_rule() {
             Rule::scope_clause => scope = child.into_inner().next().map(|p| p.as_str().to_string()),
-            Rule::when_expr => {
-                when_expr = child
-                    .into_inner()
-                    .next()
-                    .map(|p| p.as_str().to_string())
-                    .unwrap_or_default()
-            }
-            Rule::require_expr => {
-                require_expr = child
-                    .into_inner()
-                    .next()
-                    .map(|p| p.as_str().to_string())
-                    .unwrap_or_default()
-            }
-            Rule::severity_clause => {
-                severity = child
-                    .into_inner()
-                    .next()
-                    .map(|p| p.as_str().to_string())
-                    .unwrap_or_default()
-            }
-            Rule::message_clause => {
-                message = child
-                    .into_inner()
-                    .next()
-                    .map(|p| p.as_str().trim_matches('"').trim_matches('\'').to_string())
-            }
+            Rule::when_expr => when_expr = child.into_inner().next().map(|p| p.as_str().to_string()).unwrap_or_default(),
+            Rule::require_expr => require_expr = child.into_inner().next().map(|p| p.as_str().to_string()).unwrap_or_default(),
+            Rule::severity_clause => severity = child.into_inner().next().map(|p| p.as_str().to_string()).unwrap_or_default(),
+            Rule::message_clause => message = child.into_inner().next().map(|p| p.as_str().trim_matches('"').trim_matches('\'').to_string()),
             _ => {}
         }
     }
 
-    PxConstraint {
-        name,
-        scope,
-        when_expr,
-        require_expr,
-        severity,
-        message,
-    }
+    PxConstraint { name, scope, when_expr, require_expr, severity, message }
 }
 
 fn build_contract(pair: Pair<'_, Rule>) -> PxContract {
@@ -270,12 +203,7 @@ fn build_contract(pair: Pair<'_, Rule>) -> PxContract {
             Rule::given_clause => given = child.into_inner().next().map(|p| unquote(p.as_str())),
             Rule::when_desc => when_desc = child.into_inner().next().map(|p| unquote(p.as_str())),
             Rule::then_desc => then_desc = child.into_inner().next().map(|p| unquote(p.as_str())),
-            Rule::threshold_clause => {
-                threshold = child
-                    .into_inner()
-                    .next()
-                    .and_then(|p| p.as_str().parse().ok())
-            }
+            Rule::threshold_clause => threshold = child.into_inner().next().and_then(|p| p.as_str().parse().ok()),
             Rule::example_list => {
                 examples = child
                     .into_inner()
@@ -287,32 +215,15 @@ fn build_contract(pair: Pair<'_, Rule>) -> PxContract {
         }
     }
 
-    PxContract {
-        name,
-        given,
-        when_desc,
-        then_desc,
-        threshold,
-        examples,
-    }
+    PxContract { name, given, when_desc, then_desc, threshold, examples }
 }
 
 fn build_example(pair: Pair<'_, Rule>) -> PxExample {
     let mut inner = pair.into_inner();
-    let input = inner
-        .next()
-        .map(|p| parse_value(p))
-        .unwrap_or(serde_json::Value::Null);
-    let expect = inner
-        .next()
-        .map(|p| parse_value(p))
-        .unwrap_or(serde_json::Value::Null);
+    let input = inner.next().map(|p| parse_value(p)).unwrap_or(serde_json::Value::Null);
+    let expect = inner.next().map(|p| parse_value(p)).unwrap_or(serde_json::Value::Null);
     let threshold = inner.next().and_then(|p| p.as_str().parse().ok());
-    PxExample {
-        input,
-        expect,
-        threshold,
-    }
+    PxExample { input, expect, threshold }
 }
 
 fn build_function(pair: Pair<'_, Rule>) -> PxFunction {
@@ -335,11 +246,7 @@ fn build_function(pair: Pair<'_, Rule>) -> PxFunction {
             }
             Rule::type_expr => return_type = child.as_str().to_string(),
             Rule::mode_clause => {
-                let mode_str = child
-                    .into_inner()
-                    .next()
-                    .map(|p| p.as_str())
-                    .unwrap_or("deterministic");
+                let mode_str = child.into_inner().next().map(|p| p.as_str()).unwrap_or("deterministic");
                 mode = match mode_str {
                     "probabilistic" => FunctionMode::Probabilistic,
                     "hybrid" => FunctionMode::Hybrid,
@@ -351,13 +258,7 @@ fn build_function(pair: Pair<'_, Rule>) -> PxFunction {
         }
     }
 
-    PxFunction {
-        name,
-        params,
-        return_type,
-        mode,
-        docstring,
-    }
+    PxFunction { name, params, return_type, mode, docstring }
 }
 
 fn build_trigger(pair: Pair<'_, Rule>) -> PxTrigger {
@@ -370,42 +271,20 @@ fn build_trigger(pair: Pair<'_, Rule>) -> PxTrigger {
 
     for child in inner {
         match child.as_rule() {
-            Rule::on_clause => {
-                on_event = child
-                    .into_inner()
-                    .next()
-                    .map(|p| p.as_str().to_string())
-                    .unwrap_or_default()
-            }
-            Rule::schedule_clause => {
-                schedule = child.into_inner().next().map(|p| unquote(p.as_str()))
-            }
-            Rule::run_clause => {
-                run = child
-                    .into_inner()
-                    .next()
-                    .map(|p| p.as_str().to_string())
-                    .unwrap_or_default()
-            }
+            Rule::on_clause => on_event = child.into_inner().next().map(|p| p.as_str().to_string()).unwrap_or_default(),
+            Rule::schedule_clause => schedule = child.into_inner().next().map(|p| unquote(p.as_str())),
+            Rule::run_clause => run = child.into_inner().next().map(|p| p.as_str().to_string()).unwrap_or_default(),
             _ => {}
         }
     }
 
-    PxTrigger {
-        name,
-        on_event,
-        schedule,
-        run,
-    }
+    PxTrigger { name, on_event, schedule, run }
 }
 
 // === Helpers ===
 
 fn next_str(pairs: &mut Pairs<'_, Rule>) -> String {
-    pairs
-        .next()
-        .map(|p| p.as_str().to_string())
-        .unwrap_or_default()
+    pairs.next().map(|p| p.as_str().to_string()).unwrap_or_default()
 }
 
 fn unquote(s: &str) -> String {

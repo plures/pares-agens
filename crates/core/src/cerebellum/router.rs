@@ -51,8 +51,7 @@ fn decide_message(content: &str, learned_context: &str, config: &CerebellumConfi
         let tasks = build_subtasks(content, learned_context, &signals);
         if !tasks.is_empty() {
             return Route::Delegate {
-                reason: "decomposition signals detected (multi-part or cross-domain request)"
-                    .into(),
+                reason: "decomposition signals detected (multi-part or cross-domain request)".into(),
                 tasks,
             };
         }
@@ -196,9 +195,13 @@ fn estimate_complexity(signals: &Signals) -> f32 {
 
 fn count_file_mentions(lower: &str) -> usize {
     let extensions = [
-        ".rs", ".ts", ".js", ".py", ".go", ".java", ".toml", ".json", ".yml", ".yaml", ".md",
+        ".rs", ".ts", ".js", ".py", ".go", ".java", ".toml", ".json", ".yml", ".yaml",
+        ".md",
     ];
-    extensions.iter().filter(|ext| lower.contains(*ext)).count()
+    extensions
+        .iter()
+        .filter(|ext| lower.contains(*ext))
+        .count()
         + ["/src/", "crates/", "modules/"]
             .iter()
             .filter(|segment| lower.contains(*segment))

@@ -8,8 +8,8 @@ use serde_json::json;
 use std::collections::HashMap;
 
 use super::{
-    FunctionMode, PxConstraint, PxContract, PxDocument, PxFact, PxFunction, PxImport, PxRule,
-    PxTrigger,
+    FunctionMode, PxConstraint, PxContract, PxDocument, PxFact, PxFunction,
+    PxImport, PxRule, PxTrigger,
 };
 
 /// A compiled PluresDB record ready for storage.
@@ -54,10 +54,7 @@ pub fn compile(doc: &PxDocument) -> Vec<CompiledRecord> {
 
 fn compile_import(import: &PxImport) -> CompiledRecord {
     CompiledRecord {
-        key: format!(
-            "px:import/{}",
-            import.alias.as_deref().unwrap_or(&import.path)
-        ),
+        key: format!("px:import/{}", import.alias.as_deref().unwrap_or(&import.path)),
         data: json!({
             "type": "import",
             "path": import.path,
@@ -68,11 +65,9 @@ fn compile_import(import: &PxImport) -> CompiledRecord {
 }
 
 fn compile_fact(fact: &PxFact) -> CompiledRecord {
-    let fields: Vec<serde_json::Value> = fact
-        .fields
-        .iter()
-        .map(|f| json!({ "name": f.name, "type": f.type_expr }))
-        .collect();
+    let fields: Vec<serde_json::Value> = fact.fields.iter().map(|f| {
+        json!({ "name": f.name, "type": f.type_expr })
+    }).collect();
 
     CompiledRecord {
         key: format!("px:fact/{}", fact.name),
@@ -86,32 +81,24 @@ fn compile_fact(fact: &PxFact) -> CompiledRecord {
 }
 
 fn compile_rule(rule: &PxRule) -> CompiledRecord {
-    let actions: Vec<serde_json::Value> = rule
-        .actions
-        .iter()
-        .map(|a| {
-            let mut obj = json!({ "kind": a.kind });
-            if let Some(cond) = &a.condition {
-                obj["condition"] = json!(cond);
-            }
-            for (k, v) in &a.params {
-                obj[k] = v.clone();
-            }
-            obj
-        })
-        .collect();
+    let actions: Vec<serde_json::Value> = rule.actions.iter().map(|a| {
+        let mut obj = json!({ "kind": a.kind });
+        if let Some(cond) = &a.condition {
+            obj["condition"] = json!(cond);
+        }
+        for (k, v) in &a.params {
+            obj[k] = v.clone();
+        }
+        obj
+    }).collect();
 
-    let captures: Vec<serde_json::Value> = rule
-        .captures
-        .iter()
-        .map(|c| {
-            json!({
-                "content": c.content,
-                "category": c.category,
-                "tags": c.tags,
-            })
+    let captures: Vec<serde_json::Value> = rule.captures.iter().map(|c| {
+        json!({
+            "content": c.content,
+            "category": c.category,
+            "tags": c.tags,
         })
-        .collect();
+    }).collect();
 
     CompiledRecord {
         key: format!("px:rule/{}", rule.name),
@@ -145,20 +132,16 @@ fn compile_constraint(constraint: &PxConstraint) -> CompiledRecord {
 }
 
 fn compile_contract(contract: &PxContract) -> CompiledRecord {
-    let examples: Vec<serde_json::Value> = contract
-        .examples
-        .iter()
-        .map(|e| {
-            let mut obj = json!({
-                "input": e.input,
-                "expect": e.expect,
-            });
-            if let Some(t) = e.threshold {
-                obj["threshold"] = json!(t);
-            }
-            obj
-        })
-        .collect();
+    let examples: Vec<serde_json::Value> = contract.examples.iter().map(|e| {
+        let mut obj = json!({
+            "input": e.input,
+            "expect": e.expect,
+        });
+        if let Some(t) = e.threshold {
+            obj["threshold"] = json!(t);
+        }
+        obj
+    }).collect();
 
     CompiledRecord {
         key: format!("px:contract/{}", contract.name),
@@ -182,11 +165,9 @@ fn compile_function(function: &PxFunction) -> CompiledRecord {
         FunctionMode::Hybrid => "hybrid",
     };
 
-    let params: Vec<serde_json::Value> = function
-        .params
-        .iter()
-        .map(|p| json!({ "name": p.name, "type": p.type_expr }))
-        .collect();
+    let params: Vec<serde_json::Value> = function.params.iter().map(|p| {
+        json!({ "name": p.name, "type": p.type_expr })
+    }).collect();
 
     CompiledRecord {
         key: format!("px:function/{}", function.name),
@@ -254,16 +235,12 @@ pub fn compile_with_stats(doc: &PxDocument) -> CompileResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::px::{PxAction, PxConstraint, PxDocument, PxFact, PxField, PxRule};
+    use crate::px::{PxFact, PxField, PxRule, PxAction, PxConstraint, PxDocument};
 
     fn empty_doc() -> PxDocument {
         PxDocument {
-            imports: vec![],
-            facts: vec![],
-            rules: vec![],
-            constraints: vec![],
-            contracts: vec![],
-            functions: vec![],
+            imports: vec![], facts: vec![], rules: vec![],
+            constraints: vec![], contracts: vec![], functions: vec![],
             triggers: vec![],
         }
     }
@@ -280,14 +257,8 @@ mod tests {
         doc.facts.push(PxFact {
             name: "pr_state".into(),
             fields: vec![
-                PxField {
-                    name: "ci_status".into(),
-                    type_expr: "enum(green, failing, pending)".into(),
-                },
-                PxField {
-                    name: "has_review".into(),
-                    type_expr: "bool".into(),
-                },
+                PxField { name: "ci_status".into(), type_expr: "enum(green, failing, pending)".into() },
+                PxField { name: "has_review".into(), type_expr: "bool".into() },
             ],
         });
 
@@ -307,16 +278,15 @@ mod tests {
         doc.rules.push(PxRule {
             name: "auto_merge".into(),
             priority: Some(100),
-            conditions: vec![
-                "pr.ci_status == green".into(),
-                "pr.has_review == true".into(),
-            ],
+            conditions: vec!["pr.ci_status == green".into(), "pr.has_review == true".into()],
             lets: vec![],
-            actions: vec![PxAction {
-                kind: "merge_pr".into(),
-                params: HashMap::from([("method".into(), json!("squash"))]),
-                condition: None,
-            }],
+            actions: vec![
+                PxAction {
+                    kind: "merge_pr".into(),
+                    params: HashMap::from([("method".into(), json!("squash"))]),
+                    condition: None,
+                },
+            ],
             captures: vec![],
         });
 
@@ -345,38 +315,21 @@ mod tests {
         let records = compile(&doc);
         assert_eq!(records[0].key, "px:constraint/no_deploy_during_azsecpak");
         assert_eq!(records[0].data["severity"], "error");
-        assert!(records[0].data["message"]
-            .as_str()
-            .unwrap()
-            .contains("AzSecPak"));
+        assert!(records[0].data["message"].as_str().unwrap().contains("AzSecPak"));
     }
 
     #[test]
     fn compile_stats_are_accurate() {
         let mut doc = empty_doc();
-        doc.facts.push(PxFact {
-            name: "a".into(),
-            fields: vec![],
-        });
-        doc.facts.push(PxFact {
-            name: "b".into(),
-            fields: vec![],
-        });
+        doc.facts.push(PxFact { name: "a".into(), fields: vec![] });
+        doc.facts.push(PxFact { name: "b".into(), fields: vec![] });
         doc.rules.push(PxRule {
-            name: "r".into(),
-            priority: None,
-            conditions: vec![],
-            lets: vec![],
-            actions: vec![],
-            captures: vec![],
+            name: "r".into(), priority: None, conditions: vec![],
+            lets: vec![], actions: vec![], captures: vec![],
         });
         doc.constraints.push(PxConstraint {
-            name: "c".into(),
-            scope: None,
-            when_expr: "".into(),
-            require_expr: "".into(),
-            severity: "warning".into(),
-            message: None,
+            name: "c".into(), scope: None, when_expr: "".into(),
+            require_expr: "".into(), severity: "warning".into(), message: None,
         });
 
         let result = compile_with_stats(&doc);

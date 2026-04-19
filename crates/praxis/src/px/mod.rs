@@ -125,7 +125,8 @@ pub struct PxTrigger {
 
 /// Parse a .px source string into a document AST.
 pub fn parse(source: &str) -> Result<PxDocument, String> {
-    let pairs = PxParser::parse(Rule::document, source).map_err(|e| format!("parse error: {e}"))?;
+    let pairs = PxParser::parse(Rule::document, source)
+        .map_err(|e| format!("parse error: {e}"))?;
 
     Ok(builder::build(pairs))
 }

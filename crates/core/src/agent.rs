@@ -332,14 +332,8 @@ impl Agent {
                     if delegated.is_some() {
                         delegated
                     } else {
-                        self.handle_model_message(
-                            id,
-                            channel,
-                            content,
-                            &learned_context,
-                            clear_history,
-                        )
-                        .await
+                        self.handle_model_message(id, channel, content, &learned_context, clear_history)
+                            .await
                     }
                 }
                 Route::Conscious | Route::Deep { .. } => {

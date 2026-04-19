@@ -255,10 +255,7 @@ impl Cerebellum {
                 guidance.push(message.clone());
             }
             // Level 4: destructive/external → require approval
-            RuleResult::Gate {
-                ref action,
-                ref rationale,
-            } => {
+            RuleResult::Gate { ref action, ref rationale } => {
                 debug!(action, rationale, "authorization gate: approval required");
                 approval_required = Some(ApprovalRequest {
                     action: action.clone(),
@@ -298,8 +295,7 @@ impl Cerebellum {
         let shifted = embeddings
             .get(&channel_key)
             .map(|previous| {
-                cosine_similarity(previous, current_embedding)
-                    < self.config.topic_similarity_threshold
+                cosine_similarity(previous, current_embedding) < self.config.topic_similarity_threshold
             })
             .unwrap_or(false);
         embeddings.insert(channel_key, current_embedding.to_vec());
@@ -407,7 +403,9 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     }
     let (dot, norm_a_sq, norm_b_sq) = a.iter().zip(b.iter()).fold(
         (0.0f32, 0.0f32, 0.0f32),
-        |(dot, norm_a_sq, norm_b_sq), (&x, &y)| (dot + x * y, norm_a_sq + x * x, norm_b_sq + y * y),
+        |(dot, norm_a_sq, norm_b_sq), (&x, &y)| {
+            (dot + x * y, norm_a_sq + x * x, norm_b_sq + y * y)
+        },
     );
     let norm_a = norm_a_sq.sqrt();
     let norm_b = norm_b_sq.sqrt();
@@ -469,8 +467,8 @@ mod tests {
         entry::{MemoryCategory, MemoryEntry},
         store::{InMemoryStore, MemoryStore as _},
     };
-    use pares_agens_praxis::rule::RuleResult;
     use std::sync::Arc;
+    use pares_agens_praxis::rule::RuleResult;
 
     #[test]
     fn extract_query_from_message() {
@@ -550,10 +548,7 @@ mod tests {
             .preprocess(&rust_msg, &memory, &registry)
             .await
             .expect("first preprocess should succeed");
-        assert!(
-            !rust_ctx.clear_history,
-            "first topic should not clear history"
-        );
+        assert!(!rust_ctx.clear_history, "first topic should not clear history");
 
         let cooking_msg = Event::Message {
             id: "2".into(),
@@ -565,10 +560,7 @@ mod tests {
             .preprocess(&cooking_msg, &memory, &registry)
             .await
             .expect("second preprocess should succeed");
-        assert!(
-            cooking_ctx.clear_history,
-            "different topic should clear history"
-        );
+        assert!(cooking_ctx.clear_history, "different topic should clear history");
 
         let rust_return_msg = Event::Message {
             id: "3".into(),
