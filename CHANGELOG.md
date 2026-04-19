@@ -1,3 +1,7 @@
+## [0.17.0] — 2026-04-19
+
+- feat: add opt-in anonymous telemetry with local aggregation, optional upload, and settings dashboard (#555) (8aab25f)
+
 ## [0.16.0] — 2026-04-18
 
 - feat: .px AST builder + expression/value parsing tests (7465e3a)
