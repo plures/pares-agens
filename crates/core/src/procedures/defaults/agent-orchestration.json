@@ -1,0 +1,85 @@
+{
+  "subagent-context-assemble": {
+    "description": "On cue, pre-assemble execution context for delegated subagent tasks.",
+    "trigger": {
+      "kind": "on_cue",
+      "cue": "subagent_context"
+    },
+    "steps": [
+      {
+        "kind": "search",
+        "params": {
+          "query": "$input.task",
+          "limit": 25
+        },
+        "as": "context"
+      },
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": ["$context", "$input"],
+          "instruction": "Assemble compact subagent context: goals, constraints, recent evidence, expected output format.",
+          "mode": "structured"
+        },
+        "as": "assembled"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "subagent-context-ready",
+          "data": "$assembled"
+        }
+      }
+    ]
+  },
+  "copilot-issue-template": {
+    "description": "On cue, produce a structured issue body template for Copilot SWE agent work.",
+    "trigger": {
+      "kind": "on_cue",
+      "cue": "copilot_issue_template"
+    },
+    "steps": [
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": ["$input"],
+          "instruction": "Generate issue sections: problem statement, acceptance criteria, constraints, validation plan.",
+          "mode": "structured"
+        },
+        "as": "issue_template"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "copilot-issue-template-ready",
+          "data": "$issue_template"
+        }
+      }
+    ]
+  },
+  "copilot-feedback-capture": {
+    "description": "On cue, capture outcomes from Copilot PRs to improve future delegation quality.",
+    "trigger": {
+      "kind": "on_cue",
+      "cue": "copilot_feedback"
+    },
+    "steps": [
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": ["$input"],
+          "instruction": "Extract what worked, what failed, and reusable lessons from Copilot review/CI outcomes.",
+          "mode": "structured"
+        },
+        "as": "feedback"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "copilot-feedback-captured",
+          "data": "$feedback"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,136 @@
+{
+  "memory-knowledge-synthesis": {
+    "description": "Weekly synthesis: cluster factual memories into reusable insights.",
+    "trigger": {
+      "kind": "cron",
+      "every": "168h"
+    },
+    "steps": [
+      {
+        "kind": "search",
+        "params": {
+          "query": "fact",
+          "limit": 300
+        },
+        "as": "facts"
+      },
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": ["$facts"],
+          "instruction": "Cluster related facts and synthesize durable insights with evidence links.",
+          "mode": "structured"
+        },
+        "as": "insights"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "knowledge-synthesis-ready",
+          "data": "$insights"
+        }
+      }
+    ]
+  },
+  "memory-truth-verify": {
+    "description": "On evidence updates, enforce epistemic integrity of stored facts.",
+    "trigger": {
+      "kind": "on_cue",
+      "cue": "evidence_update"
+    },
+    "steps": [
+      {
+        "kind": "search",
+        "params": {
+          "query": "$input.subject",
+          "limit": 25
+        },
+        "as": "candidate_facts"
+      },
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": ["$candidate_facts", "$input"],
+          "instruction": "Validate claims against new evidence and mark unsupported assertions.",
+          "mode": "structured"
+        },
+        "as": "verification"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "memory-truth-verification",
+          "data": "$verification"
+        }
+      }
+    ]
+  },
+  "praxis-logic-validate": {
+    "description": "After storing a decision, validate it against existing logic and constraints.",
+    "trigger": {
+      "kind": "after_store",
+      "filter": {
+        "category": "decision"
+      }
+    },
+    "steps": [
+      {
+        "kind": "search",
+        "params": {
+          "query": "$input.text",
+          "limit": 20
+        },
+        "as": "related"
+      },
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": ["$related", "$input"],
+          "instruction": "Detect contradictions with prior decisions/facts and propose follow-up actions.",
+          "mode": "structured"
+        },
+        "as": "logic_check"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "praxis-logic-check",
+          "data": "$logic_check"
+        }
+      }
+    ]
+  },
+  "praxis-evidence-invalidate": {
+    "description": "On contradicting evidence cue, invalidate contradicted facts.",
+    "trigger": {
+      "kind": "on_cue",
+      "cue": "evidence_contradicts"
+    },
+    "steps": [
+      {
+        "kind": "search",
+        "params": {
+          "query": "$input.claim",
+          "limit": 20
+        },
+        "as": "targets"
+      },
+      {
+        "kind": "transform",
+        "params": {
+          "inputs": ["$targets", "$input"],
+          "instruction": "Select contradicted facts and generate invalidation records with reasons.",
+          "mode": "structured"
+        },
+        "as": "invalidations"
+      },
+      {
+        "kind": "emit",
+        "params": {
+          "event": "evidence-invalidated",
+          "data": "$invalidations"
+        }
+      }
+    ]
+  }
+}

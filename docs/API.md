@@ -61,6 +61,13 @@ abstractions for memory/model/tool integrations.
   - Generates a starter Rust plugin template with a semver versioned
     `ProcedureDefinition`.
 
+- **Default procedure library** (`pares_agens_core::procedures`)
+  - `default_procedure_bundles() -> &[DefaultProcedureBundle]`
+  - `default_procedure_bundle(name) -> Option<&DefaultProcedureBundle>`
+  - `load_default_procedures(config) -> Result<Vec<DefaultProcedure>, serde_json::Error>`
+  - `DefaultProcedureLoadConfig { disabled }` supports disabling shipped defaults
+    from persisted config (for example PluresDB state) on first-run import.
+
 ### Model + tools
 
 - **`ModelClient`** (`pares_agens_core::model::ModelClient`)

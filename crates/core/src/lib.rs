@@ -30,10 +30,10 @@
 //! # }
 //! ```
 
-/// Authentication helpers for external providers.
-pub mod auth;
 /// High-level agent abstraction and in-memory storage.
 pub mod agent;
+/// Authentication helpers for external providers.
+pub mod auth;
 /// Cerebellum orchestrator — autorecall, routing, and pipeline execution.
 pub mod cerebellum;
 /// Local multi-agent delegation and concurrent sub-task execution.
@@ -58,6 +58,8 @@ pub mod optimization;
 pub mod praxis;
 /// Procedure registry and priority-based event dispatch.
 pub mod procedure;
+/// Shipped default PluresLM procedure bundles (JSON library).
+pub mod procedures;
 /// Encrypted secret storage abstraction.
 pub mod secrets;
 /// First-run wizard configuration and state persistence.
