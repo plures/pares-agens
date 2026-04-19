@@ -1,0 +1,100 @@
+# Plures Org Expectations — converted from praxis-business TypeScript
+# Source: plures/praxis-business/.praxis/expectations/
+# These are the org-wide standards that pares-agens enforces.
+
+# === Copilot Readiness (ADR-0004) ===
+
+constraint copilot_needs_label_and_type:
+  when: event.type == "issue_created"
+  require: issue.has_label == true and issue.has_type == true
+  severity: error
+  message: "Issue must have both label AND type for Copilot (ADR-0004)"
+
+constraint copilot_single_assignment:
+  when: event.type == "issue_assigned"
+  require: issue.assignee_count <= 1
+  severity: error
+  message: "Copilot must be sole assignee — no co-assignment"
+
+# === Org Health ===
+
+constraint repo_has_readme:
+  when: event.type == "repo_audit"
+  require: repo.has_readme == true
+  severity: error
+  message: "Every repository must have a README.md"
+
+constraint repo_has_license:
+  when: event.type == "repo_audit"
+  require: repo.has_license == true
+  severity: warning
+  message: "Repository should have a LICENSE file"
+
+constraint repo_has_ci:
+  when: event.type == "repo_audit"
+  require: repo.has_ci == true
+  severity: warning
+  message: "Active repos should have CI configured"
+
+# === PR Lifecycle ===
+
+constraint no_draft_bot_prs:
+  when: event.type == "pr_audit"
+  require: NOT (pr.is_draft == true and pr.is_copilot == true and pr.age_minutes > 60)
+  severity: warning
+  message: "Copilot PRs should not remain in draft >1hr"
+
+constraint pr_merge_within_2h:
+  when: event.type == "pr_audit"
+  require: NOT (pr.ci_status == "green" and pr.has_review == true and pr.age_minutes > 120)
+  severity: warning
+  message: "PRs with green CI + review should merge within 2 hours"
+
+constraint pr_must_have_review:
+  when: event.type == "pr_merge_requested"
+  require: pr.has_review == true
+  severity: error
+  message: "Every PR must have review before merge"
+
+# === Repo Standards ===
+
+constraint ui_uses_design_dojo:
+  when: event.type == "repo_audit"
+  require: NOT (repo.language == "Svelte" and repo.uses_design_dojo == false)
+  severity: warning
+  message: "Svelte UI repos should use @plures/design-dojo"
+
+constraint no_hardcoded_repo_lists:
+  scope: compile
+  when: file.content contains "hardcoded" or file.content contains "managed repos"
+  require: false
+  severity: warning
+  message: "Never hardcode repo lists — discover dynamically"
+
+# === Security ===
+
+constraint no_expired_tokens:
+  when: event.type == "security_audit"
+  require: secrets.expired_count == 0
+  severity: error
+  message: "All tokens must be refreshed before expiry"
+
+constraint no_secrets_in_code:
+  when: event.type == "commit_audit"
+  require: commit.has_secrets == false
+  severity: error
+  message: "Never commit secrets to code"
+
+# === Roadmap ===
+
+constraint active_repo_has_milestones:
+  when: event.type == "repo_audit"
+  require: NOT (repo.tier <= 2 and repo.milestone_count == 0)
+  severity: warning
+  message: "Tier 1/2 repos should have at least one open milestone"
+
+constraint milestone_has_due_date:
+  when: event.type == "milestone_audit"
+  require: milestone.has_due_date == true
+  severity: info
+  message: "Milestones should have due dates for tracking"
