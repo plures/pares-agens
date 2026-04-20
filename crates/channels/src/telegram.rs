@@ -586,11 +586,13 @@ impl ChannelAdapter for TelegramAdapter {
                             }
                             "update" => {
                                 if !is_update_authorized(&msg) {
-                                    let _ = bot
-                                        .send_message(msg.chat.id, "Update denied. Configure PARES_TELEGRAM_UPDATE_ALLOWED_USERS with approved Telegram usernames or numeric IDs.")
-                                        .reply_parameters(ReplyParameters::new(msg.id))
-                                        .await;
-                                    Self::acknowledge_message(&bot, &msg).await;
+                                    let _ = Self::send_markdown_reply(
+                                        &bot,
+                                        &msg,
+                                        "Update denied. Configure PARES_TELEGRAM_UPDATE_ALLOWED_USERS with approved Telegram usernames or numeric IDs.",
+                                        None,
+                                    )
+                                    .await;
                                     return respond(());
                                 }
                                 let _ = Self::send_markdown_reply(
