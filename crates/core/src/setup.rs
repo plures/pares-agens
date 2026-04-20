@@ -552,6 +552,10 @@ impl SetupSchemaEngine {
         store: &dyn StateStore,
         schema: &SetupFeatureSchema,
     ) -> Result<bool, String> {
+        if !schema.settings.iter().any(|setting| !setting.optional) {
+            return Ok(true);
+        }
+
         if let Some(Value::Bool(true)) = store.get(&setup_feature_configured_key(&schema.id)).await
         {
             return Ok(true);
@@ -573,7 +577,7 @@ impl SetupSchemaEngine {
                 return Ok(false);
             }
         }
-        Ok(!schema.settings.is_empty())
+        Ok(true)
     }
 }
 
@@ -887,6 +891,17 @@ mod tests {
         }
     }
 
+    fn no_settings_schema() -> SetupFeatureSchema {
+        SetupFeatureSchema {
+            id: "telemetry".to_string(),
+            name: "Telemetry".to_string(),
+            requires: vec![],
+            settings: vec![],
+            constraints: vec![],
+            on_complete: Some("enable_telemetry".to_string()),
+        }
+    }
+
     struct RecordingActionExecutor {
         calls: Arc<Mutex<Vec<(String, String)>>>,
     }
@@ -956,6 +971,14 @@ mod tests {
             .map(|schema| schema.id.as_str())
             .collect::<Vec<_>>();
         assert_eq!(ids, vec!["hyperswarm"]);
+    }
+
+    #[tokio::test]
+    async fn schema_engine_treats_no_settings_feature_as_configured() {
+        let store = MockStore::new();
+        let engine = SetupSchemaEngine::new(vec![no_settings_schema()]).unwrap();
+        let pending = engine.pending_features(&store).await.unwrap();
+        assert!(pending.is_empty());
     }
 
     #[tokio::test]
