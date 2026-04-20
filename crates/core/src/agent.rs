@@ -135,7 +135,7 @@ pub struct Agent {
     tool_dispatcher: Option<Arc<dyn ToolDispatcher>>,
     /// Base system prompt.
     system_prompt: String,
-    /// Per-channel conversation history (last 20 messages).
+    /// Per-channel conversation history keyed by channel/session label.
     conversation_history: Mutex<HashMap<String, Vec<ChatMessage>>>,
     /// Optional persistent turn store (PluresDB). When `Some`, conversation
     /// turns are persisted across restarts. Falls back to in-memory only.
@@ -146,7 +146,7 @@ pub struct Agent {
     audit_store: Option<Arc<dyn pares_agens_audit::store::AuditStore>>,
     /// Optional delegation broker for decomposed tasks.
     delegation_broker: Option<DelegationBroker>,
-    /// Per-channel conversation branch state.
+    /// Per-channel conversation branch/session state.
     branch_state: Mutex<HashMap<String, ChannelBranches>>,
 }
 
@@ -332,8 +332,14 @@ impl Agent {
                     if delegated.is_some() {
                         delegated
                     } else {
-                        self.handle_model_message(id, channel, content, &learned_context, clear_history)
-                            .await
+                        self.handle_model_message(
+                            id,
+                            channel,
+                            content,
+                            &learned_context,
+                            clear_history,
+                        )
+                        .await
                     }
                 }
                 Route::Conscious | Route::Deep { .. } => {
@@ -361,7 +367,8 @@ impl Agent {
         learned_context: &str,
         clear_history: bool,
     ) -> Option<Event> {
-        let branch_channel = self.resolve_branch_channel(channel);
+        let session_channel = self.resolve_branch_channel(channel);
+        let session_id = Self::branch_label(&session_channel);
         let model_client = match &self.model_client {
             Some(client) => client,
             None => {
@@ -388,7 +395,7 @@ impl Agent {
         let history_snapshot = if clear_history {
             vec![]
         } else {
-            self.load_history(&branch_channel).await
+            self.load_history(&session_channel).await
         };
 
         let base_system_text = self.build_system_prompt(learned_context, false);
@@ -471,7 +478,8 @@ impl Agent {
         let start = 1 + history_snapshot.len(); // skip system + existing history
         if messages.len() > start {
             let new_messages: Vec<ChatMessage> = messages[start..].to_vec();
-            self.persist_turn(&branch_channel, &new_messages).await;
+            self.persist_turn(&session_channel, &session_id, &new_messages)
+                .await;
         }
 
         self.capture_exchange(content, &reply).await;
@@ -690,8 +698,8 @@ impl Agent {
 
     // ── Conversation history persistence ─────────────────────────────────
 
-    /// Maximum number of messages to keep in the LLM context window.
-    const HISTORY_WINDOW: usize = 20;
+    /// Number of persisted turns to hydrate when rebuilding in-memory history.
+    const HYDRATE_TURN_LIMIT: usize = 512;
 
     /// Approximate tokens per character (conservative estimate).
     const CHARS_PER_TOKEN: usize = 4;
@@ -721,8 +729,7 @@ impl Agent {
 
         // Slow path: hydrate from PluresDB if available.
         if let Some(store) = &self.turn_store {
-            // Load more than HISTORY_WINDOW to have material for summarization
-            match store.recent_turns(channel, Self::HISTORY_WINDOW * 2).await {
+            match store.recent_turns(channel, Self::HYDRATE_TURN_LIMIT).await {
                 Ok(turns) if !turns.is_empty() => {
                     let messages: Vec<ChatMessage> =
                         turns.into_iter().flat_map(|t| t.messages).collect();
@@ -752,16 +759,14 @@ impl Agent {
     ///
     /// Updates both the in-memory cache and (if configured) the persistent
     /// PluresDB turn store.
-    async fn persist_turn(&self, channel: &str, new_messages: &[ChatMessage]) {
+    async fn persist_turn(&self, channel: &str, session_id: &str, new_messages: &[ChatMessage]) {
         // Update in-memory cache.
         {
             let mut guard = self.conversation_history.lock().unwrap();
             let history = guard.entry(channel.to_string()).or_default();
             history.extend(new_messages.iter().cloned());
-            if history.len() > Self::HISTORY_WINDOW {
-                let drain = history.len() - Self::HISTORY_WINDOW;
-                history.drain(0..drain);
-            }
+            let compacted = Self::trim_to_token_budget(history);
+            *history = compacted;
         }
 
         // Persist to PluresDB if available.
@@ -770,6 +775,7 @@ impl Agent {
             let turn = ChatTurn {
                 id: uuid::Uuid::new_v4().to_string(),
                 channel: channel.to_string(),
+                session_id: session_id.to_string(),
                 timestamp: chrono::Utc::now().to_rfc3339(),
                 messages: new_messages.to_vec(),
             };
@@ -794,9 +800,8 @@ impl Agent {
         let total_tokens: usize = messages.iter().map(Self::estimate_tokens).sum();
 
         if total_tokens <= Self::MAX_HISTORY_TOKENS {
-            // Fits — return all (capped at HISTORY_WINDOW count)
-            let start = messages.len().saturating_sub(Self::HISTORY_WINDOW);
-            return messages[start..].to_vec();
+            // Fits — return all.
+            return messages.to_vec();
         }
 
         // Exceeds budget — keep most recent messages that fit
@@ -815,16 +820,49 @@ impl Agent {
         let mut result = Vec::with_capacity(messages.len() - keep_from + 1);
 
         if dropped > 0 {
+            let dropped_tokens: usize = messages[..keep_from]
+                .iter()
+                .map(Self::estimate_tokens)
+                .sum();
+            let summary = Self::build_compacted_summary(&messages[..keep_from]);
             result.push(ChatMessage::system(format!(
-                "[Context note: {} earlier messages ({} tokens) were summarized to fit context window. \
-                 Recent conversation continues below.]",
+                "[Compacted context]\n{}\n\n(Compacted {} earlier messages, ~{} tokens to fit context window. Full history remains persisted.)",
+                summary,
                 dropped,
-                total_tokens - (Self::MAX_HISTORY_TOKENS - Self::SUMMARY_TOKEN_BUDGET - budget),
+                dropped_tokens,
             )));
         }
 
         result.extend_from_slice(&messages[keep_from..]);
         result
+    }
+
+    fn build_compacted_summary(messages: &[ChatMessage]) -> String {
+        let mut lines = messages
+            .iter()
+            .rev()
+            .filter(|m| m.role == "user" || m.role == "assistant")
+            .filter_map(|m| {
+                let compact = m.content.replace('\n', " ").trim().to_string();
+                if compact.is_empty() {
+                    return None;
+                }
+                let truncated: String = compact.chars().take(160).collect();
+                let snippet = if compact.chars().count() > 160 {
+                    format!("{truncated}…")
+                } else {
+                    truncated
+                };
+                Some(format!("- {}: {}", m.role, snippet))
+            })
+            .take(12)
+            .collect::<Vec<_>>();
+        lines.reverse();
+        if lines.is_empty() {
+            "No non-empty user/assistant messages available for summary.".to_string()
+        } else {
+            lines.join("\n")
+        }
     }
 
     /// Log an audit event if the audit store is configured.
@@ -975,6 +1013,113 @@ impl Agent {
             .to_ascii_lowercase();
 
         match cmd.as_str() {
+            "session" => {
+                let subcommand = parts
+                    .next()
+                    .unwrap_or("")
+                    .trim_start_matches('/')
+                    .to_ascii_lowercase();
+                match subcommand.as_str() {
+                    "new" => {
+                        let requested_name = parts.collect::<Vec<_>>().join(" ");
+                        let requested_name = requested_name.trim();
+
+                        let (new_branch, created) = {
+                            let mut guard = self.branch_state.lock().unwrap();
+                            let state = guard.entry(channel.to_string()).or_default();
+                            let branch = if requested_name.is_empty() {
+                                let mut idx = 1usize;
+                                loop {
+                                    let candidate = format!("session-{idx}");
+                                    if !state.branches.contains(&candidate) {
+                                        break candidate;
+                                    }
+                                    idx += 1;
+                                }
+                            } else {
+                                requested_name.to_string()
+                            };
+
+                            let created = state.branches.insert(branch.clone());
+                            state.active = branch.clone();
+                            (branch, created)
+                        };
+
+                        let new_branch_channel = if new_branch == "main" {
+                            channel.to_string()
+                        } else {
+                            format!("{channel}::{new_branch}")
+                        };
+
+                        {
+                            let mut history = self.conversation_history.lock().unwrap();
+                            history.entry(new_branch_channel).or_default();
+                        }
+
+                        let action = if created {
+                            "Created new"
+                        } else {
+                            "Switched to existing"
+                        };
+                        Some(Event::ModelResponse {
+                            request_id: id.to_string(),
+                            model: "command".into(),
+                            content: format!(
+                                "{action} session '{new_branch}'. Previous session was archived."
+                            ),
+                        })
+                    }
+                    "list" => {
+                        let (active, branches) = {
+                            let guard = self.branch_state.lock().unwrap();
+                            let state = guard.get(channel).cloned().unwrap_or_default();
+                            (state.active, state.branches)
+                        };
+                        let mut lines = vec![format!("Active session: {active}")];
+                        lines.push("Sessions:".to_string());
+                        for branch in branches {
+                            if branch == active {
+                                lines.push(format!("* {branch} (active)"));
+                            } else {
+                                lines.push(format!("* {branch}"));
+                            }
+                        }
+                        Some(Event::ModelResponse {
+                            request_id: id.to_string(),
+                            model: "command".into(),
+                            content: lines.join("\n"),
+                        })
+                    }
+                    "switch" => {
+                        let target = parts.collect::<Vec<_>>().join(" ").trim().to_string();
+                        if target.is_empty() {
+                            return Some(Event::ModelResponse {
+                                request_id: id.to_string(),
+                                model: "command".into(),
+                                content: "Usage: /session switch <id>".into(),
+                            });
+                        }
+
+                        {
+                            let mut guard = self.branch_state.lock().unwrap();
+                            let state = guard.entry(channel.to_string()).or_default();
+                            state.branches.insert(target.clone());
+                            state.active = target.clone();
+                        }
+
+                        Some(Event::ModelResponse {
+                            request_id: id.to_string(),
+                            model: "command".into(),
+                            content: format!("Switched to session '{target}'."),
+                        })
+                    }
+                    _ => Some(Event::ModelResponse {
+                        request_id: id.to_string(),
+                        model: "command".into(),
+                        content: "Usage: /session <new|list|switch> [id]".into(),
+                    }),
+                }
+            }
             "branch" => {
                 let requested_name = parts.collect::<Vec<_>>().join(" ");
                 let requested_name = requested_name.trim();
@@ -1378,5 +1523,72 @@ mod tests {
             .iter()
             .flat_map(|t| t.messages.iter())
             .any(|m| m.content.contains("alt path")));
+        assert!(main_turns.iter().all(|t| t.session_id == "main"));
+        assert!(alt_turns.iter().all(|t| t.session_id == "alt"));
+    }
+
+    #[tokio::test]
+    async fn session_commands_create_list_switch_and_start_fresh() {
+        let agent = Agent::new(Arc::new(InMemory::new())).with_model(
+            Arc::new(MockModel),
+            Arc::new(MockTools),
+            "You are a test agent.".into(),
+        );
+
+        let _ = agent.handle_event(msg("main path")).await;
+
+        let new_response = agent.handle_event(msg("/session new work")).await;
+        assert!(matches!(
+            new_response,
+            Some(Event::ModelResponse { ref content, .. }) if content.contains("session 'work'")
+        ));
+
+        let work_history = agent.load_history("test::work").await;
+        assert!(
+            work_history.is_empty(),
+            "new session should start with fresh context"
+        );
+
+        let list_response = agent.handle_event(msg("/session list")).await;
+        assert!(matches!(
+            list_response,
+            Some(Event::ModelResponse { ref content, .. })
+            if content.contains("Active session: work")
+                && content.contains("* main")
+                && content.contains("* work (active)")
+        ));
+
+        let switch_response = agent.handle_event(msg("/session switch main")).await;
+        assert!(matches!(
+            switch_response,
+            Some(Event::ModelResponse { ref content, .. }) if content == "Switched to session 'main'."
+        ));
+    }
+
+    #[test]
+    fn trim_to_token_budget_adds_compacted_summary_block() {
+        let mut messages = Vec::new();
+        for i in 0..260 {
+            messages.push(ChatMessage::user(format!(
+                "user-{i}: {}",
+                "x".repeat(2_000)
+            )));
+            messages.push(ChatMessage::assistant(format!(
+                "assistant-{i}: {}",
+                "y".repeat(2_000)
+            )));
+        }
+
+        let trimmed = Agent::trim_to_token_budget(&messages);
+        assert!(
+            trimmed.len() < messages.len(),
+            "expected compaction when token budget is exceeded"
+        );
+        assert_eq!(trimmed[0].role, "system");
+        assert!(
+            trimmed[0].content.contains("[Compacted context]"),
+            "expected compacted context note, got: {}",
+            trimmed[0].content
+        );
     }
 }
