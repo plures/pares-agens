@@ -164,6 +164,7 @@ impl CopilotAuth {
         }
 
         let client = reqwest::Client::new();
+        tracing::info!(url = COPILOT_TOKEN_URL, "exchanging OAuth token for Copilot session token");
         let response = client
             .get(COPILOT_TOKEN_URL)
             .header(AUTHORIZATION, format!("Bearer {oauth_token}"))
@@ -171,9 +172,13 @@ impl CopilotAuth {
             .header("User-Agent", USER_AGENT)
             .header("X-Github-Api-Version", API_VERSION)
             .send()
-            .await?
-            .error_for_status()?;
-
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            tracing::error!(%status, body = &body[..body.len().min(500)], "Copilot token exchange failed");
+            return Err(CopilotAuthError::OAuth(format!("token exchange failed ({status}): {}", &body[..body.len().min(200)])));
+        }
         let payload: CopilotTokenResponse = response.json().await?;
         let expires_at = match payload.expires_at {
             Value::Number(num) => num.as_u64().ok_or_else(|| {
@@ -192,6 +197,12 @@ impl CopilotAuth {
         let api_base = extract_api_base_url(&payload.token)
             .unwrap_or_else(|| DEFAULT_API_BASE.to_string());
 
+        tracing::info!(
+            api_base = %api_base,
+            expires_at = expires_at,
+            "Copilot session token acquired"
+        );
+
         Ok((payload.token, expires_at, api_base))
     }
 
@@ -208,6 +219,7 @@ impl CopilotAuth {
         };
 
         if needs_refresh {
+            tracing::info!("Copilot session token expired or missing, refreshing");
             let oauth_token = self.oauth_token.clone().ok_or_else(|| {
                 CopilotAuthError::InvalidResponse("missing oauth token".into())
             })?;
@@ -320,6 +332,13 @@ impl ModelClient for CopilotModelClient {
         }
 
         let url = format!("{}/chat/completions", api_base.trim_end_matches('/'));
+        tracing::info!(
+            url = %url,
+            model = %self.model,
+            message_count = messages.len(),
+            tool_count = tools.len(),
+            "sending Copilot completion request"
+        );
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
@@ -345,7 +364,12 @@ impl ModelClient for CopilotModelClient {
 
         let status = response.status();
         let body_text = response.text().await.map_err(|e| format!("response body read error: {e}"))?;
-        tracing::debug!(status = %status, body_len = body_text.len(), "copilot response received");
+        tracing::info!(
+            %status,
+            body_len = body_text.len(),
+            body_preview = &body_text[..body_text.len().min(200)],
+            "Copilot completion response"
+        );
         
         let payload: Value = serde_json::from_str(&body_text)
             .map_err(|e| format!("error decoding response body: {e}\nBody: {}", &body_text[..body_text.len().min(500)]))?;
