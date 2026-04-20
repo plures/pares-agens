@@ -983,17 +983,28 @@ impl Agent {
     fn resolve_branch_channel(&self, channel: &str) -> String {
         let guard = self.branch_state.lock().unwrap();
         let state = guard.get(channel).cloned().unwrap_or_default();
-        if state.active == "main" {
-            channel.to_string()
-        } else {
-            format!("{channel}::{}", state.active)
-        }
+        Self::scoped_channel(channel, &state.active)
     }
 
     fn branch_label(channel: &str) -> String {
         channel
             .rsplit_once("::")
             .map_or_else(|| "main".to_string(), |(_, branch)| branch.to_string())
+    }
+
+    fn scoped_channel(channel: &str, branch: &str) -> String {
+        if branch == "main" {
+            channel.to_string()
+        } else {
+            format!("{channel}::{branch}")
+        }
+    }
+
+    fn collect_command_target<'a, I>(parts: I) -> String
+    where
+        I: Iterator<Item = &'a str>,
+    {
+        parts.collect::<Vec<_>>().join(" ").trim().to_string()
     }
 
     async fn handle_branch_command(&self, id: &str, channel: &str, content: &str) -> Option<Event> {
@@ -1021,7 +1032,7 @@ impl Agent {
                     .to_ascii_lowercase();
                 match subcommand.as_str() {
                     "new" => {
-                        let requested_name = parts.collect::<Vec<_>>().join(" ");
+                        let requested_name = Self::collect_command_target(parts.by_ref());
                         let requested_name = requested_name.trim();
 
                         let (new_branch, created) = {
@@ -1045,11 +1056,7 @@ impl Agent {
                             (branch, created)
                         };
 
-                        let new_branch_channel = if new_branch == "main" {
-                            channel.to_string()
-                        } else {
-                            format!("{channel}::{new_branch}")
-                        };
+                        let new_branch_channel = Self::scoped_channel(channel, &new_branch);
 
                         {
                             let mut history = self.conversation_history.lock().unwrap();
@@ -1091,7 +1098,7 @@ impl Agent {
                         })
                     }
                     "switch" => {
-                        let target = parts.collect::<Vec<_>>().join(" ").trim().to_string();
+                        let target = Self::collect_command_target(parts.by_ref());
                         if target.is_empty() {
                             return Some(Event::ModelResponse {
                                 request_id: id.to_string(),
@@ -1121,7 +1128,7 @@ impl Agent {
                 }
             }
             "branch" => {
-                let requested_name = parts.collect::<Vec<_>>().join(" ");
+                let requested_name = Self::collect_command_target(parts.by_ref());
                 let requested_name = requested_name.trim();
 
                 let current_branch_channel = self.resolve_branch_channel(channel);
@@ -1153,11 +1160,7 @@ impl Agent {
                     (branch, created)
                 };
 
-                let new_branch_channel = if new_branch == "main" {
-                    channel.to_string()
-                } else {
-                    format!("{channel}::{new_branch}")
-                };
+                let new_branch_channel = Self::scoped_channel(channel, &new_branch);
 
                 {
                     let mut history = self.conversation_history.lock().unwrap();
@@ -1197,7 +1200,7 @@ impl Agent {
                 })
             }
             "switch" => {
-                let target = parts.collect::<Vec<_>>().join(" ").trim().to_string();
+                let target = Self::collect_command_target(parts.by_ref());
                 if target.is_empty() {
                     return Some(Event::ModelResponse {
                         request_id: id.to_string(),
