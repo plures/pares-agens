@@ -344,7 +344,11 @@ impl ModelClient for CopilotModelClient {
             .map_err(|e| e.to_string())?;
 
         let status = response.status();
-        let payload: Value = response.json().await.map_err(|e| e.to_string())?;
+        let body_text = response.text().await.map_err(|e| format!("response body read error: {e}"))?;
+        tracing::debug!(status = %status, body_len = body_text.len(), "copilot response received");
+        
+        let payload: Value = serde_json::from_str(&body_text)
+            .map_err(|e| format!("error decoding response body: {e}\nBody: {}", &body_text[..body_text.len().min(500)]))?;
         if !status.is_success() {
             return Err(format!("copilot error ({status}): {payload}"));
         }
