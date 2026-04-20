@@ -100,9 +100,19 @@ pub struct ChatTurn {
     pub id: String,
     /// Channel identifier (e.g. `"telegram"`, `"cli"`).
     pub channel: String,
+    /// Session identifier within a channel (e.g. `"main"`, `"alt"`).
+    ///
+    /// Older persisted turns may not include this field; they default to
+    /// `"main"` during deserialization for backward compatibility.
+    #[serde(default = "default_chat_turn_session_id")]
+    pub session_id: String,
     /// ISO 8601 timestamp of this turn.
     pub timestamp: String,
     /// The ordered messages that make up this turn (user, assistant, tool
     /// calls/results — everything the model loop produced).
     pub messages: Vec<crate::model::ChatMessage>,
+}
+
+fn default_chat_turn_session_id() -> String {
+    "main".to_string()
 }
