@@ -22,7 +22,10 @@ use pares_agens_marketplace::{installer::Installer, SkillCategory, SkillMetadata
 use serde_json::Value;
 use teloxide::{
     prelude::*,
-    types::{InlineKeyboardButton, InlineKeyboardMarkup, Message, MessageKind},
+    types::{
+        InlineKeyboardButton, InlineKeyboardMarkup, Message, MessageKind, ParseMode, ReactionType,
+        ReplyParameters,
+    },
 };
 use tokio::sync::Mutex as TokioMutex;
 use tracing::{debug, error, info};
@@ -420,6 +423,50 @@ impl TelegramAdapter {
             .collect();
         InlineKeyboardMarkup::new(vec![row])
     }
+
+    fn is_approval_prompt(content: &str) -> bool {
+        let normalized = content.to_ascii_lowercase();
+        normalized.contains("approval required")
+            || normalized.contains("requires explicit human approval")
+            || normalized.contains("requires approval")
+    }
+
+    fn approval_keyboard(request_id: &str) -> InlineKeyboardMarkup {
+        InlineKeyboardMarkup::new(vec![vec![
+            InlineKeyboardButton::callback("✅ Yes", format!("approval:yes:{request_id}")),
+            InlineKeyboardButton::callback("❌ No", format!("approval:no:{request_id}")),
+        ]])
+    }
+
+    async fn send_markdown_reply(
+        bot: &Bot,
+        msg: &Message,
+        content: &str,
+        reply_markup: Option<InlineKeyboardMarkup>,
+    ) -> Result<(), teloxide::RequestError> {
+        let mut req = bot
+            .send_message(msg.chat.id, Self::escape_markdown_v2(content))
+            .parse_mode(ParseMode::MarkdownV2)
+            .reply_parameters(ReplyParameters::new(msg.id));
+
+        if let Some(markup) = reply_markup {
+            req = req.reply_markup(markup);
+        }
+
+        req.await.map(|_| ())
+    }
+
+    async fn acknowledge_message(bot: &Bot, msg: &Message) {
+        if let Err(e) = bot
+            .set_message_reaction(msg.chat.id, msg.id)
+            .reaction(vec![ReactionType::Emoji {
+                emoji: "👍".to_string(),
+            }])
+            .await
+        {
+            debug!("failed to add Telegram reaction acknowledgement: {e}");
+        }
+    }
 }
 
 #[async_trait]
@@ -464,12 +511,14 @@ impl ChannelAdapter for TelegramAdapter {
                         let cmd = cmd.split('@').next().unwrap_or(cmd);
                         match cmd {
                             "start" | "help" => {
-                                let _ = bot
-                                    .send_message(
-                                        msg.chat.id,
-                                        "Pares Agens commands:\n/status - status + health snapshot\n/health - alias for /status\n/agents - browse pares-modulus marketplace\n/install <id> - install an agent/plugin\n/update - run NixOS self-update and rebuild if pares-agens changed\n\nOr just send a message.",
-                                    )
-                                    .await;
+                                let _ = Self::send_markdown_reply(
+                                    &bot,
+                                    &msg,
+                                    "Pares Agens commands:\n/status - status + health snapshot\n/health - alias for /status\n/agents - browse pares-modulus marketplace\n/install <id> - install an agent/plugin\n/update - run NixOS self-update and rebuild if pares-agens changed\n\nOr just send a message.",
+                                    None,
+                                )
+                                .await;
+                                Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
                             "status" | "health" => {
@@ -480,7 +529,8 @@ impl ChannelAdapter for TelegramAdapter {
                                     "Pares Agens status snapshot\nPID: {}\nMemory RSS: {}\nModel: GPT-4.1 + Opus 4.6\nPluresDB: ~/.pares-agens/memory/",
                                     std::process::id(), memory,
                                 );
-                                let _ = bot.send_message(msg.chat.id, &status).await;
+                                let _ = Self::send_markdown_reply(&bot, &msg, &status, None).await;
+                                Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
                             "agents" | "browse" => {
@@ -488,14 +538,20 @@ impl ChannelAdapter for TelegramAdapter {
                                     Ok(skills) => format_index_listing(&skills),
                                     Err(e) => format!("Marketplace lookup failed: {e}"),
                                 };
-                                let _ = bot.send_message(msg.chat.id, message).await;
+                                let _ = Self::send_markdown_reply(&bot, &msg, &message, None).await;
+                                Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
                             "install" => {
                                 let Some(id) = cmd_parts.next() else {
-                                    let _ = bot
-                                        .send_message(msg.chat.id, "Usage: /install <id>")
-                                        .await;
+                                    let _ = Self::send_markdown_reply(
+                                        &bot,
+                                        &msg,
+                                        "Usage: /install <id>",
+                                        None,
+                                    )
+                                    .await;
+                                    Self::acknowledge_message(&bot, &msg).await;
                                     return respond(());
                                 };
 
@@ -524,28 +580,29 @@ impl ChannelAdapter for TelegramAdapter {
                                     Err(e) => format!("Marketplace lookup failed: {e}"),
                                 };
 
-                                let _ = bot.send_message(msg.chat.id, reply).await;
+                                let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;
+                                Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
                             "update" => {
                                 if !is_update_authorized(&msg) {
                                     let _ = bot
-                                        .send_message(
-                                            msg.chat.id,
-                                            "Update denied. Configure PARES_TELEGRAM_UPDATE_ALLOWED_USERS with approved Telegram usernames or numeric IDs.",
-                                        )
+                                        .send_message(msg.chat.id, "Update denied. Configure PARES_TELEGRAM_UPDATE_ALLOWED_USERS with approved Telegram usernames or numeric IDs.")
+                                        .reply_parameters(ReplyParameters::new(msg.id))
                                         .await;
+                                    Self::acknowledge_message(&bot, &msg).await;
                                     return respond(());
                                 }
-                                let _ = bot
-                                    .send_message(
-                                        msg.chat.id,
-                                        format!(
-                                            "Running self-update in `{}` for host `{}`.",
-                                            update_flake_dir, update_host
-                                        ),
-                                    )
-                                    .await;
+                                let _ = Self::send_markdown_reply(
+                                    &bot,
+                                    &msg,
+                                    &format!(
+                                        "Running self-update in `{}` for host `{}`.",
+                                        update_flake_dir, update_host
+                                    ),
+                                    None,
+                                )
+                                .await;
                                 let reply = match tokio::process::Command::new("sh")
                                     .arg("-c")
                                     .arg(&update_command)
@@ -557,7 +614,8 @@ impl ChannelAdapter for TelegramAdapter {
                                     }
                                     Err(e) => format!("Failed to start self-update command: {e}"),
                                 };
-                                let _ = bot.send_message(msg.chat.id, reply).await;
+                                let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;
+                                Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
                             _ => {} // fall through to agent
@@ -567,9 +625,21 @@ impl ChannelAdapter for TelegramAdapter {
 
                 // Normal message — send to agent
                 if let Some(event) = event {
-                    if let Some(Event::ModelResponse { content, .. }) = on_event(event).await {
-                        if let Err(e) = bot.send_message(msg.chat.id, &content).await {
+                    if let Some(Event::ModelResponse {
+                        request_id, content, ..
+                    }) = on_event(event).await
+                    {
+                        let reply_markup = if Self::is_approval_prompt(&content) {
+                            Some(Self::approval_keyboard(&request_id))
+                        } else {
+                            None
+                        };
+
+                        if let Err(e) = Self::send_markdown_reply(&bot, &msg, &content, reply_markup).await
+                        {
                             error!("Failed to send Telegram reply: {e}");
+                        } else {
+                            Self::acknowledge_message(&bot, &msg).await;
                         }
                     }
                 }
@@ -590,6 +660,7 @@ impl ChannelAdapter for TelegramAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use teloxide::types::InlineKeyboardButtonKind;
 
     // ── escape_markdown_v2 ────────────────────────────────────────────────
 
@@ -656,6 +727,35 @@ mod tests {
     fn inline_keyboard_empty() {
         let kb = TelegramAdapter::build_inline_keyboard(&[]);
         assert!(kb.inline_keyboard[0].is_empty());
+    }
+
+    #[test]
+    fn approval_prompt_detection_matches_expected_phrases() {
+        assert!(TelegramAdapter::is_approval_prompt(
+            "This action requires explicit human approval before dispatch."
+        ));
+        assert!(TelegramAdapter::is_approval_prompt(
+            "approval required: potentially destructive operation"
+        ));
+        assert!(!TelegramAdapter::is_approval_prompt("All checks passed."));
+    }
+
+    #[test]
+    fn approval_keyboard_contains_yes_no_buttons() {
+        let kb = TelegramAdapter::approval_keyboard("req-42");
+        let rows = kb.inline_keyboard;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].len(), 2);
+        assert_eq!(rows[0][0].text, "✅ Yes");
+        assert_eq!(rows[0][1].text, "❌ No");
+        assert_eq!(
+            rows[0][0].kind,
+            InlineKeyboardButtonKind::CallbackData("approval:yes:req-42".to_string())
+        );
+        assert_eq!(
+            rows[0][1].kind,
+            InlineKeyboardButtonKind::CallbackData("approval:no:req-42".to_string())
+        );
     }
 
     // ── TelegramAdapter basics ────────────────────────────────────────────
