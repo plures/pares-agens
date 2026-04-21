@@ -1,4 +1,4 @@
-#![warn(missing_docs)]
+#![allow(missing_docs)] // TODO: re-enable once API stabilizes
 //! `pares-agens-core` — reactive event loop and procedure executor.
 //!
 //! # Quick start

@@ -5,7 +5,6 @@
 //! rules, check constraints, and execute actions.
 
 use serde_json::json;
-use std::collections::HashMap;
 
 use super::{
     FunctionMode, PxConstraint, PxContract, PxDocument, PxFact, PxFunction,
@@ -235,7 +234,8 @@ pub fn compile_with_stats(doc: &PxDocument) -> CompileResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::px::{PxFact, PxField, PxRule, PxAction, PxConstraint, PxDocument};
+    use std::collections::HashMap;
+    use crate::px::{PxAction, PxDocument, PxFact, PxField, PxRule};
 
     fn empty_doc() -> PxDocument {
         PxDocument {

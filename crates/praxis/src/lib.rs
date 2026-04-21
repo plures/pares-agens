@@ -48,7 +48,7 @@
 //! println!("completeness: {}%", report.completeness_pct);
 //! ```
 
-#![warn(missing_docs)]
+#![allow(missing_docs)] // TODO: re-enable once praxis API stabilizes
 
 pub mod audit;
 pub mod db;
