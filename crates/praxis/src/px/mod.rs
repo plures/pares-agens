@@ -156,5 +156,50 @@ mod tests {
         assert!(PxParser::parse(Rule::value, "true").is_ok());
         assert!(PxParser::parse(Rule::value, "false").is_ok());
     }
+
+    #[test]
+    fn parse_document_extracts_rule_constraint_and_contract() {
+        let source = r#"
+fact pr_state:
+  ci_status: enum(green, failing, pending)
+  has_review: bool
+
+rule auto_merge:
+  when:
+    - pr_state.ci_status == green
+    - pr_state.has_review == true
+  then:
+    - action: merge_pr method: "squash"
+  capture:
+    - fact: "Merged PR" category: work_in_progress tags: ["lifecycle", "merge"]
+
+constraint merge_requires_review:
+  when: pr_state.ci_status == green
+  require: pr_state.has_review == true
+  severity: error
+
+contract auto_merge_behavior:
+  given: "CI green + reviewed"
+  when: "lifecycle evaluates"
+  then: "PR merged"
+  examples:
+    - input: { ci_status: green, has_review: true }
+      expect: [merge_pr]
+"#;
+
+        let document = parse(source).expect("expected valid .px document");
+        assert_eq!(document.facts.len(), 1);
+        assert_eq!(document.rules.len(), 1);
+        assert_eq!(document.constraints.len(), 1);
+        assert_eq!(document.contracts.len(), 1);
+
+        let rule = &document.rules[0];
+        assert_eq!(rule.conditions.len(), 2);
+        assert_eq!(rule.actions.len(), 1);
+        assert_eq!(rule.captures.len(), 1);
+        assert_eq!(rule.captures[0].content, "Merged PR");
+        assert_eq!(rule.captures[0].category.as_deref(), Some("work_in_progress"));
+        assert_eq!(rule.captures[0].tags, vec!["lifecycle", "merge"]);
+    }
 }
 pub mod compiler;
