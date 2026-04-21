@@ -15,6 +15,8 @@ use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use tokio::sync::RwLock;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tracing_subscriber::EnvFilter;
@@ -23,7 +25,7 @@ use uuid::Uuid;
 use reqwest::header::{HeaderMap, HeaderValue};
 
 use pares_agens_channels::adapter::ChannelAdapter;
-use pares_agens_channels::telegram::{TelegramAdapter, TelegramConfig};
+use pares_agens_channels::telegram::{TelegramAdapter, TelegramConfig, TelegramModelControl};
 use pares_agens_core::agent::{Agent, Memory};
 use pares_agens_core::auth::copilot::{CopilotAuth, CopilotModelClient};
 use pares_agens_core::cerebellum::{Cerebellum, CerebellumConfig};
@@ -38,6 +40,7 @@ use pares_agens_core::model::{
     ChatMessage as CoreChatMessage, ChatOptions, ModelClient, ToolDefinition, ToolDispatcher,
 };
 use pares_agens_core::procedure::{Procedure, ProcedureRegistry};
+use pares_agens_core::{PluresDbStateStore, StateStore};
 use pares_agens_core::Event;
 use pares_agens_migrate::{migrate, openclaw};
 use pares_models::config::{ProviderConfig, RouterConfig};
@@ -58,12 +61,81 @@ struct Cli {
 
 struct RouterModelClient {
     router: Arc<ModelRouter>,
-    model: String,
+    model: Arc<RwLock<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CopilotAuthCache {
     oauth_token: String,
+}
+
+const MODEL_OVERRIDE_STATE_KEY: &str = "agent.runtime_model_override";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RuntimeModelOverride {
+    model: String,
+    deep_model: String,
+}
+
+struct RuntimeModelControl {
+    primary_model: Arc<RwLock<String>>,
+    deep_model: Arc<RwLock<String>>,
+    state_store: Arc<dyn StateStore>,
+}
+
+impl RuntimeModelControl {
+    async fn persist_models(&self) {
+        let model = self.primary_model.read().await.clone();
+        let deep_model = self.deep_model.read().await.clone();
+        self.state_store
+            .set(
+                MODEL_OVERRIDE_STATE_KEY,
+                json!(RuntimeModelOverride { model, deep_model }),
+            )
+            .await;
+    }
+}
+
+#[async_trait]
+impl TelegramModelControl for RuntimeModelControl {
+    async fn current_models(&self) -> (String, String) {
+        (
+            self.primary_model.read().await.clone(),
+            self.deep_model.read().await.clone(),
+        )
+    }
+
+    async fn set_primary_model(&self, model: &str) -> Result<(), String> {
+        let model = model.trim();
+        if model.is_empty() {
+            return Err("model name cannot be empty".to_string());
+        }
+        let previous = {
+            let mut guard = self.primary_model.write().await;
+            let previous = guard.clone();
+            *guard = model.to_string();
+            previous
+        };
+        self.persist_models().await;
+        tracing::info!(from_model = %previous, to_model = %model, "runtime primary model updated");
+        Ok(())
+    }
+
+    async fn set_deep_model(&self, model: &str) -> Result<(), String> {
+        let model = model.trim();
+        if model.is_empty() {
+            return Err("deep model name cannot be empty".to_string());
+        }
+        let previous = {
+            let mut guard = self.deep_model.write().await;
+            let previous = guard.clone();
+            *guard = model.to_string();
+            previous
+        };
+        self.persist_models().await;
+        tracing::info!(from_model = %previous, to_model = %model, "runtime deep model updated");
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -106,7 +178,8 @@ impl ModelClient for RouterModelClient {
             })
             .collect();
 
-        let mut request = ChatCompletionRequest::new(&self.model, converted_messages);
+        let model = self.model.read().await.clone();
+        let mut request = ChatCompletionRequest::new(&model, converted_messages);
         if !tools.is_empty() {
             request.tools = Some(
                 tools
@@ -1524,6 +1597,36 @@ async fn main() {
             }
 
             let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+            let runtime_state_dir = PathBuf::from(&home).join(".pares-agens/runtime-state");
+            let runtime_state_store: Arc<dyn StateStore> = match PluresDbStateStore::open(&runtime_state_dir)
+            {
+                Ok(store) => Arc::new(store),
+                Err(e) => {
+                    tracing::warn!(
+                        path = %runtime_state_dir.display(),
+                        error = %e,
+                        "failed to open runtime state store; model overrides will not persist"
+                    );
+                    Arc::new(PluresDbStateStore::in_memory())
+                }
+            };
+
+            if let Some(saved) = runtime_state_store
+                .get(MODEL_OVERRIDE_STATE_KEY)
+                .await
+                .and_then(|value| serde_json::from_value::<RuntimeModelOverride>(value).ok())
+            {
+                tracing::info!(
+                    primary_model = %saved.model,
+                    deep_model = %saved.deep_model,
+                    "loaded runtime model overrides from PluresDB state"
+                );
+                model = saved.model;
+                deep_model = saved.deep_model;
+            }
+
+            let model_name = Arc::new(RwLock::new(model.clone()));
+            let deep_model_name = Arc::new(RwLock::new(deep_model.clone()));
 
             let (model_client, deep_model_client): (Arc<dyn ModelClient>, Arc<dyn ModelClient>) =
                 if copilot {
@@ -1576,8 +1679,14 @@ async fn main() {
                     let deep_auth = CopilotAuth::new(oauth_token);
 
                     (
-                        Arc::new(CopilotModelClient::new(auth, model.clone())),
-                        Arc::new(CopilotModelClient::new(deep_auth, deep_model.clone())),
+                        Arc::new(CopilotModelClient::new_with_model_handle(
+                            auth,
+                            Arc::clone(&model_name),
+                        )),
+                        Arc::new(CopilotModelClient::new_with_model_handle(
+                            deep_auth,
+                            Arc::clone(&deep_model_name),
+                        )),
                     )
                 } else {
                     // Set up model router
@@ -1594,11 +1703,11 @@ async fn main() {
                     (
                         Arc::new(RouterModelClient {
                             router: model_router.clone(),
-                            model: model.clone(),
+                            model: Arc::clone(&model_name),
                         }) as Arc<dyn ModelClient>,
                         Arc::new(RouterModelClient {
                             router: deep_model_router.clone(),
-                            model: deep_model.clone(),
+                            model: Arc::clone(&deep_model_name),
                         }) as Arc<dyn ModelClient>,
                     )
                 };
@@ -1776,7 +1885,13 @@ async fn main() {
 
             // Set up Telegram adapter
             let telegram_token_for_shutdown = telegram_token.clone();
-            let config = TelegramConfig::new(telegram_token);
+            let config = TelegramConfig::new(telegram_token).with_model_control(Arc::new(
+                RuntimeModelControl {
+                    primary_model: Arc::clone(&model_name),
+                    deep_model: Arc::clone(&deep_model_name),
+                    state_store: Arc::clone(&runtime_state_store),
+                },
+            ));
             let adapter = TelegramAdapter::new(config);
 
             tracing::info!("Telegram adapter starting — bot is live");
@@ -2003,5 +2118,53 @@ mod tests {
         .expect("request should map");
         assert_eq!(method, "screen.capture");
         assert_eq!(params, serde_json::json!({"monitor": 1, "window": "Edge"}));
+    }
+
+    #[tokio::test]
+    async fn runtime_model_control_persists_primary_model_override() {
+        let state_store: Arc<dyn StateStore> = Arc::new(pares_agens_core::InMemoryStateStore::new());
+        let control = RuntimeModelControl {
+            primary_model: Arc::new(RwLock::new("gpt-4.1".to_string())),
+            deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
+            state_store: Arc::clone(&state_store),
+        };
+
+        control.set_primary_model("gpt-4o").await.unwrap();
+
+        assert_eq!(
+            control.current_models().await,
+            ("gpt-4o".to_string(), "claude-opus-4.6".to_string())
+        );
+        assert_eq!(
+            state_store.get(MODEL_OVERRIDE_STATE_KEY).await,
+            Some(serde_json::json!({
+                "model": "gpt-4o",
+                "deep_model": "claude-opus-4.6"
+            }))
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_model_control_persists_deep_model_override() {
+        let state_store: Arc<dyn StateStore> = Arc::new(pares_agens_core::InMemoryStateStore::new());
+        let control = RuntimeModelControl {
+            primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
+            deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
+            state_store: Arc::clone(&state_store),
+        };
+
+        control.set_deep_model("claude-sonnet-4.5").await.unwrap();
+
+        assert_eq!(
+            control.current_models().await,
+            ("gpt-4o".to_string(), "claude-sonnet-4.5".to_string())
+        );
+        assert_eq!(
+            state_store.get(MODEL_OVERRIDE_STATE_KEY).await,
+            Some(serde_json::json!({
+                "model": "gpt-4o",
+                "deep_model": "claude-sonnet-4.5"
+            }))
+        );
     }
 }

@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use thiserror::Error;
 use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tokio::time::sleep;
 
 use crate::model::{ChatMessage, ChatOptions, ModelClient, ModelCompletion, ToolDefinition, ToolCall};
@@ -246,16 +247,21 @@ impl CopilotAuth {
 #[derive(Clone)]
 pub struct CopilotModelClient {
     auth: Arc<Mutex<CopilotAuth>>,
-    model: String,
+    model: Arc<RwLock<String>>,
     client: reqwest::Client,
 }
 
 impl CopilotModelClient {
     /// Create a Copilot model client for the given model.
     pub fn new(auth: CopilotAuth, model: impl Into<String>) -> Self {
+        Self::new_with_model_handle(auth, Arc::new(RwLock::new(model.into())))
+    }
+
+    /// Create a Copilot model client backed by a shared model handle.
+    pub fn new_with_model_handle(auth: CopilotAuth, model: Arc<RwLock<String>>) -> Self {
         Self {
             auth: Arc::new(Mutex::new(auth)),
-            model: model.into(),
+            model,
             client: reqwest::Client::new(),
         }
     }
@@ -302,8 +308,9 @@ impl ModelClient for CopilotModelClient {
             rendered_messages.push(Value::Object(obj));
         }
 
+        let model = self.model.read().await.clone();
         let mut body = serde_json::json!({
-            "model": self.model,
+            "model": model,
             "messages": rendered_messages,
         });
 
@@ -334,7 +341,7 @@ impl ModelClient for CopilotModelClient {
         let url = format!("{}/chat/completions", api_base.trim_end_matches('/'));
         tracing::info!(
             url = %url,
-            model = %self.model,
+            model = %model,
             message_count = messages.len(),
             tool_count = tools.len(),
             "sending Copilot completion request"

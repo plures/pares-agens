@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use pares_agens_core::Event;
 use pares_agens_marketplace::{installer::Installer, SkillCategory, SkillMetadata};
 use serde_json::Value;
+use std::sync::Arc;
 use teloxide::{
     prelude::*,
     types::{
@@ -271,7 +272,7 @@ fn is_update_authorized(msg: &Message) -> bool {
 ///
 /// The bot token should be stored in PluresDB state and passed here at
 /// runtime — never hard-coded or read from environment variables.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TelegramConfig {
     /// Telegram bot token (from BotFather).
     pub token: String,
@@ -279,6 +280,8 @@ pub struct TelegramConfig {
     pub marketplace_index_url: String,
     /// Local install directory used by marketplace installer state.
     pub marketplace_install_dir: String,
+    /// Optional runtime model control for `/model`.
+    pub model_control: Option<Arc<dyn TelegramModelControl>>,
 }
 
 impl TelegramConfig {
@@ -288,6 +291,7 @@ impl TelegramConfig {
             token: token.into(),
             marketplace_index_url: PARES_MODULUS_INDEX_URL.to_string(),
             marketplace_install_dir: DEFAULT_MARKETPLACE_INSTALL_DIR.to_string(),
+            model_control: None,
         }
     }
 
@@ -304,6 +308,24 @@ impl TelegramConfig {
         self.marketplace_install_dir = dir.into();
         self
     }
+
+    /// Enable `/model` runtime model control support.
+    #[must_use]
+    pub fn with_model_control(mut self, model_control: Arc<dyn TelegramModelControl>) -> Self {
+        self.model_control = Some(model_control);
+        self
+    }
+}
+
+/// Runtime model control hooks used by the `/model` Telegram command.
+#[async_trait]
+pub trait TelegramModelControl: Send + Sync {
+    /// Return the current `(primary_model, deep_model)` pair.
+    async fn current_models(&self) -> (String, String);
+    /// Update the primary model.
+    async fn set_primary_model(&self, model: &str) -> Result<(), String>;
+    /// Update the deep model.
+    async fn set_deep_model(&self, model: &str) -> Result<(), String>;
 }
 
 /// A Telegram channel adapter that bridges Telegram messages to the agent event loop.
@@ -315,10 +337,29 @@ pub struct TelegramAdapter {
     config: TelegramConfig,
 }
 
+#[derive(Debug)]
+enum ModelCommand {
+    Show,
+    SetPrimary(String),
+    SetDeep(String),
+}
+
 impl TelegramAdapter {
     /// Create a new [`TelegramAdapter`] with the given configuration.
     pub fn new(config: TelegramConfig) -> Self {
         Self { config }
+    }
+
+    fn parse_model_command(args: Vec<&str>) -> Result<ModelCommand, &'static str> {
+        match args.as_slice() {
+            [] => Ok(ModelCommand::Show),
+            ["deep"] => Err("Usage: /model deep <name>"),
+            ["deep", model] if !model.trim().is_empty() => {
+                Ok(ModelCommand::SetDeep(model.trim().to_string()))
+            }
+            [model] if !model.trim().is_empty() => Ok(ModelCommand::SetPrimary(model.trim().to_string())),
+            _ => Err("Usage: /model | /model <name> | /model deep <name>"),
+        }
     }
 
     /// Convert a Telegram [`Message`] into an agent [`Event`].
@@ -485,6 +526,7 @@ impl ChannelAdapter for TelegramAdapter {
         info!("Starting Telegram adapter");
         let bot = Bot::new(self.config.token.clone());
         let index_url = self.config.marketplace_index_url.clone();
+        let model_control = self.config.model_control.clone();
         let installer = std::sync::Arc::new(TokioMutex::new(
             Installer::new(&self.config.marketplace_install_dir)
                 .map_err(|e| ChannelError::Telegram(e.to_string()))?,
@@ -496,6 +538,7 @@ impl ChannelAdapter for TelegramAdapter {
             let on_event = on_event.clone();
             let installer = installer.clone();
             let index_url = index_url.clone();
+            let model_control = model_control.clone();
             let update_flake_dir =
                 std::env::var("PARES_NIX_FLAKE_DIR").unwrap_or_else(|_| DEFAULT_NIX_FLAKE_DIR.into());
             let update_host =
@@ -514,7 +557,7 @@ impl ChannelAdapter for TelegramAdapter {
                                 let _ = Self::send_markdown_reply(
                                     &bot,
                                     &msg,
-                                    "Pares Agens commands:\n/status - status + health snapshot\n/health - alias for /status\n/agents - browse pares-modulus marketplace\n/install <id> - install an agent/plugin\n/update - run NixOS self-update and rebuild if pares-agens changed\n\nOr just send a message.",
+                                    "Pares Agens commands:\n/status - status + health snapshot\n/health - alias for /status\n/model - show current primary + deep model\n/model <name> - switch primary model at runtime\n/model deep <name> - switch deep model at runtime\n/agents - browse pares-modulus marketplace\n/install <id> - install an agent/plugin\n/update - run NixOS self-update and rebuild if pares-agens changed\n\nOr just send a message.",
                                     None,
                                 )
                                 .await;
@@ -525,11 +568,60 @@ impl ChannelAdapter for TelegramAdapter {
                                 let memory = current_process_rss_kib()
                                     .map(|rss| format!("{rss} KiB"))
                                     .unwrap_or_else(|| "n/a".to_string());
+                                let model_line = if let Some(control) = &model_control {
+                                    let (primary, deep) = control.current_models().await;
+                                    format!("{primary} + {deep}")
+                                } else {
+                                    "GPT-4.1 + Opus 4.6".to_string()
+                                };
                                 let status = format!(
-                                    "Pares Agens status snapshot\nPID: {}\nMemory RSS: {}\nModel: GPT-4.1 + Opus 4.6\nPluresDB: ~/.pares-agens/memory/",
-                                    std::process::id(), memory,
+                                    "Pares Agens status snapshot\nPID: {}\nMemory RSS: {}\nModel: {}\nPluresDB: ~/.pares-agens/memory/",
+                                    std::process::id(), memory, model_line,
                                 );
                                 let _ = Self::send_markdown_reply(&bot, &msg, &status, None).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            "model" => {
+                                let Some(control) = &model_control else {
+                                    let _ = Self::send_markdown_reply(
+                                        &bot,
+                                        &msg,
+                                        "Runtime model switching is unavailable for this deployment.",
+                                        None,
+                                    )
+                                    .await;
+                                    Self::acknowledge_message(&bot, &msg).await;
+                                    return respond(());
+                                };
+
+                                let reply = match Self::parse_model_command(cmd_parts.collect()) {
+                                    Ok(ModelCommand::Show) => {
+                                        let (primary, deep) = control.current_models().await;
+                                        format!("Current models\nPrimary: {primary}\nDeep: {deep}")
+                                    }
+                                    Ok(ModelCommand::SetPrimary(model)) => {
+                                        match control.set_primary_model(&model).await {
+                                            Ok(()) => {
+                                                let (_, deep) = control.current_models().await;
+                                                format!("Updated primary model to {model}\nDeep: {deep}")
+                                            }
+                                            Err(e) => format!("Failed to update primary model: {e}"),
+                                        }
+                                    }
+                                    Ok(ModelCommand::SetDeep(model)) => {
+                                        match control.set_deep_model(&model).await {
+                                            Ok(()) => {
+                                                let (primary, _) = control.current_models().await;
+                                                format!("Updated deep model to {model}\nPrimary: {primary}")
+                                            }
+                                            Err(e) => format!("Failed to update deep model: {e}"),
+                                        }
+                                    }
+                                    Err(e) => e.to_string(),
+                                };
+
+                                let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
@@ -757,6 +849,38 @@ mod tests {
         assert_eq!(
             rows[0][1].kind,
             InlineKeyboardButtonKind::CallbackData("approval:no:req-42".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_model_command_show() {
+        assert!(matches!(
+            TelegramAdapter::parse_model_command(vec![]),
+            Ok(ModelCommand::Show)
+        ));
+    }
+
+    #[test]
+    fn parse_model_command_set_primary() {
+        assert!(matches!(
+            TelegramAdapter::parse_model_command(vec!["gpt-4o"]),
+            Ok(ModelCommand::SetPrimary(model)) if model == "gpt-4o"
+        ));
+    }
+
+    #[test]
+    fn parse_model_command_set_deep() {
+        assert!(matches!(
+            TelegramAdapter::parse_model_command(vec!["deep", "claude-opus-4.6"]),
+            Ok(ModelCommand::SetDeep(model)) if model == "claude-opus-4.6"
+        ));
+    }
+
+    #[test]
+    fn parse_model_command_invalid_usage() {
+        assert_eq!(
+            TelegramAdapter::parse_model_command(vec!["deep"]).unwrap_err(),
+            "Usage: /model deep <name>"
         );
     }
 
