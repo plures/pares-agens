@@ -7,6 +7,7 @@ use super::{LifecycleAction, LifecycleFact, RuleResult};
 use super::facts::{PRFacts, CIStatus, IssueFacts, MilestoneFacts, FailureClass, classify_failure};
 
 /// Evaluate all PR rules against the given facts. Returns the first matching result.
+#[allow(clippy::type_complexity, clippy::vec_init_then_push)]
 pub fn evaluate_pr(facts: &PRFacts) -> RuleResult {
     let rules: Vec<(&str, fn(&PRFacts) -> Option<Vec<LifecycleAction>>)> = vec![
         ("skip-draft", rule_skip_draft),
@@ -105,6 +106,7 @@ fn rule_ci_failing_retry(facts: &PRFacts) -> Option<Vec<LifecycleAction>> {
     Some(actions)
 }
 
+#[allow(clippy::vec_init_then_push)]
 fn rule_ci_failing_force_merge(facts: &PRFacts) -> Option<Vec<LifecycleAction>> {
     if !matches!(facts.ci_status, CIStatus::Failing) { return None; }
     if !facts.is_copilot { return None; }

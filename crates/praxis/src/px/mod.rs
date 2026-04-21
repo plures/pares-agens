@@ -102,18 +102,14 @@ pub struct PxFunction {
     pub docstring: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum FunctionMode {
+    #[default]
     Deterministic,
     Probabilistic,
     Hybrid,
 }
 
-impl Default for FunctionMode {
-    fn default() -> Self {
-        Self::Deterministic
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PxTrigger {
