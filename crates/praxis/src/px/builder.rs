@@ -4,8 +4,8 @@ use pest::iterators::{Pair, Pairs};
 use std::collections::HashMap;
 
 use super::{
-    FunctionMode, PxAction, PxCapture, PxConstraint, PxContract, PxDocument,
-    PxExample, PxFact, PxField, PxFunction, PxImport, PxRule, PxTrigger, Rule,
+    parser_impl::Rule, FunctionMode, PxAction, PxCapture, PxConstraint, PxContract, PxDocument,
+    PxExample, PxFact, PxField, PxFunction, PxImport, PxRule, PxTrigger,
 };
 
 /// Build a PxDocument from parsed pest pairs.
@@ -21,16 +21,24 @@ pub fn build(pairs: Pairs<'_, Rule>) -> PxDocument {
     };
 
     for pair in pairs {
-        match pair.as_rule() {
-            Rule::import_decl => doc.imports.push(build_import(pair)),
-            Rule::fact_decl => doc.facts.push(build_fact(pair)),
-            Rule::rule_decl => doc.rules.push(build_rule(pair)),
-            Rule::constraint_decl => doc.constraints.push(build_constraint(pair)),
-            Rule::contract_decl => doc.contracts.push(build_contract(pair)),
-            Rule::function_decl => doc.functions.push(build_function(pair)),
-            Rule::trigger_decl => doc.triggers.push(build_trigger(pair)),
-            Rule::EOI => {}
-            _ => {} // skip whitespace, comments
+        let mut nodes = vec![pair];
+        while let Some(node) = nodes.pop() {
+            match node.as_rule() {
+                Rule::document => {
+                    for child in node.into_inner().rev() {
+                        nodes.push(child);
+                    }
+                }
+                Rule::import_decl => doc.imports.push(build_import(node)),
+                Rule::fact_decl => doc.facts.push(build_fact(node)),
+                Rule::rule_decl => doc.rules.push(build_rule(node)),
+                Rule::constraint_decl => doc.constraints.push(build_constraint(node)),
+                Rule::contract_decl => doc.contracts.push(build_contract(node)),
+                Rule::function_decl => doc.functions.push(build_function(node)),
+                Rule::trigger_decl => doc.triggers.push(build_trigger(node)),
+                Rule::EOI | Rule::COMMENT => {}
+                _ => {}
+            }
         }
     }
 

@@ -1,0 +1,83 @@
+constraint c_cop_001_zero_nudges:
+  when: event.enforcement == "before_tool_call"
+  require: event.rule != "Never post comments on issues/PRs to prompt the SWE agent. Close and recreate instead."
+  severity: error
+  message: "C-COP-001 Zero Nudges"
+
+constraint c_cop_assign_single_assignment_authority:
+  when: event.enforcement == "before_tool_call"
+  require: event.rule != "Lifecycle workflow is the ONLY assignment authority for the SWE agent."
+  severity: error
+  message: "C-COP-ASSIGN Single Assignment Authority"
+
+constraint adr_0004_issue_label_type_required:
+  when: event.enforcement == "after_tool_call"
+  require: event.rule != "Every GitHub issue MUST have both a label AND an issue type."
+  severity: error
+  message: "ADR-0004 Issue Label + Type Required"
+
+constraint c_fork_001_never_touch_forks:
+  when: event.enforcement == "before_tool_call"
+  require: event.rule != "Never deploy org automation to forked repos. Filter with isFork == false."
+  severity: error
+  message: "C-FORK-001 Never Touch Forks"
+
+constraint c_hardcoded_001_no_hardcoded_lists:
+  when: event.enforcement == "review"
+  require: event.rule != "Never hardcode repo lists, model lists, or counts. Always discover dynamically."
+  severity: warning
+  message: "C-HARDCODED-001 No Hardcoded Lists"
+
+constraint c_nix_001_no_permanent_nochroot:
+  when: event.enforcement == "review"
+  require: event.rule != "Never use sandbox escape as permanent solution. Prefetch as fixed-output derivation."
+  severity: error
+  message: "C-NIX-001 No Permanent noChroot"
+
+constraint c_reactive_001_reactive_over_cron:
+  when: event.enforcement == "review"
+  require: event.rule != "Prefer event-driven over scheduled. Workflows should trigger on state changes, not timers."
+  severity: warning
+  message: "C-REACTIVE-001 Reactive Over Cron"
+
+constraint c_ci_001_ci_fixes_first:
+  when: event.enforcement == "lifecycle"
+  require: event.rule != "CI failure issues get top priority. A broken CI blocks ALL other work."
+  severity: error
+  message: "C-CI-001 CI Fixes First"
+
+constraint c_memory_001_facts_not_corrections:
+  when: event.enforcement == "before_store"
+  require: event.rule != "Memory stores facts, not corrections. 'X is Y' improves recall. Corrections degrade performance."
+  severity: warning
+  message: "C-MEMORY-001 Facts Not Corrections"
+
+constraint c_auto_direct_fix_automation_directly:
+  when: event.enforcement == "review"
+  require: event.rule != "Never handle automation gaps with issues. Fix directly. Issues are for feature work."
+  severity: warning
+  message: "C-AUTO-DIRECT Fix Automation Directly"
+
+constraint c_push_001_always_push:
+  when: event.enforcement == "after_tool_call"
+  require: event.rule != "Always push commits to GitHub without asking."
+  severity: info
+  message: "C-PUSH-001 Always Push"
+
+constraint c_adr_0014_full_plures_stack:
+  when: event.enforcement == "review"
+  require: event.rule != "ALL state in PluresDB. ALL logic through Praxis. ALL routing through Cerebellum."
+  severity: error
+  message: "C-ADR-0014 Full Plures Stack"
+
+constraint c_merge_001_merge_conflict_prevention:
+  when: event.enforcement == "lifecycle"
+  require: event.rule != "Keep PRs small (~10 files). Rebase before merge. Don't let PRs sit >24h."
+  severity: warning
+  message: "C-MERGE-001 Merge Conflict Prevention"
+
+constraint c_stale_pr_process:
+  when: event.enforcement == "lifecycle"
+  require: event.rule != "PRs open >48h with failing CI: close, recreate from fresh branch."
+  severity: warning
+  message: "C-STALE-PR Stale PR Process"

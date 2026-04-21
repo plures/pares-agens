@@ -5,7 +5,6 @@
 //! rules, check constraints, and execute actions.
 
 use serde_json::json;
-use std::collections::HashMap;
 
 use super::{
     FunctionMode, PxConstraint, PxContract, PxDocument, PxFact, PxFunction,
@@ -200,19 +199,30 @@ fn compile_trigger(trigger: &PxTrigger) -> CompiledRecord {
 /// Summary of compilation results.
 #[derive(Debug)]
 pub struct CompileResult {
+    /// Compiled PluresDB records.
     pub records: Vec<CompiledRecord>,
+    /// Aggregate compile statistics.
     pub stats: CompileStats,
 }
 
+/// Aggregate counts for each compiled primitive type.
 #[derive(Debug)]
 pub struct CompileStats {
+    /// Number of imports compiled.
     pub imports: usize,
+    /// Number of facts compiled.
     pub facts: usize,
+    /// Number of rules compiled.
     pub rules: usize,
+    /// Number of constraints compiled.
     pub constraints: usize,
+    /// Number of contracts compiled.
     pub contracts: usize,
+    /// Number of functions compiled.
     pub functions: usize,
+    /// Number of triggers compiled.
     pub triggers: usize,
+    /// Total number of output records.
     pub total: usize,
 }
 
@@ -236,6 +246,7 @@ pub fn compile_with_stats(doc: &PxDocument) -> CompileResult {
 mod tests {
     use super::*;
     use crate::px::{PxFact, PxField, PxRule, PxAction, PxConstraint, PxDocument};
+    use std::collections::HashMap;
 
     fn empty_doc() -> PxDocument {
         PxDocument {
