@@ -21,20 +21,34 @@ pub fn build(pairs: Pairs<'_, Rule>) -> PxDocument {
     };
 
     for pair in pairs {
-        match pair.as_rule() {
-            Rule::import_decl => doc.imports.push(build_import(pair)),
-            Rule::fact_decl => doc.facts.push(build_fact(pair)),
-            Rule::rule_decl => doc.rules.push(build_rule(pair)),
-            Rule::constraint_decl => doc.constraints.push(build_constraint(pair)),
-            Rule::contract_decl => doc.contracts.push(build_contract(pair)),
-            Rule::function_decl => doc.functions.push(build_function(pair)),
-            Rule::trigger_decl => doc.triggers.push(build_trigger(pair)),
-            Rule::EOI => {}
-            _ => {} // skip whitespace, comments
-        }
+        push_pair_into_document(pair, &mut doc);
     }
 
     doc
+}
+
+fn push_pair_into_document(pair: Pair<'_, Rule>, doc: &mut PxDocument) {
+    match pair.as_rule() {
+        Rule::document => {
+            for inner in pair.into_inner() {
+                push_pair_into_document(inner, doc);
+            }
+        }
+        Rule::statement => {
+            for inner in pair.into_inner() {
+                push_pair_into_document(inner, doc);
+            }
+        }
+        Rule::import_decl => doc.imports.push(build_import(pair)),
+        Rule::fact_decl => doc.facts.push(build_fact(pair)),
+        Rule::rule_decl => doc.rules.push(build_rule(pair)),
+        Rule::constraint_decl => doc.constraints.push(build_constraint(pair)),
+        Rule::contract_decl => doc.contracts.push(build_contract(pair)),
+        Rule::function_decl => doc.functions.push(build_function(pair)),
+        Rule::trigger_decl => doc.triggers.push(build_trigger(pair)),
+        Rule::EOI => {}
+        _ => {}
+    }
 }
 
 fn build_import(pair: Pair<'_, Rule>) -> PxImport {
@@ -48,9 +62,15 @@ fn build_fact(pair: Pair<'_, Rule>) -> PxFact {
     let mut inner = pair.into_inner();
     let name = next_str(&mut inner);
     let fields = inner
-        .filter(|p| p.as_rule() == Rule::field)
-        .map(build_field)
-        .collect();
+        .find(|p| p.as_rule() == Rule::field_list)
+        .map(|field_list| {
+            field_list
+                .into_inner()
+                .filter(|p| p.as_rule() == Rule::field)
+                .map(build_field)
+                .collect()
+        })
+        .unwrap_or_default();
     PxFact { name, fields }
 }
 
@@ -71,10 +91,23 @@ fn build_rule(pair: Pair<'_, Rule>) -> PxRule {
     let mut actions = vec![];
     let mut captures = vec![];
 
-    for child in inner {
+    let Some(rule_body) = inner.find(|p| p.as_rule() == Rule::rule_body) else {
+        return PxRule { name, priority, conditions, lets, actions, captures };
+    };
+
+    for child in rule_body.into_inner() {
         match child.as_rule() {
             Rule::priority_clause => {
                 priority = child.into_inner().next().and_then(|p| p.as_str().parse().ok());
+            }
+            Rule::when_clause => {
+                if let Some(condition_list) = child.into_inner().find(|p| p.as_rule() == Rule::condition_list) {
+                    conditions = condition_list
+                        .into_inner()
+                        .filter(|p| p.as_rule() == Rule::expr)
+                        .map(|p| p.as_str().to_string())
+                        .collect();
+                }
             }
             Rule::condition_list => {
                 conditions = child
@@ -95,6 +128,15 @@ fn build_rule(pair: Pair<'_, Rule>) -> PxRule {
                     .filter(|p| p.as_rule() == Rule::action_stmt)
                     .map(build_action)
                     .collect();
+            }
+            Rule::then_clause => {
+                if let Some(action_list) = child.into_inner().find(|p| p.as_rule() == Rule::action_list) {
+                    actions = action_list
+                        .into_inner()
+                        .filter(|p| p.as_rule() == Rule::action_stmt)
+                        .map(build_action)
+                        .collect();
+                }
             }
             Rule::capture_clause => {
                 captures = child
@@ -155,12 +197,37 @@ fn build_action_from_simple(pair: Pair<'_, Rule>) -> PxAction {
 }
 
 fn build_capture(pair: Pair<'_, Rule>) -> PxCapture {
-    let text = pair.as_str();
-    // Simple extraction — full parsing TODO
+    let mut content = String::new();
+    let mut category = None;
+    let mut tags = vec![];
+
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::string => {
+                if content.is_empty() {
+                    content = unquote(child.as_str());
+                }
+            }
+            Rule::ident => {
+                if category.is_none() {
+                    category = Some(child.as_str().to_string());
+                }
+            }
+            Rule::list_val => {
+                tags = child
+                    .into_inner()
+                    .map(parse_value)
+                    .filter_map(|v| v.as_str().map(ToOwned::to_owned))
+                    .collect();
+            }
+            _ => {}
+        }
+    }
+
     PxCapture {
-        content: text.to_string(),
-        category: None,
-        tags: vec![],
+        content,
+        category,
+        tags,
     }
 }
 
@@ -174,7 +241,11 @@ fn build_constraint(pair: Pair<'_, Rule>) -> PxConstraint {
     let mut severity = "warning".to_string();
     let mut message = None;
 
-    for child in inner {
+    let Some(constraint_body) = inner.find(|p| p.as_rule() == Rule::constraint_body) else {
+        return PxConstraint { name, scope, when_expr, require_expr, severity, message };
+    };
+
+    for child in constraint_body.into_inner() {
         match child.as_rule() {
             Rule::scope_clause => scope = child.into_inner().next().map(|p| p.as_str().to_string()),
             Rule::when_expr => when_expr = child.into_inner().next().map(|p| p.as_str().to_string()).unwrap_or_default(),
@@ -198,7 +269,11 @@ fn build_contract(pair: Pair<'_, Rule>) -> PxContract {
     let mut threshold = None;
     let mut examples = vec![];
 
-    for child in inner {
+    let Some(contract_body) = inner.find(|p| p.as_rule() == Rule::contract_body) else {
+        return PxContract { name, given, when_desc, then_desc, threshold, examples };
+    };
+
+    for child in contract_body.into_inner() {
         match child.as_rule() {
             Rule::given_clause => given = child.into_inner().next().map(|p| unquote(p.as_str())),
             Rule::when_desc => when_desc = child.into_inner().next().map(|p| unquote(p.as_str())),
@@ -245,6 +320,22 @@ fn build_function(pair: Pair<'_, Rule>) -> PxFunction {
                     .collect();
             }
             Rule::type_expr => return_type = child.as_str().to_string(),
+            Rule::function_body => {
+                for body_part in child.into_inner() {
+                    match body_part.as_rule() {
+                        Rule::mode_clause => {
+                            let mode_str = body_part.into_inner().next().map(|p| p.as_str()).unwrap_or("deterministic");
+                            mode = match mode_str {
+                                "probabilistic" => FunctionMode::Probabilistic,
+                                "hybrid" => FunctionMode::Hybrid,
+                                _ => FunctionMode::Deterministic,
+                            };
+                        }
+                        Rule::docstring => docstring = body_part.as_str().trim_matches('"').to_string(),
+                        _ => {}
+                    }
+                }
+            }
             Rule::mode_clause => {
                 let mode_str = child.into_inner().next().map(|p| p.as_str()).unwrap_or("deterministic");
                 mode = match mode_str {
@@ -269,7 +360,11 @@ fn build_trigger(pair: Pair<'_, Rule>) -> PxTrigger {
     let mut schedule = None;
     let mut run = String::new();
 
-    for child in inner {
+    let Some(trigger_body) = inner.find(|p| p.as_rule() == Rule::trigger_body) else {
+        return PxTrigger { name, on_event, schedule, run };
+    };
+
+    for child in trigger_body.into_inner() {
         match child.as_rule() {
             Rule::on_clause => on_event = child.into_inner().next().map(|p| p.as_str().to_string()).unwrap_or_default(),
             Rule::schedule_clause => schedule = child.into_inner().next().map(|p| unquote(p.as_str())),
