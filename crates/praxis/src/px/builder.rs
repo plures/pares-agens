@@ -109,13 +109,6 @@ fn build_rule(pair: Pair<'_, Rule>) -> PxRule {
                         .collect();
                 }
             }
-            Rule::condition_list => {
-                conditions = child
-                    .into_inner()
-                    .filter(|p| p.as_rule() == Rule::expr)
-                    .map(|p| p.as_str().to_string())
-                    .collect();
-            }
             Rule::let_clause => {
                 let mut lc = child.into_inner();
                 let var = next_str(&mut lc);
@@ -335,14 +328,6 @@ fn build_function(pair: Pair<'_, Rule>) -> PxFunction {
                         _ => {}
                     }
                 }
-            }
-            Rule::mode_clause => {
-                let mode_str = child.into_inner().next().map(|p| p.as_str()).unwrap_or("deterministic");
-                mode = match mode_str {
-                    "probabilistic" => FunctionMode::Probabilistic,
-                    "hybrid" => FunctionMode::Hybrid,
-                    _ => FunctionMode::Deterministic,
-                };
             }
             Rule::docstring => docstring = child.as_str().trim_matches('"').to_string(),
             _ => {}
