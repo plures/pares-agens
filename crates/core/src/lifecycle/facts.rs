@@ -61,9 +61,18 @@ pub fn classify_failure(check_names: &[String], error_output: &str) -> FailureCl
     let combined = format!("{} {}", check_names.join(" "), error_output).to_lowercase();
 
     let infra_patterns = [
-        "sccache", "cache storage failed", "services aren't available",
-        "network", "timeout", "runner", "sigterm", "sigkill",
-        "rate limit", "secondary rate", "502", "503",
+        "sccache",
+        "cache storage failed",
+        "services aren't available",
+        "network",
+        "timeout",
+        "runner",
+        "sigterm",
+        "sigkill",
+        "rate limit",
+        "secondary rate",
+        "502",
+        "503",
     ];
 
     if infra_patterns.iter().any(|p| combined.contains(p)) {

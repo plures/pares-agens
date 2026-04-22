@@ -13,9 +13,9 @@
 //!   → capture outcomes as new facts
 //! ```
 
-pub mod rules;
-pub mod facts;
 pub mod actions;
+pub mod facts;
+pub mod rules;
 
 use serde::{Deserialize, Serialize};
 
@@ -48,23 +48,49 @@ pub struct RuleResult {
 #[serde(tag = "kind")]
 pub enum LifecycleAction {
     /// Merge a PR.
-    MergePR { repo: String, number: u64, method: String },
+    MergePR {
+        repo: String,
+        number: u64,
+        method: String,
+    },
     /// Rerun failed CI jobs.
     RerunCI { repo: String, run_id: u64 },
     /// Assign Copilot to an issue.
     AssignCopilot { repo: String, issue_number: u64 },
     /// Create a ci-feedback issue.
-    CreateCIFeedback { repo: String, pr_number: u64, error_details: String, is_infra: bool },
+    CreateCIFeedback {
+        repo: String,
+        pr_number: u64,
+        error_details: String,
+        is_infra: bool,
+    },
     /// Close an issue.
-    CloseIssue { repo: String, issue_number: u64, reason: String },
+    CloseIssue {
+        repo: String,
+        issue_number: u64,
+        reason: String,
+    },
     /// Add a label to a PR.
-    AddLabel { repo: String, number: u64, label: String },
+    AddLabel {
+        repo: String,
+        number: u64,
+        label: String,
+    },
     /// Remove a label from a PR.
-    RemoveLabel { repo: String, number: u64, label: String },
+    RemoveLabel {
+        repo: String,
+        number: u64,
+        label: String,
+    },
     /// Auto-approve a PR.
     ApprovePR { repo: String, number: u64 },
     /// Create a release.
-    CreateRelease { repo: String, tag: String, title: String, body: String },
+    CreateRelease {
+        repo: String,
+        tag: String,
+        title: String,
+        body: String,
+    },
     /// Send a Telegram notification.
     Notify { message: String },
     /// No action needed.

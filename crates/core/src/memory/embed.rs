@@ -72,7 +72,11 @@ pub struct OllamaEmbedder {
 
 impl OllamaEmbedder {
     /// Create a new OpenAI-compatible embedding client.
-    pub fn new(base_url: impl Into<String>, model: impl Into<String>, api_key: Option<String>) -> Self {
+    pub fn new(
+        base_url: impl Into<String>,
+        model: impl Into<String>,
+        api_key: Option<String>,
+    ) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             model: model.into(),
@@ -102,13 +106,10 @@ struct EmbeddingData {
 impl EmbeddingProvider for OllamaEmbedder {
     async fn embed(&self, text: &str) -> Result<Vec<f32>, Error> {
         let url = format!("{}/v1/embeddings", self.base_url);
-        let mut req = self
-            .client
-            .post(&url)
-            .json(&EmbeddingRequest {
-                model: &self.model,
-                input: text,
-            });
+        let mut req = self.client.post(&url).json(&EmbeddingRequest {
+            model: &self.model,
+            input: text,
+        });
 
         if let Some(key) = &self.api_key {
             req = req.bearer_auth(key);

@@ -40,8 +40,8 @@ use pares_agens_core::model::{
     ChatMessage as CoreChatMessage, ChatOptions, ModelClient, ToolDefinition, ToolDispatcher,
 };
 use pares_agens_core::procedure::{Procedure, ProcedureRegistry};
-use pares_agens_core::{PluresDbStateStore, StateStore};
 use pares_agens_core::Event;
+use pares_agens_core::{PluresDbStateStore, StateStore};
 use pares_agens_migrate::{migrate, openclaw};
 use pares_models::config::{ProviderConfig, RouterConfig};
 use pares_models::router::ModelRouter;
@@ -1598,18 +1598,18 @@ async fn main() {
 
             let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
             let runtime_state_dir = PathBuf::from(&home).join(".pares-agens/runtime-state");
-            let runtime_state_store: Arc<dyn StateStore> = match PluresDbStateStore::open(&runtime_state_dir)
-            {
-                Ok(store) => Arc::new(store),
-                Err(e) => {
-                    tracing::warn!(
-                        path = %runtime_state_dir.display(),
-                        error = %e,
-                        "failed to open runtime state store; model overrides will not persist"
-                    );
-                    Arc::new(PluresDbStateStore::in_memory())
-                }
-            };
+            let runtime_state_store: Arc<dyn StateStore> =
+                match PluresDbStateStore::open(&runtime_state_dir) {
+                    Ok(store) => Arc::new(store),
+                    Err(e) => {
+                        tracing::warn!(
+                            path = %runtime_state_dir.display(),
+                            error = %e,
+                            "failed to open runtime state store; model overrides will not persist"
+                        );
+                        Arc::new(PluresDbStateStore::in_memory())
+                    }
+                };
 
             if let Some(saved) = runtime_state_store
                 .get(MODEL_OVERRIDE_STATE_KEY)
@@ -2122,7 +2122,8 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_model_control_persists_primary_model_override() {
-        let state_store: Arc<dyn StateStore> = Arc::new(pares_agens_core::InMemoryStateStore::new());
+        let state_store: Arc<dyn StateStore> =
+            Arc::new(pares_agens_core::InMemoryStateStore::new());
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4.1".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
@@ -2146,7 +2147,8 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_model_control_persists_deep_model_override() {
-        let state_store: Arc<dyn StateStore> = Arc::new(pares_agens_core::InMemoryStateStore::new());
+        let state_store: Arc<dyn StateStore> =
+            Arc::new(pares_agens_core::InMemoryStateStore::new());
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
