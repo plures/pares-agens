@@ -238,6 +238,11 @@ fn truncate_telegram_message(content: String) -> String {
     }
 }
 
+/// Parse `/logs [n]` tail argument and clamp it to the allowed range.
+///
+/// Returns [`DEFAULT_LOG_TAIL_LINES`] when no argument is provided, or a
+/// positive integer up to [`MAX_LOG_TAIL_LINES`]. Invalid values return a
+/// usage string suitable for Telegram replies.
 fn parse_logs_tail_lines(args: Vec<&str>) -> Result<usize, &'static str> {
     match args.as_slice() {
         [] => Ok(DEFAULT_LOG_TAIL_LINES),
@@ -255,6 +260,10 @@ fn parse_logs_tail_lines(args: Vec<&str>) -> Result<usize, &'static str> {
     }
 }
 
+/// Format `journalctl` output for Telegram delivery.
+///
+/// Successful output returns stdout (or a fallback message when empty). Failed
+/// commands include status and stderr when available.
 fn format_service_logs_output(output: &std::process::Output) -> String {
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -837,6 +846,16 @@ impl ChannelAdapter for TelegramAdapter {
                                 return respond(());
                             }
                             "logs" => {
+                                if !is_update_authorized(&msg) {
+                                    let _ = Self::send_markdown_reply(
+                                        &bot,
+                                        &msg,
+                                        "Logs denied. Configure PARES_TELEGRAM_UPDATE_ALLOWED_USERS with approved Telegram usernames or numeric IDs.",
+                                        None,
+                                    )
+                                    .await;
+                                    return respond(());
+                                }
                                 let tail_lines = match parse_logs_tail_lines(cmd_parts.collect()) {
                                     Ok(lines) => lines,
                                     Err(usage) => {
@@ -847,6 +866,10 @@ impl ChannelAdapter for TelegramAdapter {
                                     }
                                 };
 
+                                info!(
+                                    tail_lines,
+                                    "telegram /logs requested for pares-agens service"
+                                );
                                 let reply = match tokio::process::Command::new("journalctl")
                                     .arg("-u")
                                     .arg("pares-agens")
@@ -856,10 +879,19 @@ impl ChannelAdapter for TelegramAdapter {
                                     .output()
                                     .await
                                 {
-                                    Ok(output) => truncate_telegram_message(format!(
-                                        "Recent pares-agens logs (last {tail_lines} lines):\n{}",
-                                        format_service_logs_output(&output)
-                                    )),
+                                    Ok(output) => {
+                                        info!(
+                                            tail_lines,
+                                            status = %output.status,
+                                            stdout_bytes = output.stdout.len(),
+                                            stderr_bytes = output.stderr.len(),
+                                            "telegram /logs command completed"
+                                        );
+                                        truncate_telegram_message(format!(
+                                            "Recent pares-agens logs (last {tail_lines} lines):\n{}",
+                                            format_service_logs_output(&output)
+                                        ))
+                                    }
                                     Err(e) => format!("Failed to start log tail command: {e}"),
                                 };
                                 let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;

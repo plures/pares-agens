@@ -171,7 +171,7 @@ Optional environment variables:
 - `PARES_NIX_FLAKE_DIR` (default: `.`)
 - `PARES_NIX_HOST` (default: `praxisbot`)
 - `PARES_SELF_UPDATE_INTERVAL_SECS` (default: `3600`)
-- `PARES_TELEGRAM_UPDATE_ALLOWED_USERS` (required for `/update`; comma-separated Telegram usernames or numeric user IDs)
+- `PARES_TELEGRAM_UPDATE_ALLOWED_USERS` (required for `/update` and `/logs`; comma-separated Telegram usernames or numeric user IDs)
 
 ## Praxisbot rollout checklist
 
