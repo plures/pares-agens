@@ -10,13 +10,14 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::collections::HashMap;
 
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tracing_subscriber::EnvFilter;
@@ -27,6 +28,7 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use pares_agens_channels::adapter::ChannelAdapter;
 use pares_agens_channels::telegram::{
     TelegramAdapter, TelegramConfig, TelegramModelControl, TelegramRuntimeControl,
+    TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER,
 };
 use pares_agens_core::agent::{Agent, Memory};
 use pares_agens_core::auth::copilot::{CopilotAuth, CopilotModelClient};
@@ -72,6 +74,17 @@ struct CopilotAuthCache {
 }
 
 const MODEL_OVERRIDE_STATE_KEY: &str = "agent.runtime_model_override";
+/// Maximum characters shown for tool-call argument previews in `/verbose`.
+const VERBOSE_TOOL_ARGS_PREVIEW_CHARS: usize = 240;
+/// Maximum characters shown for tool-call result previews in `/verbose`.
+const VERBOSE_TOOL_RESULT_PREVIEW_CHARS: usize = 500;
+
+// Telegram request ID currently being processed on this task.
+// Used to correlate tool calls executed during `agent.handle_event(...)` with
+// the originating Telegram message so verbose tool details can be appended.
+tokio::task_local! {
+    static ACTIVE_TELEGRAM_REQUEST_ID: String;
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RuntimeModelOverride {
@@ -102,6 +115,45 @@ struct RuntimeAgentFactory {
     embed_model: String,
     api_key: Option<String>,
     system_prompt_path: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug)]
+struct ToolCallTrace {
+    tool_name: String,
+    arguments: serde_json::Value,
+    result: String,
+    is_error: bool,
+}
+
+#[derive(Clone, Default)]
+struct ToolTraceStore {
+    traces: Arc<Mutex<HashMap<String, Vec<ToolCallTrace>>>>,
+}
+
+impl ToolTraceStore {
+    async fn record_for_current_request(
+        &self,
+        tool_name: &str,
+        arguments: &serde_json::Value,
+        result: &str,
+        is_error: bool,
+    ) {
+        let Ok(request_id) = ACTIVE_TELEGRAM_REQUEST_ID.try_with(|id| id.clone()) else {
+            return;
+        };
+        let mut traces = self.traces.lock().await;
+        traces.entry(request_id).or_default().push(ToolCallTrace {
+            tool_name: tool_name.to_string(),
+            arguments: arguments.clone(),
+            result: result.to_string(),
+            is_error,
+        });
+    }
+
+    async fn take_for_request(&self, request_id: &str) -> Vec<ToolCallTrace> {
+        let mut traces = self.traces.lock().await;
+        traces.remove(request_id).unwrap_or_default()
+    }
 }
 
 impl RuntimeModelControl {
@@ -326,6 +378,7 @@ impl ModelClient for RouterModelClient {
 
 struct ProcedureToolDispatcher {
     registry: Arc<ProcedureRegistry>,
+    trace_store: ToolTraceStore,
 }
 
 #[async_trait]
@@ -335,9 +388,16 @@ impl ToolDispatcher for ProcedureToolDispatcher {
     }
 
     async fn call_tool(&self, name: &str, arguments: serde_json::Value) -> String {
+        let args_for_trace = arguments.clone();
         let handler = match self.registry.matching(name).next() {
             Some(h) => h,
-            None => return format!("no procedure registered for {name}"),
+            None => {
+                let result = format!("no procedure registered for {name}");
+                self.trace_store
+                    .record_for_current_request(name, &args_for_trace, &result, true)
+                    .await;
+                return result;
+            }
         };
 
         let event = Event::Message {
@@ -354,14 +414,73 @@ impl ToolDispatcher for ProcedureToolDispatcher {
             } = result
             {
                 if is_error {
-                    return format!("tool error: {content}");
+                    let output = format!("tool error: {content}");
+                    self.trace_store
+                        .record_for_current_request(name, &args_for_trace, &output, true)
+                        .await;
+                    return output;
                 }
+                self.trace_store
+                    .record_for_current_request(name, &args_for_trace, &content, false)
+                    .await;
                 return content;
             }
         }
 
-        format!("procedure {name} returned no tool result")
+        let output = format!("procedure {name} returned no tool result");
+        self.trace_store
+            .record_for_current_request(name, &args_for_trace, &output, true)
+            .await;
+        output
     }
+}
+
+/// Detect and strip the Telegram verbose marker from inbound content.
+fn extract_verbose_tool_marker(content: &str) -> (bool, String) {
+    match content.strip_prefix(TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER) {
+        Some(stripped) => (true, stripped.to_string()),
+        None => (false, content.to_string()),
+    }
+}
+
+/// Truncate verbose previews to keep Telegram replies within practical limits.
+fn truncate_verbose_preview(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let preview: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{preview}…")
+    } else {
+        preview
+    }
+}
+
+/// Format request-scoped tool traces for inline Telegram `/verbose` output.
+fn format_verbose_tool_traces(traces: &[ToolCallTrace]) -> String {
+    use std::fmt::Write;
+
+    if traces.is_empty() {
+        return "Tool execution details:\n(no tool calls made)".to_string();
+    }
+
+    let mut output = String::from("Tool execution details:");
+    for (idx, trace) in traces.iter().enumerate() {
+        let status = if trace.is_error { "error" } else { "ok" };
+        let args = truncate_verbose_preview(
+            &trace.arguments.to_string(),
+            VERBOSE_TOOL_ARGS_PREVIEW_CHARS,
+        );
+        let result = truncate_verbose_preview(&trace.result, VERBOSE_TOOL_RESULT_PREVIEW_CHARS);
+        let _ = write!(
+            output,
+            "\n{}. {} [{}]\nargs: {}\nresult: {}",
+            idx + 1,
+            trace.tool_name,
+            status,
+            args,
+            result
+        );
+    }
+    output
 }
 
 struct PluresMemory {
@@ -1377,16 +1496,56 @@ fn spawn_systemd_watchdog() -> Option<tokio::task::JoinHandle<()>> {
 async fn run_adapter_with_recovery(
     adapter: &TelegramAdapter,
     agent: Arc<RwLock<Arc<Agent>>>,
+    trace_store: ToolTraceStore,
 ) -> Result<(), String> {
     let mut attempts = 0u32;
     loop {
         let agent_clone = Arc::clone(&agent);
+        let trace_store = trace_store.clone();
         match adapter
-            .run(move |event: Event| {
+            .run(move |mut event: Event| {
                 let agent = Arc::clone(&agent_clone);
+                let trace_store = trace_store.clone();
                 Box::pin(async move {
+                    let mut trace_request_id: Option<String> = None;
+                    let mut verbose_tool_details = false;
+                    if let Event::Message {
+                        id,
+                        channel,
+                        content,
+                        ..
+                    } = &mut event
+                    {
+                        trace_request_id = Some(id.clone());
+                        if channel == "telegram" {
+                            let (verbose, stripped) = extract_verbose_tool_marker(content);
+                            if verbose {
+                                *content = stripped;
+                                verbose_tool_details = true;
+                            }
+                        }
+                    }
+
                     let agent = agent.read().await.clone();
-                    agent.handle_event(event).await
+                    let mut response = if let Some(request_id) = trace_request_id.clone() {
+                        ACTIVE_TELEGRAM_REQUEST_ID
+                            .scope(request_id, async { agent.handle_event(event).await })
+                            .await
+                    } else {
+                        agent.handle_event(event).await
+                    };
+
+                    if let Some(request_id) = trace_request_id {
+                        let traces = trace_store.take_for_request(&request_id).await;
+                        if verbose_tool_details {
+                            if let Some(Event::ModelResponse { content, .. }) = &mut response {
+                                content.push_str("\n\n");
+                                content.push_str(&format_verbose_tool_traces(&traces));
+                            }
+                        }
+                    }
+
+                    response
                 })
             })
             .await
@@ -1919,8 +2078,10 @@ async fn main() {
             procedure_registry.register(Box::new(RunCommandProcedure));
             let procedure_registry = Arc::new(procedure_registry);
 
+            let tool_trace_store = ToolTraceStore::default();
             let tool_dispatcher: Arc<dyn ToolDispatcher> = Arc::new(ProcedureToolDispatcher {
                 registry: Arc::clone(&procedure_registry),
+                trace_store: tool_trace_store.clone(),
             });
 
             let mut registry = AgentRegistry::new();
@@ -2000,7 +2161,8 @@ async fn main() {
             let watchdog = spawn_systemd_watchdog();
 
             let adapter_result =
-                run_adapter_with_recovery(&adapter, Arc::clone(&agent_handle)).await;
+                run_adapter_with_recovery(&adapter, Arc::clone(&agent_handle), tool_trace_store)
+                    .await;
 
             if let Err(e) = systemd_notify("STOPPING=1") {
                 tracing::warn!("failed to send systemd STOPPING=1: {e}");
@@ -2190,6 +2352,35 @@ mod tests {
     fn parse_watchdog_ping_interval_has_safe_minimum() {
         let interval = parse_watchdog_ping_interval("1000").expect("watchdog interval");
         assert_eq!(interval, Duration::from_secs(1));
+    }
+
+    #[test]
+    fn extract_verbose_tool_marker_detects_and_strips_prefix() {
+        let (is_verbose, stripped) =
+            extract_verbose_tool_marker("__PARES_VERBOSE_TOOL_DETAILS__:run diagnostics");
+        assert!(is_verbose);
+        assert_eq!(stripped, "run diagnostics");
+    }
+
+    #[test]
+    fn extract_verbose_tool_marker_preserves_plain_content() {
+        let (is_verbose, stripped) = extract_verbose_tool_marker("hello");
+        assert!(!is_verbose);
+        assert_eq!(stripped, "hello");
+    }
+
+    #[test]
+    fn format_verbose_tool_traces_renders_tool_name_and_result() {
+        let traces = vec![ToolCallTrace {
+            tool_name: "web_search".to_string(),
+            arguments: serde_json::json!({"q":"status"}),
+            result: "{\"ok\":true}".to_string(),
+            is_error: false,
+        }];
+        let formatted = format_verbose_tool_traces(&traces);
+        assert!(formatted.contains("Tool execution details:"));
+        assert!(formatted.contains("web_search [ok]"));
+        assert!(formatted.contains("result: {\"ok\":true}"));
     }
 
     #[test]
