@@ -7,10 +7,10 @@
 //! pares-agens serve --telegram-token <TOKEN> [--model-url <URL>] [--model <MODEL>]
 //! ```
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::collections::HashMap;
 
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
@@ -20,15 +20,15 @@ use serde_json::json;
 use tokio::sync::{Mutex, RwLock};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use uuid::Uuid;
 
 use reqwest::header::{HeaderMap, HeaderValue};
 
 use pares_agens_channels::adapter::ChannelAdapter;
 use pares_agens_channels::telegram::{
-    TelegramAdapter, TelegramConfig, TelegramModelControl, TelegramRuntimeControl,
-    TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER,
+    TelegramAdapter, TelegramConfig, TelegramConfigControl, TelegramModelControl,
+    TelegramRuntimeConfig, TelegramRuntimeControl, TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER,
 };
 use pares_agens_core::agent::{Agent, Memory};
 use pares_agens_core::auth::copilot::{CopilotAuth, CopilotModelClient};
@@ -64,8 +64,10 @@ struct Cli {
 }
 
 struct RouterModelClient {
-    router: Arc<ModelRouter>,
+    router: Arc<RwLock<Arc<ModelRouter>>>,
     model: Arc<RwLock<String>>,
+    endpoint: Arc<RwLock<String>>,
+    api_key: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -74,6 +76,7 @@ struct CopilotAuthCache {
 }
 
 const MODEL_OVERRIDE_STATE_KEY: &str = "agent.runtime_model_override";
+const RUNTIME_CONFIG_OVERRIDE_STATE_KEY: &str = "agent.runtime_config_override";
 /// Maximum characters shown for tool-call argument previews in `/verbose`.
 const VERBOSE_TOOL_ARGS_PREVIEW_CHARS: usize = 240;
 /// Maximum characters shown for tool-call result previews in `/verbose`.
@@ -92,10 +95,25 @@ struct RuntimeModelOverride {
     deep_model: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RuntimeConfigOverride {
+    model: String,
+    endpoint: String,
+    log_level: String,
+}
+
 struct RuntimeModelControl {
     primary_model: Arc<RwLock<String>>,
     deep_model: Arc<RwLock<String>>,
     state_store: Arc<dyn StateStore>,
+}
+
+struct RuntimeConfigControl {
+    model_control: Arc<RuntimeModelControl>,
+    primary_client: Arc<RouterModelClient>,
+    state_store: Arc<dyn StateStore>,
+    log_level: Arc<RwLock<String>>,
+    log_filter_handle: tracing_subscriber::reload::Handle<EnvFilter, tracing_subscriber::Registry>,
 }
 
 #[derive(Clone)]
@@ -167,6 +185,61 @@ impl RuntimeModelControl {
             )
             .await;
     }
+}
+
+impl RouterModelClient {
+    async fn current_endpoint(&self) -> String {
+        self.endpoint.read().await.clone()
+    }
+
+    async fn set_endpoint(&self, endpoint: &str) -> Result<(), String> {
+        let endpoint = endpoint.trim();
+        if endpoint.is_empty() {
+            return Err("endpoint cannot be empty".to_string());
+        }
+        if !(endpoint.starts_with("http://") || endpoint.starts_with("https://")) {
+            return Err("endpoint must start with http:// or https://".to_string());
+        }
+        let provider_config = ProviderConfig::new(endpoint, self.api_key.clone());
+        let router_config = RouterConfig::single("default", provider_config);
+        let updated_router = Arc::new(ModelRouter::new(router_config));
+        {
+            let mut guard = self.router.write().await;
+            *guard = updated_router;
+        }
+        {
+            let mut guard = self.endpoint.write().await;
+            *guard = endpoint.to_string();
+        }
+        Ok(())
+    }
+}
+
+fn normalize_log_level(value: &str) -> Result<String, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "trace" | "debug" | "info" | "warn" | "error" => Ok(value.trim().to_ascii_lowercase()),
+        _ => Err("log level must be one of: trace, debug, info, warn, error".to_string()),
+    }
+}
+
+fn build_env_filter(level: &str) -> Result<EnvFilter, String> {
+    let level = normalize_log_level(level)?;
+    let directive = level
+        .parse()
+        .map_err(|e| format!("failed to parse '{level}' as tracing directive: {e}"))?;
+    Ok(EnvFilter::from_default_env().add_directive(directive))
+}
+
+fn apply_runtime_log_level(
+    handle: &tracing_subscriber::reload::Handle<EnvFilter, tracing_subscriber::Registry>,
+    level: &str,
+) -> Result<String, String> {
+    let normalized = normalize_log_level(level)?;
+    let filter = build_env_filter(&normalized)?;
+    handle
+        .reload(filter)
+        .map_err(|e| format!("failed to reload log filter: {e}"))?;
+    Ok(normalized)
 }
 
 impl RuntimeAgentFactory {
@@ -259,6 +332,58 @@ impl TelegramModelControl for RuntimeModelControl {
     }
 }
 
+impl RuntimeConfigControl {
+    async fn persist_config(&self) {
+        let model = self.model_control.primary_model.read().await.clone();
+        let endpoint = self.primary_client.current_endpoint().await;
+        let log_level = self.log_level.read().await.clone();
+        self.state_store
+            .set(
+                RUNTIME_CONFIG_OVERRIDE_STATE_KEY,
+                json!(RuntimeConfigOverride {
+                    model,
+                    endpoint,
+                    log_level
+                }),
+            )
+            .await;
+    }
+}
+
+#[async_trait]
+impl TelegramConfigControl for RuntimeConfigControl {
+    async fn current_config(&self) -> TelegramRuntimeConfig {
+        TelegramRuntimeConfig {
+            model: self.model_control.primary_model.read().await.clone(),
+            endpoint: self.primary_client.current_endpoint().await,
+            log_level: self.log_level.read().await.clone(),
+        }
+    }
+
+    async fn set_model(&self, model: &str) -> Result<(), String> {
+        self.model_control.set_primary_model(model).await?;
+        self.persist_config().await;
+        Ok(())
+    }
+
+    async fn set_endpoint(&self, endpoint: &str) -> Result<(), String> {
+        self.primary_client.set_endpoint(endpoint).await?;
+        self.persist_config().await;
+        Ok(())
+    }
+
+    async fn set_log_level(&self, log_level: &str) -> Result<(), String> {
+        let normalized = apply_runtime_log_level(&self.log_filter_handle, log_level)?;
+        {
+            let mut guard = self.log_level.write().await;
+            *guard = normalized.clone();
+        }
+        self.persist_config().await;
+        tracing::info!(log_level = %normalized, "runtime log level updated");
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl TelegramRuntimeControl for RuntimeResetControl {
     async fn reset_runtime(&self) -> Result<(), String> {
@@ -336,11 +461,8 @@ impl ModelClient for RouterModelClient {
             request.logprobs = Some(true);
         }
 
-        let response = self
-            .router
-            .chat(&request)
-            .await
-            .map_err(|e| e.to_string())?;
+        let router = self.router.read().await.clone();
+        let response = router.chat(&request).await.map_err(|e| e.to_string())?;
 
         let choice = response
             .choices
@@ -1757,11 +1879,16 @@ enum Commands {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
-        .with_target(true)
-        .with_thread_ids(true)
-        .with_thread_names(true)
+    let initial_filter = build_env_filter("info").expect("default log level should be valid");
+    let (filter_layer, log_filter_handle) = tracing_subscriber::reload::Layer::new(initial_filter);
+    tracing_subscriber::registry()
+        .with(filter_layer)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(true)
+                .with_thread_ids(true)
+                .with_thread_names(true),
+        )
         .init();
 
     let cli = Cli::parse();
@@ -1815,8 +1942,10 @@ async fn main() {
 
             let system_prompt_path = system_prompt;
 
+            let mut model_url = model_url;
             let mut model = model;
             let mut deep_model = deep_model;
+            let mut runtime_log_level = "info".to_string();
 
             if copilot {
                 if model == "gpt-4o" {
@@ -1864,8 +1993,40 @@ async fn main() {
                 deep_model = saved.deep_model;
             }
 
+            if let Some(saved) = runtime_state_store
+                .get(RUNTIME_CONFIG_OVERRIDE_STATE_KEY)
+                .await
+                .and_then(|value| serde_json::from_value::<RuntimeConfigOverride>(value).ok())
+            {
+                tracing::info!(
+                    model = %saved.model,
+                    endpoint = %saved.endpoint,
+                    log_level = %saved.log_level,
+                    "loaded runtime config overrides from PluresDB state"
+                );
+                model = saved.model;
+                model_url = saved.endpoint;
+                runtime_log_level = saved.log_level;
+            }
+
+            if let Err(e) = apply_runtime_log_level(&log_filter_handle, &runtime_log_level) {
+                tracing::warn!(
+                    requested_log_level = %runtime_log_level,
+                    error = %e,
+                    "failed to apply persisted runtime log level; using info"
+                );
+                runtime_log_level = "info".to_string();
+            }
+
             let model_name = Arc::new(RwLock::new(model.clone()));
             let deep_model_name = Arc::new(RwLock::new(deep_model.clone()));
+            let runtime_log_level_state = Arc::new(RwLock::new(runtime_log_level.clone()));
+            let runtime_model_control = Arc::new(RuntimeModelControl {
+                primary_model: Arc::clone(&model_name),
+                deep_model: Arc::clone(&deep_model_name),
+                state_store: Arc::clone(&runtime_state_store),
+            });
+            let mut runtime_config_control: Option<Arc<dyn TelegramConfigControl>> = None;
 
             let (model_client, deep_model_client): (Arc<dyn ModelClient>, Arc<dyn ModelClient>) =
                 if copilot {
@@ -1939,15 +2100,30 @@ async fn main() {
                     let deep_router_config = RouterConfig::single("deep", deep_provider_config);
                     let deep_model_router = Arc::new(ModelRouter::new(deep_router_config));
 
+                    let primary_router_client = Arc::new(RouterModelClient {
+                        router: Arc::new(RwLock::new(model_router)),
+                        model: Arc::clone(&model_name),
+                        endpoint: Arc::new(RwLock::new(model_url.clone())),
+                        api_key: api_key.clone(),
+                    });
+                    let deep_router_client = Arc::new(RouterModelClient {
+                        router: Arc::new(RwLock::new(deep_model_router)),
+                        model: Arc::clone(&deep_model_name),
+                        endpoint: Arc::new(RwLock::new(deep_model_url)),
+                        api_key: api_key.clone(),
+                    });
+
+                    runtime_config_control = Some(Arc::new(RuntimeConfigControl {
+                        model_control: Arc::clone(&runtime_model_control),
+                        primary_client: Arc::clone(&primary_router_client),
+                        state_store: Arc::clone(&runtime_state_store),
+                        log_level: Arc::clone(&runtime_log_level_state),
+                        log_filter_handle: log_filter_handle.clone(),
+                    }));
+
                     (
-                        Arc::new(RouterModelClient {
-                            router: model_router.clone(),
-                            model: Arc::clone(&model_name),
-                        }) as Arc<dyn ModelClient>,
-                        Arc::new(RouterModelClient {
-                            router: deep_model_router.clone(),
-                            model: Arc::clone(&deep_model_name),
-                        }) as Arc<dyn ModelClient>,
+                        primary_router_client as Arc<dyn ModelClient>,
+                        deep_router_client as Arc<dyn ModelClient>,
                     )
                 };
 
@@ -2109,16 +2285,15 @@ async fn main() {
 
             // Set up Telegram adapter
             let telegram_token_for_shutdown = telegram_token.clone();
-            let config = TelegramConfig::new(telegram_token)
-                .with_model_control(Arc::new(RuntimeModelControl {
-                    primary_model: Arc::clone(&model_name),
-                    deep_model: Arc::clone(&deep_model_name),
-                    state_store: Arc::clone(&runtime_state_store),
-                }))
+            let mut config = TelegramConfig::new(telegram_token)
+                .with_model_control(runtime_model_control as Arc<dyn TelegramModelControl>)
                 .with_runtime_control(Arc::new(RuntimeResetControl {
                     agent: Arc::clone(&agent_handle),
                     factory: Arc::clone(&agent_factory),
                 }));
+            if let Some(control) = runtime_config_control {
+                config = config.with_config_control(control);
+            }
             let adapter = TelegramAdapter::new(config);
 
             tracing::info!("Telegram adapter starting — bot is live");
@@ -2456,6 +2631,64 @@ mod tests {
             Some(serde_json::json!({
                 "model": "gpt-4o",
                 "deep_model": "claude-sonnet-4.5"
+            }))
+        );
+    }
+
+    #[test]
+    fn normalize_log_level_accepts_known_values() {
+        assert_eq!(normalize_log_level("DEBUG").unwrap(), "debug");
+        assert_eq!(normalize_log_level(" warn ").unwrap(), "warn");
+    }
+
+    #[test]
+    fn normalize_log_level_rejects_unknown_values() {
+        assert!(normalize_log_level("verbose").is_err());
+    }
+
+    #[tokio::test]
+    async fn runtime_config_control_persists_model_endpoint_and_log_level() {
+        let state_store: Arc<dyn StateStore> =
+            Arc::new(pares_agens_core::InMemoryStateStore::new());
+        let runtime_model_control = Arc::new(RuntimeModelControl {
+            primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
+            deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
+            state_store: Arc::clone(&state_store),
+        });
+        let provider_config = ProviderConfig::new("http://localhost:11434/v1", None);
+        let router_config = RouterConfig::single("default", provider_config);
+        let primary_client = Arc::new(RouterModelClient {
+            router: Arc::new(RwLock::new(Arc::new(ModelRouter::new(router_config)))),
+            model: Arc::clone(&runtime_model_control.primary_model),
+            endpoint: Arc::new(RwLock::new("http://localhost:11434/v1".to_string())),
+            api_key: None,
+        });
+        let (_layer, log_filter_handle) =
+            tracing_subscriber::reload::Layer::new(build_env_filter("info").unwrap());
+        let control = RuntimeConfigControl {
+            model_control: Arc::clone(&runtime_model_control),
+            primary_client: Arc::clone(&primary_client),
+            state_store: Arc::clone(&state_store),
+            log_level: Arc::new(RwLock::new("info".to_string())),
+            log_filter_handle,
+        };
+
+        control.set_model("gpt-4.1").await.unwrap();
+        control
+            .set_endpoint("https://models.inference.ai.azure.com")
+            .await
+            .unwrap();
+
+        let config = control.current_config().await;
+        assert_eq!(config.model, "gpt-4.1");
+        assert_eq!(config.endpoint, "https://models.inference.ai.azure.com");
+        assert_eq!(config.log_level, "info");
+        assert_eq!(
+            state_store.get(RUNTIME_CONFIG_OVERRIDE_STATE_KEY).await,
+            Some(serde_json::json!({
+                "model": "gpt-4.1",
+                "endpoint": "https://models.inference.ai.azure.com",
+                "log_level": "info"
             }))
         );
     }
