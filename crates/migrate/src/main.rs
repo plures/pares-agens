@@ -25,7 +25,9 @@ use uuid::Uuid;
 use reqwest::header::{HeaderMap, HeaderValue};
 
 use pares_agens_channels::adapter::ChannelAdapter;
-use pares_agens_channels::telegram::{TelegramAdapter, TelegramConfig, TelegramModelControl};
+use pares_agens_channels::telegram::{
+    TelegramAdapter, TelegramConfig, TelegramModelControl, TelegramRuntimeControl,
+};
 use pares_agens_core::agent::{Agent, Memory};
 use pares_agens_core::auth::copilot::{CopilotAuth, CopilotModelClient};
 use pares_agens_core::cerebellum::{Cerebellum, CerebellumConfig};
@@ -40,8 +42,8 @@ use pares_agens_core::model::{
     ChatMessage as CoreChatMessage, ChatOptions, ModelClient, ToolDefinition, ToolDispatcher,
 };
 use pares_agens_core::procedure::{Procedure, ProcedureRegistry};
-use pares_agens_core::{PluresDbStateStore, StateStore};
 use pares_agens_core::Event;
+use pares_agens_core::{PluresDbStateStore, StateStore};
 use pares_agens_migrate::{migrate, openclaw};
 use pares_models::config::{ProviderConfig, RouterConfig};
 use pares_models::router::ModelRouter;
@@ -83,6 +85,25 @@ struct RuntimeModelControl {
     state_store: Arc<dyn StateStore>,
 }
 
+#[derive(Clone)]
+struct RuntimeResetControl {
+    agent: Arc<RwLock<Arc<Agent>>>,
+    factory: Arc<RuntimeAgentFactory>,
+}
+
+#[derive(Clone)]
+struct RuntimeAgentFactory {
+    store: Arc<PluresDbStore>,
+    model_client: Arc<dyn ModelClient>,
+    deep_model_client: Arc<dyn ModelClient>,
+    tool_dispatcher: Arc<dyn ToolDispatcher>,
+    registry: Arc<AgentRegistry>,
+    embed_url: Option<String>,
+    embed_model: String,
+    api_key: Option<String>,
+    system_prompt_path: Option<PathBuf>,
+}
+
 impl RuntimeModelControl {
     async fn persist_models(&self) {
         let model = self.primary_model.read().await.clone();
@@ -93,6 +114,54 @@ impl RuntimeModelControl {
                 json!(RuntimeModelOverride { model, deep_model }),
             )
             .await;
+    }
+}
+
+impl RuntimeAgentFactory {
+    fn build_embedder(&self) -> Box<dyn EmbeddingProvider> {
+        match &self.embed_url {
+            Some(url) => Box::new(OllamaEmbedder::new(
+                url.clone(),
+                self.embed_model.clone(),
+                self.api_key.clone(),
+            )),
+            None => Box::new(MockEmbedder),
+        }
+    }
+
+    fn load_system_prompt(&self) -> Result<String, String> {
+        build_system_prompt(self.system_prompt_path.clone())
+    }
+
+    fn build_agent(&self) -> Result<Arc<Agent>, String> {
+        let plures_lm = Arc::new(PluresLm::new(
+            Arc::clone(&self.store) as Arc<dyn pares_agens_core::memory::store::MemoryStore>,
+            self.build_embedder(),
+            128_000,
+        ));
+        let memory = Arc::new(PluresMemory {
+            plures_lm: Arc::clone(&plures_lm),
+        });
+        let cerebellum = Cerebellum::new(CerebellumConfig::default());
+        let system_prompt = self.load_system_prompt()?;
+        let delegation_broker = DelegationBroker::new(
+            Arc::clone(&self.registry),
+            Arc::clone(&self.model_client),
+            Arc::clone(&self.tool_dispatcher),
+        );
+        let turn_store: Arc<dyn pares_agens_core::memory::store::MemoryStore> = self.store.clone();
+
+        Ok(Arc::new(
+            Agent::with_cerebellum(memory, cerebellum, plures_lm)
+                .with_model(
+                    Arc::clone(&self.model_client),
+                    Arc::clone(&self.tool_dispatcher),
+                    system_prompt,
+                )
+                .with_deep_model(Arc::clone(&self.deep_model_client))
+                .with_delegation(delegation_broker)
+                .with_turn_store(turn_store),
+        ))
     }
 }
 
@@ -134,6 +203,20 @@ impl TelegramModelControl for RuntimeModelControl {
         };
         self.persist_models().await;
         tracing::info!(from_model = %previous, to_model = %model, "runtime deep model updated");
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl TelegramRuntimeControl for RuntimeResetControl {
+    async fn reset_runtime(&self) -> Result<(), String> {
+        tracing::info!("telegram /reset requested; rebuilding runtime state");
+        let new_agent = self.factory.build_agent()?;
+        {
+            let mut guard = self.agent.write().await;
+            *guard = new_agent;
+        }
+        tracing::info!("telegram /reset completed successfully");
         Ok(())
     }
 }
@@ -1293,7 +1376,7 @@ fn spawn_systemd_watchdog() -> Option<tokio::task::JoinHandle<()>> {
 
 async fn run_adapter_with_recovery(
     adapter: &TelegramAdapter,
-    agent: Arc<Agent>,
+    agent: Arc<RwLock<Arc<Agent>>>,
 ) -> Result<(), String> {
     let mut attempts = 0u32;
     loop {
@@ -1301,7 +1384,10 @@ async fn run_adapter_with_recovery(
         match adapter
             .run(move |event: Event| {
                 let agent = Arc::clone(&agent_clone);
-                Box::pin(async move { agent.handle_event(event).await })
+                Box::pin(async move {
+                    let agent = agent.read().await.clone();
+                    agent.handle_event(event).await
+                })
             })
             .await
         {
@@ -1568,13 +1654,7 @@ async fn main() {
             let started_at = Instant::now();
             let sync_enabled = sync_topic_key.is_some();
 
-            let system_prompt = match build_system_prompt(system_prompt) {
-                Ok(prompt) => prompt,
-                Err(e) => {
-                    tracing::error!("{e}");
-                    std::process::exit(1);
-                }
-            };
+            let system_prompt_path = system_prompt;
 
             let mut model = model;
             let mut deep_model = deep_model;
@@ -1598,18 +1678,18 @@ async fn main() {
 
             let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
             let runtime_state_dir = PathBuf::from(&home).join(".pares-agens/runtime-state");
-            let runtime_state_store: Arc<dyn StateStore> = match PluresDbStateStore::open(&runtime_state_dir)
-            {
-                Ok(store) => Arc::new(store),
-                Err(e) => {
-                    tracing::warn!(
-                        path = %runtime_state_dir.display(),
-                        error = %e,
-                        "failed to open runtime state store; model overrides will not persist"
-                    );
-                    Arc::new(PluresDbStateStore::in_memory())
-                }
-            };
+            let runtime_state_store: Arc<dyn StateStore> =
+                match PluresDbStateStore::open(&runtime_state_dir) {
+                    Ok(store) => Arc::new(store),
+                    Err(e) => {
+                        tracing::warn!(
+                            path = %runtime_state_dir.display(),
+                            error = %e,
+                            "failed to open runtime state store; model overrides will not persist"
+                        );
+                        Arc::new(PluresDbStateStore::in_memory())
+                    }
+                };
 
             if let Some(saved) = runtime_state_store
                 .get(MODEL_OVERRIDE_STATE_KEY)
@@ -1801,29 +1881,6 @@ async fn main() {
                 std::process::exit(1);
             }
 
-            let embedder: Box<dyn EmbeddingProvider> = match embed_url {
-                Some(url) => Box::new(OllamaEmbedder::new(
-                    url,
-                    embed_model.clone(),
-                    api_key.clone(),
-                )),
-                None => Box::new(MockEmbedder),
-            };
-
-            let plures_lm = Arc::new(PluresLm::new(
-                Arc::clone(&store) as Arc<dyn pares_agens_core::memory::store::MemoryStore>,
-                embedder,
-                128_000,
-            ));
-
-            // Keep a reference to the store for conversation turn persistence.
-            let turn_store: Arc<dyn pares_agens_core::memory::store::MemoryStore> = store.clone();
-
-            let memory = Arc::new(PluresMemory {
-                plures_lm: Arc::clone(&plures_lm),
-            });
-            let cerebellum = Cerebellum::new(CerebellumConfig::default());
-
             let brave_api_key = brave_api_key.or_else(|| std::env::var("BRAVE_API_KEY").ok());
             let manus_ws_url = Arc::new(manus_ws_url);
 
@@ -1869,29 +1926,38 @@ async fn main() {
             let mut registry = AgentRegistry::new();
             registry.register_builtins();
             let registry = Arc::new(registry);
-            let delegation_broker = DelegationBroker::new(
-                Arc::clone(&registry),
-                Arc::clone(&model_client),
-                Arc::clone(&tool_dispatcher),
-            );
-
-            let agent = Arc::new(
-                Agent::with_cerebellum(memory, cerebellum, Arc::clone(&plures_lm))
-                    .with_model(model_client, tool_dispatcher, system_prompt)
-                    .with_deep_model(deep_model_client)
-                    .with_delegation(delegation_broker)
-                    .with_turn_store(turn_store),
-            );
+            let agent_factory = Arc::new(RuntimeAgentFactory {
+                store: Arc::clone(&store),
+                model_client: Arc::clone(&model_client),
+                deep_model_client: Arc::clone(&deep_model_client),
+                tool_dispatcher: Arc::clone(&tool_dispatcher),
+                registry: Arc::clone(&registry),
+                embed_url,
+                embed_model: embed_model.clone(),
+                api_key: api_key.clone(),
+                system_prompt_path: system_prompt_path.clone(),
+            });
+            let agent = match agent_factory.build_agent() {
+                Ok(agent) => agent,
+                Err(e) => {
+                    tracing::error!("failed to initialize runtime agent: {e}");
+                    std::process::exit(1);
+                }
+            };
+            let agent_handle = Arc::new(RwLock::new(agent));
 
             // Set up Telegram adapter
             let telegram_token_for_shutdown = telegram_token.clone();
-            let config = TelegramConfig::new(telegram_token).with_model_control(Arc::new(
-                RuntimeModelControl {
+            let config = TelegramConfig::new(telegram_token)
+                .with_model_control(Arc::new(RuntimeModelControl {
                     primary_model: Arc::clone(&model_name),
                     deep_model: Arc::clone(&deep_model_name),
                     state_store: Arc::clone(&runtime_state_store),
-                },
-            ));
+                }))
+                .with_runtime_control(Arc::new(RuntimeResetControl {
+                    agent: Arc::clone(&agent_handle),
+                    factory: Arc::clone(&agent_factory),
+                }));
             let adapter = TelegramAdapter::new(config);
 
             tracing::info!("Telegram adapter starting — bot is live");
@@ -1933,7 +1999,8 @@ async fn main() {
             let memory_monitor = spawn_memory_monitor();
             let watchdog = spawn_systemd_watchdog();
 
-            let adapter_result = run_adapter_with_recovery(&adapter, Arc::clone(&agent)).await;
+            let adapter_result =
+                run_adapter_with_recovery(&adapter, Arc::clone(&agent_handle)).await;
 
             if let Err(e) = systemd_notify("STOPPING=1") {
                 tracing::warn!("failed to send systemd STOPPING=1: {e}");
@@ -1972,6 +2039,38 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pares_agens_core::model::{ModelCompletion, ToolCall, ToolDefinition};
+
+    struct TestModelClient;
+
+    #[async_trait]
+    impl ModelClient for TestModelClient {
+        async fn complete(
+            &self,
+            _messages: &[CoreChatMessage],
+            _tools: &[ToolDefinition],
+            _options: &ChatOptions,
+        ) -> Result<ModelCompletion, String> {
+            Ok(ModelCompletion {
+                content: Some("ok".to_string()),
+                tool_calls: Vec::<ToolCall>::new(),
+                logprobs: None,
+            })
+        }
+    }
+
+    struct TestToolDispatcher;
+
+    #[async_trait]
+    impl ToolDispatcher for TestToolDispatcher {
+        async fn available_tools(&self) -> Vec<ToolDefinition> {
+            vec![]
+        }
+
+        async fn call_tool(&self, _name: &str, _arguments: serde_json::Value) -> String {
+            String::new()
+        }
+    }
 
     #[test]
     fn detect_single_connection_conflicts_for_local_host() {
@@ -2122,7 +2221,8 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_model_control_persists_primary_model_override() {
-        let state_store: Arc<dyn StateStore> = Arc::new(pares_agens_core::InMemoryStateStore::new());
+        let state_store: Arc<dyn StateStore> =
+            Arc::new(pares_agens_core::InMemoryStateStore::new());
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4.1".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
@@ -2146,7 +2246,8 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_model_control_persists_deep_model_override() {
-        let state_store: Arc<dyn StateStore> = Arc::new(pares_agens_core::InMemoryStateStore::new());
+        let state_store: Arc<dyn StateStore> =
+            Arc::new(pares_agens_core::InMemoryStateStore::new());
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
@@ -2165,6 +2266,47 @@ mod tests {
                 "model": "gpt-4o",
                 "deep_model": "claude-sonnet-4.5"
             }))
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_reset_control_rebuilds_agent_instance() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let store = Arc::new(PluresDbStore::open(temp_dir.path()).expect("open pluresdb store"));
+
+        let mut registry = AgentRegistry::new();
+        registry.register_builtins();
+
+        let model_client: Arc<dyn ModelClient> = Arc::new(TestModelClient);
+        let deep_model_client: Arc<dyn ModelClient> = Arc::new(TestModelClient);
+        let tool_dispatcher: Arc<dyn ToolDispatcher> = Arc::new(TestToolDispatcher);
+
+        let factory = Arc::new(RuntimeAgentFactory {
+            store,
+            model_client,
+            deep_model_client,
+            tool_dispatcher,
+            registry: Arc::new(registry),
+            embed_url: None,
+            embed_model: "nomic-embed-text".to_string(),
+            api_key: None,
+            system_prompt_path: None,
+        });
+
+        let first_agent = factory.build_agent().expect("build initial agent");
+        let first_ptr = Arc::as_ptr(&first_agent);
+        let agent = Arc::new(RwLock::new(first_agent));
+        let control = RuntimeResetControl {
+            agent: Arc::clone(&agent),
+            factory,
+        };
+
+        control.reset_runtime().await.expect("reset runtime");
+
+        let second_agent = agent.read().await.clone();
+        assert!(
+            !std::ptr::eq(first_ptr, Arc::as_ptr(&second_agent)),
+            "reset should replace the live agent instance"
         );
     }
 }

@@ -29,7 +29,7 @@ use teloxide::{
     },
 };
 use tokio::sync::Mutex as TokioMutex;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::adapter::{ChannelAdapter, ChannelError};
@@ -41,7 +41,7 @@ const MAX_INDEX_LISTING_ITEMS: usize = 10;
 const DEFAULT_NIX_FLAKE_DIR: &str = ".";
 const DEFAULT_NIX_HOST: &str = "praxisbot";
 const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
-const TELEGRAM_HELP_COMMANDS: [(&str, &str); 12] = [
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 13] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
     ("/status", "status + health snapshot"),
@@ -49,6 +49,7 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 12] = [
     ("/model", "show current primary + deep model"),
     ("/model <name>", "switch primary model at runtime"),
     ("/model deep <name>", "switch deep model at runtime"),
+    ("/reset", "full runtime reset (new session + config reload)"),
     ("/clear", "start a fresh conversation session"),
     ("/agents", "browse pares-modulus marketplace"),
     ("/browse", "alias for /agents"),
@@ -311,6 +312,8 @@ pub struct TelegramConfig {
     pub marketplace_install_dir: String,
     /// Optional runtime model control for `/model`.
     pub model_control: Option<Arc<dyn TelegramModelControl>>,
+    /// Optional runtime reset control for `/reset`.
+    pub runtime_control: Option<Arc<dyn TelegramRuntimeControl>>,
 }
 
 impl TelegramConfig {
@@ -321,6 +324,7 @@ impl TelegramConfig {
             marketplace_index_url: PARES_MODULUS_INDEX_URL.to_string(),
             marketplace_install_dir: DEFAULT_MARKETPLACE_INSTALL_DIR.to_string(),
             model_control: None,
+            runtime_control: None,
         }
     }
 
@@ -344,6 +348,16 @@ impl TelegramConfig {
         self.model_control = Some(model_control);
         self
     }
+
+    /// Enable `/reset` runtime reset support.
+    #[must_use]
+    pub fn with_runtime_control(
+        mut self,
+        runtime_control: Arc<dyn TelegramRuntimeControl>,
+    ) -> Self {
+        self.runtime_control = Some(runtime_control);
+        self
+    }
 }
 
 /// Runtime model control hooks used by the `/model` Telegram command.
@@ -355,6 +369,13 @@ pub trait TelegramModelControl: Send + Sync {
     async fn set_primary_model(&self, model: &str) -> Result<(), String>;
     /// Update the deep model.
     async fn set_deep_model(&self, model: &str) -> Result<(), String>;
+}
+
+/// Runtime reset hooks used by the `/reset` Telegram command.
+#[async_trait]
+pub trait TelegramRuntimeControl: Send + Sync {
+    /// Reset runtime state: clear active context, reload config, and re-init memory runtime.
+    async fn reset_runtime(&self) -> Result<(), String>;
 }
 
 /// A Telegram channel adapter that bridges Telegram messages to the agent event loop.
@@ -558,6 +579,7 @@ impl ChannelAdapter for TelegramAdapter {
         let bot = Bot::new(self.config.token.clone());
         let index_url = self.config.marketplace_index_url.clone();
         let model_control = self.config.model_control.clone();
+        let runtime_control = self.config.runtime_control.clone();
         let installer = std::sync::Arc::new(TokioMutex::new(
             Installer::new(&self.config.marketplace_install_dir)
                 .map_err(|e| ChannelError::Telegram(e.to_string()))?,
@@ -570,6 +592,7 @@ impl ChannelAdapter for TelegramAdapter {
             let installer = installer.clone();
             let index_url = index_url.clone();
             let model_control = model_control.clone();
+            let runtime_control = runtime_control.clone();
             let update_flake_dir =
                 std::env::var("PARES_NIX_FLAKE_DIR").unwrap_or_else(|_| DEFAULT_NIX_FLAKE_DIR.into());
             let update_host =
@@ -653,6 +676,24 @@ impl ChannelAdapter for TelegramAdapter {
                                     Err(e) => e.to_string(),
                                 };
 
+                                let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            "reset" => {
+                                let reply = if let Some(control) = &runtime_control {
+                                    match control.reset_runtime().await {
+                                        Ok(()) => {
+                                            "Reset complete. Runtime state and configuration reloaded.".to_string()
+                                        }
+                                        Err(e) => {
+                                            warn!(error = %e, "telegram /reset failed");
+                                            format!("Reset failed: {e}")
+                                        }
+                                    }
+                                } else {
+                                    "Runtime reset is unavailable for this deployment.".to_string()
+                                };
                                 let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
