@@ -47,7 +47,7 @@ const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
 /// The runtime strips this marker before model processing and uses it only to
 /// decide whether to append tool execution details to the Telegram reply.
 pub const TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER: &str = "__PARES_VERBOSE_TOOL_DETAILS__:";
-const TELEGRAM_HELP_COMMANDS: [(&str, &str); 14] = [
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 15] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
     ("/status", "status + health snapshot"),
@@ -64,11 +64,14 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 14] = [
     ("/agents", "browse pares-modulus marketplace"),
     ("/browse", "alias for /agents"),
     ("/install <id>", "install an agent/plugin"),
+    ("/logs [n]", "tail recent pares-agens service logs"),
     (
         "/update",
         "run NixOS self-update and rebuild if pares-agens changed",
     ),
 ];
+const DEFAULT_LOG_TAIL_LINES: usize = 80;
+const MAX_LOG_TAIL_LINES: usize = 400;
 
 fn parse_modulus_index(payload: &str) -> Result<Vec<SkillMetadata>, String> {
     let value: Value =
@@ -232,6 +235,52 @@ fn truncate_telegram_message(content: String) -> String {
         format!("{truncated}\n…(truncated)")
     } else {
         truncated
+    }
+}
+
+/// Parse `/logs [n]` tail argument and clamp it to the allowed range.
+///
+/// Returns [`DEFAULT_LOG_TAIL_LINES`] when no argument is provided, or a
+/// positive integer up to [`MAX_LOG_TAIL_LINES`]. Invalid values return a
+/// usage string suitable for Telegram replies.
+fn parse_logs_tail_lines(args: Vec<&str>) -> Result<usize, &'static str> {
+    match args.as_slice() {
+        [] => Ok(DEFAULT_LOG_TAIL_LINES),
+        [raw] => {
+            let value = raw
+                .trim()
+                .parse::<usize>()
+                .map_err(|_| "Usage: /logs [n] (n must be a positive integer)")?;
+            if value == 0 {
+                return Err("Usage: /logs [n] (n must be a positive integer)");
+            }
+            Ok(value.min(MAX_LOG_TAIL_LINES))
+        }
+        _ => Err("Usage: /logs [n]"),
+    }
+}
+
+/// Format `journalctl` output for Telegram delivery.
+///
+/// Successful output returns stdout (or a fallback message when empty). Failed
+/// commands include status and stderr when available.
+fn format_service_logs_output(output: &std::process::Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
+    if output.status.success() {
+        if stdout.is_empty() {
+            "No recent service logs found.".to_string()
+        } else {
+            stdout
+        }
+    } else if stderr.is_empty() {
+        format!("Failed to read service logs ({status}).", status = output.status)
+    } else {
+        format!(
+            "Failed to read service logs ({status}).\n{stderr}",
+            status = output.status
+        )
     }
 }
 
@@ -796,6 +845,59 @@ impl ChannelAdapter for TelegramAdapter {
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
+                            "logs" => {
+                                if !is_update_authorized(&msg) {
+                                    let _ = Self::send_markdown_reply(
+                                        &bot,
+                                        &msg,
+                                        "Logs denied. Configure PARES_TELEGRAM_UPDATE_ALLOWED_USERS with approved Telegram usernames or numeric IDs.",
+                                        None,
+                                    )
+                                    .await;
+                                    return respond(());
+                                }
+                                let tail_lines = match parse_logs_tail_lines(cmd_parts.collect()) {
+                                    Ok(lines) => lines,
+                                    Err(usage) => {
+                                        let _ =
+                                            Self::send_markdown_reply(&bot, &msg, usage, None).await;
+                                        Self::acknowledge_message(&bot, &msg).await;
+                                        return respond(());
+                                    }
+                                };
+
+                                info!(
+                                    tail_lines,
+                                    "telegram /logs requested for pares-agens service"
+                                );
+                                let reply = match tokio::process::Command::new("journalctl")
+                                    .arg("-u")
+                                    .arg("pares-agens")
+                                    .arg("-n")
+                                    .arg(tail_lines.to_string())
+                                    .arg("--no-pager")
+                                    .output()
+                                    .await
+                                {
+                                    Ok(output) => {
+                                        info!(
+                                            tail_lines,
+                                            status = %output.status,
+                                            stdout_bytes = output.stdout.len(),
+                                            stderr_bytes = output.stderr.len(),
+                                            "telegram /logs command completed"
+                                        );
+                                        truncate_telegram_message(format!(
+                                            "Recent pares-agens logs (last {tail_lines} lines):\n{}",
+                                            format_service_logs_output(&output)
+                                        ))
+                                    }
+                                    Err(e) => format!("Failed to start log tail command: {e}"),
+                                };
+                                let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
                             "update" => {
                                 if !is_update_authorized(&msg) {
                                     let _ = Self::send_markdown_reply(
@@ -1044,6 +1146,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parse_logs_tail_lines_defaults_and_clamps() {
+        assert_eq!(parse_logs_tail_lines(vec![]).unwrap(), DEFAULT_LOG_TAIL_LINES);
+        assert_eq!(
+            parse_logs_tail_lines(vec!["9999"]).unwrap(),
+            MAX_LOG_TAIL_LINES
+        );
+    }
+
+    #[test]
+    fn parse_logs_tail_lines_rejects_invalid_values() {
+        assert_eq!(
+            parse_logs_tail_lines(vec!["0"]).unwrap_err(),
+            "Usage: /logs [n] (n must be a positive integer)"
+        );
+        assert_eq!(
+            parse_logs_tail_lines(vec!["not-a-number"]).unwrap_err(),
+            "Usage: /logs [n] (n must be a positive integer)"
+        );
+        assert_eq!(
+            parse_logs_tail_lines(vec!["10", "20"]).unwrap_err(),
+            "Usage: /logs [n]"
+        );
+    }
+
     // ── TelegramAdapter basics ────────────────────────────────────────────
 
     #[test]
@@ -1161,5 +1288,27 @@ mod tests {
         let formatted = format_update_command_output(&output);
         assert!(formatted.contains("Self-update failed"));
         assert!(formatted.contains("boom"));
+    }
+
+    #[test]
+    fn format_service_logs_output_handles_success_and_failure() {
+        let success = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("printf 'line1\\nline2'")
+            .output()
+            .unwrap();
+        assert_eq!(
+            format_service_logs_output(&success),
+            "line1\nline2".to_string()
+        );
+
+        let failure = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("echo denied >&2; exit 1")
+            .output()
+            .unwrap();
+        let formatted_failure = format_service_logs_output(&failure);
+        assert!(formatted_failure.contains("Failed to read service logs"));
+        assert!(formatted_failure.contains("denied"));
     }
 }

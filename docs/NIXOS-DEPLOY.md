@@ -165,12 +165,13 @@ When running `pares-agens serve`, the runtime now also registers a scheduled sel
 
 You can trigger the same flow on demand from Telegram with:
 - `/update`
+- `/logs [n]` (tail recent `pares-agens` service logs; default 80 lines, max 400)
 
 Optional environment variables:
 - `PARES_NIX_FLAKE_DIR` (default: `.`)
 - `PARES_NIX_HOST` (default: `praxisbot`)
 - `PARES_SELF_UPDATE_INTERVAL_SECS` (default: `3600`)
-- `PARES_TELEGRAM_UPDATE_ALLOWED_USERS` (required for `/update`; comma-separated Telegram usernames or numeric user IDs)
+- `PARES_TELEGRAM_UPDATE_ALLOWED_USERS` (required for `/update` and `/logs`; comma-separated Telegram usernames or numeric user IDs)
 
 ## Praxisbot rollout checklist
 
