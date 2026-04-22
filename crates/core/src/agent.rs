@@ -1234,6 +1234,76 @@ impl Agent {
                     content: message,
                 })
             }
+            "clear" => {
+                let (previous_session, new_session) = {
+                    let mut guard = match self.branch_state.lock() {
+                        Ok(guard) => guard,
+                        Err(e) => {
+                            error!(
+                                error = %e,
+                                channel,
+                                "failed to acquire branch_state lock for /clear"
+                            );
+                            return Some(Event::ModelResponse {
+                                request_id: id.to_string(),
+                                model: "command".into(),
+                                content: "Failed to clear conversation context due to internal state error.".into(),
+                            });
+                        }
+                    };
+                    let state = guard.entry(channel.to_string()).or_default();
+                    let previous = state.active.clone();
+                    let mut idx = 1usize;
+                    let session = loop {
+                        let candidate = format!("session-{idx}");
+                        if !state.branches.contains(&candidate) {
+                            break candidate;
+                        }
+                        idx += 1;
+                    };
+                    state.branches.insert(session.clone());
+                    state.active = session.clone();
+                    (previous, session)
+                };
+
+                let new_session_channel = Self::scoped_channel(channel, &new_session);
+                {
+                    match self.conversation_history.lock() {
+                        Ok(mut history) => {
+                            history.entry(new_session_channel).or_default();
+                        }
+                        Err(e) => {
+                            error!(
+                                error = %e,
+                                channel,
+                                "failed to acquire conversation_history lock for /clear"
+                            );
+                            return Some(Event::ModelResponse {
+                                request_id: id.to_string(),
+                                model: "command".into(),
+                                content: "Failed to clear conversation context due to internal state error."
+                                    .into(),
+                            });
+                        }
+                    }
+                }
+
+                info!(
+                    channel,
+                    from_session = previous_session.as_str(),
+                    to_session = new_session.as_str(),
+                    trigger = "/clear",
+                    "conversation session transitioned"
+                );
+
+                Some(Event::ModelResponse {
+                    request_id: id.to_string(),
+                    model: "command".into(),
+                    content: format!(
+                        "Cleared conversation context. Started new session '{new_session}'."
+                    ),
+                })
+            }
             _ => None,
         }
     }
@@ -1566,6 +1636,44 @@ mod tests {
             switch_response,
             Some(Event::ModelResponse { ref content, .. }) if content == "Switched to session 'main'."
         ));
+    }
+
+    #[tokio::test]
+    async fn clear_command_starts_fresh_session_without_deleting_turns() {
+        let turn_store = Arc::new(InMemoryTurnStore::new());
+        let agent = Agent::new(Arc::new(InMemory::new()))
+            .with_model(
+                Arc::new(MockModel),
+                Arc::new(MockTools),
+                "You are a test agent.".into(),
+            )
+            .with_turn_store(turn_store.clone() as Arc<dyn crate::memory::store::MemoryStore>);
+
+        let _ = agent.handle_event(msg("main path")).await;
+        let clear_response = agent.handle_event(msg("/clear")).await;
+        assert!(matches!(
+            clear_response,
+            Some(Event::ModelResponse { ref content, .. })
+            if content == "Cleared conversation context. Started new session 'session-1'."
+        ));
+
+        let _ = agent.handle_event(msg("fresh path")).await;
+
+        let main_turns = turn_store.recent_turns("test", 10).await.unwrap();
+        let cleared_turns = turn_store
+            .recent_turns("test::session-1", 10)
+            .await
+            .unwrap();
+        assert_eq!(
+            main_turns.len(),
+            1,
+            "clear should keep prior main turns intact"
+        );
+        assert_eq!(
+            cleared_turns.len(),
+            1,
+            "clear should route follow-up messages into fresh session history"
+        );
     }
 
     #[test]
