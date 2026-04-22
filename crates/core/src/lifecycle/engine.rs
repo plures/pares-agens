@@ -80,7 +80,7 @@ pub struct RuleEngine {
 impl RuleEngine {
     /// Create a new engine with the given rules, sorted by priority (highest first).
     pub fn new(mut rules: Vec<Rule>) -> Self {
-        rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+        rules.sort_by_key(|r| std::cmp::Reverse(r.priority));
         Self { rules }
     }
 

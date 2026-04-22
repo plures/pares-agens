@@ -196,15 +196,11 @@ fn build_capture(pair: Pair<'_, Rule>) -> PxCapture {
 
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::string => {
-                if content.is_empty() {
-                    content = unquote(child.as_str());
-                }
+            Rule::string if content.is_empty() => {
+                content = unquote(child.as_str());
             }
-            Rule::ident => {
-                if category.is_none() {
-                    category = Some(child.as_str().to_string());
-                }
+            Rule::ident if category.is_none() => {
+                category = Some(child.as_str().to_string());
             }
             Rule::list_val => {
                 tags = child
