@@ -42,7 +42,10 @@ const MAX_INDEX_LISTING_ITEMS: usize = 10;
 const DEFAULT_NIX_FLAKE_DIR: &str = ".";
 const DEFAULT_NIX_HOST: &str = "praxisbot";
 const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
-/// Internal prefix used to request inline tool execution details for a message.
+/// Internal prefix added by the Telegram adapter when `/verbose` is enabled.
+///
+/// The runtime strips this marker before model processing and uses it only to
+/// decide whether to append tool execution details to the Telegram reply.
 pub const TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER: &str = "__PARES_VERBOSE_TOOL_DETAILS__:";
 const TELEGRAM_HELP_COMMANDS: [(&str, &str); 14] = [
     ("/start", "show this command list"),

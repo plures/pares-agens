@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::{collections::HashMap, fmt::Write as _};
+use std::collections::HashMap;
 
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
@@ -74,9 +74,14 @@ struct CopilotAuthCache {
 }
 
 const MODEL_OVERRIDE_STATE_KEY: &str = "agent.runtime_model_override";
+/// Maximum characters shown for tool-call argument previews in `/verbose`.
 const VERBOSE_TOOL_ARGS_PREVIEW_CHARS: usize = 240;
+/// Maximum characters shown for tool-call result previews in `/verbose`.
 const VERBOSE_TOOL_RESULT_PREVIEW_CHARS: usize = 500;
 
+// Telegram request ID currently being processed on this task.
+// Used to correlate tool calls executed during `agent.handle_event(...)` with
+// the originating Telegram message so verbose tool details can be appended.
 tokio::task_local! {
     static ACTIVE_TELEGRAM_REQUEST_ID: String;
 }
@@ -430,6 +435,7 @@ impl ToolDispatcher for ProcedureToolDispatcher {
     }
 }
 
+/// Detect and strip the Telegram verbose marker from inbound content.
 fn extract_verbose_tool_marker(content: &str) -> (bool, String) {
     match content.strip_prefix(TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER) {
         Some(stripped) => (true, stripped.to_string()),
@@ -437,6 +443,7 @@ fn extract_verbose_tool_marker(content: &str) -> (bool, String) {
     }
 }
 
+/// Truncate verbose previews to keep Telegram replies within practical limits.
 fn truncate_verbose_preview(value: &str, max_chars: usize) -> String {
     let mut chars = value.chars();
     let preview: String = chars.by_ref().take(max_chars).collect();
@@ -447,7 +454,10 @@ fn truncate_verbose_preview(value: &str, max_chars: usize) -> String {
     }
 }
 
+/// Format request-scoped tool traces for inline Telegram `/verbose` output.
 fn format_verbose_tool_traces(traces: &[ToolCallTrace]) -> String {
+    use std::fmt::Write;
+
     if traces.is_empty() {
         return "Tool execution details:\n(no tool calls made)".to_string();
     }
@@ -1497,7 +1507,7 @@ async fn run_adapter_with_recovery(
                 let agent = Arc::clone(&agent_clone);
                 let trace_store = trace_store.clone();
                 Box::pin(async move {
-                    let mut request_id_for_traces: Option<String> = None;
+                    let mut trace_request_id: Option<String> = None;
                     let mut verbose_tool_details = false;
                     if let Event::Message {
                         id,
@@ -1506,7 +1516,7 @@ async fn run_adapter_with_recovery(
                         ..
                     } = &mut event
                     {
-                        request_id_for_traces = Some(id.clone());
+                        trace_request_id = Some(id.clone());
                         if channel == "telegram" {
                             let (verbose, stripped) = extract_verbose_tool_marker(content);
                             if verbose {
@@ -1517,7 +1527,7 @@ async fn run_adapter_with_recovery(
                     }
 
                     let agent = agent.read().await.clone();
-                    let mut response = if let Some(request_id) = request_id_for_traces.clone() {
+                    let mut response = if let Some(request_id) = trace_request_id.clone() {
                         ACTIVE_TELEGRAM_REQUEST_ID
                             .scope(request_id, async { agent.handle_event(event).await })
                             .await
@@ -1525,7 +1535,7 @@ async fn run_adapter_with_recovery(
                         agent.handle_event(event).await
                     };
 
-                    if let Some(request_id) = request_id_for_traces {
+                    if let Some(request_id) = trace_request_id {
                         let traces = trace_store.take_for_request(&request_id).await;
                         if verbose_tool_details {
                             if let Some(Event::ModelResponse { content, .. }) = &mut response {
