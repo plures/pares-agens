@@ -41,6 +41,22 @@ const MAX_INDEX_LISTING_ITEMS: usize = 10;
 const DEFAULT_NIX_FLAKE_DIR: &str = ".";
 const DEFAULT_NIX_HOST: &str = "praxisbot";
 const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 11] = [
+    ("/start", "show this command list"),
+    ("/help", "show this command list"),
+    ("/status", "status + health snapshot"),
+    ("/health", "alias for /status"),
+    ("/model", "show current primary + deep model"),
+    ("/model <name>", "switch primary model at runtime"),
+    ("/model deep <name>", "switch deep model at runtime"),
+    ("/agents", "browse pares-modulus marketplace"),
+    ("/browse", "alias for /agents"),
+    ("/install <id>", "install an agent/plugin"),
+    (
+        "/update",
+        "run NixOS self-update and rebuild if pares-agens changed",
+    ),
+];
 
 fn parse_modulus_index(payload: &str) -> Result<Vec<SkillMetadata>, String> {
     let value: Value =
@@ -225,6 +241,18 @@ fn format_update_command_output(output: &std::process::Output) -> String {
     }
 }
 
+fn telegram_help_text() -> String {
+    let mut lines = vec!["Pares Agens commands:".to_string()];
+    lines.extend(
+        TELEGRAM_HELP_COMMANDS
+            .iter()
+            .map(|(command, description)| format!("{command} - {description}")),
+    );
+    lines.push(String::new());
+    lines.push("Or just send a message.".to_string());
+    lines.join("\n")
+}
+
 fn current_process_rss_kib() -> Option<u64> {
     #[cfg(target_os = "linux")]
     {
@@ -357,7 +385,9 @@ impl TelegramAdapter {
             ["deep", model] if !model.trim().is_empty() => {
                 Ok(ModelCommand::SetDeep(model.trim().to_string()))
             }
-            [model] if !model.trim().is_empty() => Ok(ModelCommand::SetPrimary(model.trim().to_string())),
+            [model] if !model.trim().is_empty() => {
+                Ok(ModelCommand::SetPrimary(model.trim().to_string()))
+            }
             _ => Err("Usage: /model | /model <name> | /model deep <name>"),
         }
     }
@@ -554,10 +584,11 @@ impl ChannelAdapter for TelegramAdapter {
                         let cmd = cmd.split('@').next().unwrap_or(cmd);
                         match cmd {
                             "start" | "help" => {
+                                let help = telegram_help_text();
                                 let _ = Self::send_markdown_reply(
                                     &bot,
                                     &msg,
-                                    "Pares Agens commands:\n/status - status + health snapshot\n/health - alias for /status\n/model - show current primary + deep model\n/model <name> - switch primary model at runtime\n/model deep <name> - switch deep model at runtime\n/agents - browse pares-modulus marketplace\n/install <id> - install an agent/plugin\n/update - run NixOS self-update and rebuild if pares-agens changed\n\nOr just send a message.",
+                                    &help,
                                     None,
                                 )
                                 .await;
@@ -858,6 +889,17 @@ mod tests {
             TelegramAdapter::parse_model_command(vec![]),
             Ok(ModelCommand::Show)
         ));
+    }
+
+    #[test]
+    fn help_text_lists_all_registered_slash_commands() {
+        let help = telegram_help_text();
+        for (command, description) in TELEGRAM_HELP_COMMANDS {
+            assert!(
+                help.contains(&format!("{command} - {description}")),
+                "expected help output to include {command} with description"
+            );
+        }
     }
 
     #[test]
