@@ -41,7 +41,7 @@ const MAX_INDEX_LISTING_ITEMS: usize = 10;
 const DEFAULT_NIX_FLAKE_DIR: &str = ".";
 const DEFAULT_NIX_HOST: &str = "praxisbot";
 const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
-const TELEGRAM_HELP_COMMANDS: [(&str, &str); 11] = [
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 12] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
     ("/status", "status + health snapshot"),
@@ -49,6 +49,7 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 11] = [
     ("/model", "show current primary + deep model"),
     ("/model <name>", "switch primary model at runtime"),
     ("/model deep <name>", "switch deep model at runtime"),
+    ("/clear", "start a fresh conversation session"),
     ("/agents", "browse pares-modulus marketplace"),
     ("/browse", "alias for /agents"),
     ("/install <id>", "install an agent/plugin"),
