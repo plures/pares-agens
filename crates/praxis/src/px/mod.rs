@@ -110,6 +110,7 @@ pub enum FunctionMode {
     Hybrid,
 }
 
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PxTrigger {
     pub name: String,
@@ -120,7 +121,8 @@ pub struct PxTrigger {
 
 /// Parse a .px source string into a document AST.
 pub fn parse(source: &str) -> Result<PxDocument, String> {
-    let pairs = PxParser::parse(Rule::document, source).map_err(|e| format!("parse error: {e}"))?;
+    let pairs = PxParser::parse(Rule::document, source)
+        .map_err(|e| format!("parse error: {e}"))?;
 
     Ok(builder::build(pairs))
 }
@@ -196,10 +198,7 @@ contract auto_merge_behavior:
         assert_eq!(rule.actions.len(), 1);
         assert_eq!(rule.captures.len(), 1);
         assert_eq!(rule.captures[0].content, "Merged PR");
-        assert_eq!(
-            rule.captures[0].category.as_deref(),
-            Some("work_in_progress")
-        );
+        assert_eq!(rule.captures[0].category.as_deref(), Some("work_in_progress"));
         assert_eq!(rule.captures[0].tags, vec!["lifecycle", "merge"]);
     }
 }

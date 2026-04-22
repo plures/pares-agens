@@ -25,8 +25,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use super::facts::PRFacts;
 use super::{LifecycleAction, LifecycleFact, RuleResult};
+use super::facts::PRFacts;
 
 /// A declarative lifecycle rule stored in PluresDB.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,12 +50,8 @@ pub struct Rule {
     pub capture: Vec<FactSpec>,
 }
 
-fn default_priority() -> i32 {
-    50
-}
-fn default_true() -> bool {
-    true
-}
+fn default_priority() -> i32 { 50 }
+fn default_true() -> bool { true }
 
 /// An action specification in a rule's `then` clause.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,18 +95,12 @@ impl RuleEngine {
         let fact_map = pr_facts_to_map(facts);
 
         for rule in &self.rules {
-            if !rule.enabled {
-                continue;
-            }
+            if !rule.enabled { continue; }
             if matches_conditions(&rule.when, &fact_map) {
-                let actions = rule
-                    .then
-                    .iter()
+                let actions = rule.then.iter()
                     .map(|spec| spec_to_action(spec, facts))
                     .collect();
-                let new_facts = rule
-                    .capture
-                    .iter()
+                let new_facts = rule.capture.iter()
                     .map(|spec| LifecycleFact {
                         category: spec.category.clone(),
                         content: interpolate(&spec.content, facts),
@@ -126,9 +116,7 @@ impl RuleEngine {
         }
 
         RuleResult {
-            actions: vec![LifecycleAction::Noop {
-                reason: "no rule matched".into(),
-            }],
+            actions: vec![LifecycleAction::Noop { reason: "no rule matched".into() }],
             new_facts: vec![],
             matched_rule: "none".into(),
         }
@@ -147,10 +135,7 @@ fn pr_facts_to_map(facts: &PRFacts) -> HashMap<String, serde_json::Value> {
     map.insert("is_draft".into(), serde_json::json!(facts.is_draft));
     map.insert("is_merged".into(), serde_json::json!(facts.is_merged));
     map.insert("mergeable".into(), serde_json::json!(facts.mergeable));
-    map.insert(
-        "ci_status".into(),
-        serde_json::json!(format!("{:?}", facts.ci_status).to_lowercase()),
-    );
+    map.insert("ci_status".into(), serde_json::json!(format!("{:?}", facts.ci_status).to_lowercase()));
     map.insert("has_review".into(), serde_json::json!(facts.has_review));
     map.insert("has_approval".into(), serde_json::json!(facts.has_approval));
     map.insert("retry_count".into(), serde_json::json!(facts.retry_count));
@@ -176,44 +161,26 @@ fn matches_conditions(
             match op {
                 "gte" => {
                     if let (Some(a), Some(e)) = (actual.as_u64(), expected.as_u64()) {
-                        if a < e {
-                            return false;
-                        }
-                    } else {
-                        return false;
-                    }
+                        if a < e { return false; }
+                    } else { return false; }
                 }
                 "lte" => {
                     if let (Some(a), Some(e)) = (actual.as_u64(), expected.as_u64()) {
-                        if a > e {
-                            return false;
-                        }
-                    } else {
-                        return false;
-                    }
+                        if a > e { return false; }
+                    } else { return false; }
                 }
                 "gt" => {
                     if let (Some(a), Some(e)) = (actual.as_u64(), expected.as_u64()) {
-                        if a <= e {
-                            return false;
-                        }
-                    } else {
-                        return false;
-                    }
+                        if a <= e { return false; }
+                    } else { return false; }
                 }
                 "lt" => {
                     if let (Some(a), Some(e)) = (actual.as_u64(), expected.as_u64()) {
-                        if a >= e {
-                            return false;
-                        }
-                    } else {
-                        return false;
-                    }
+                        if a >= e { return false; }
+                    } else { return false; }
                 }
                 "ne" => {
-                    if actual == expected {
-                        return false;
-                    }
+                    if actual == expected { return false; }
                 }
                 _ => return false,
             }
@@ -233,9 +200,7 @@ fn spec_to_action(spec: &ActionSpec, facts: &PRFacts) -> LifecycleAction {
         "merge_pr" => LifecycleAction::MergePR {
             repo: facts.repo.clone(),
             number: facts.number,
-            method: spec
-                .params
-                .get("method")
+            method: spec.params.get("method")
                 .and_then(|v| v.as_str())
                 .unwrap_or("squash")
                 .to_string(),
@@ -247,25 +212,19 @@ fn spec_to_action(spec: &ActionSpec, facts: &PRFacts) -> LifecycleAction {
         "add_label" => LifecycleAction::AddLabel {
             repo: facts.repo.clone(),
             number: facts.number,
-            label: spec
-                .params
-                .get("label")
+            label: spec.params.get("label")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string(),
         },
         "notify" => LifecycleAction::Notify {
-            message: spec
-                .params
-                .get("message")
+            message: spec.params.get("message")
                 .and_then(|v| v.as_str())
                 .map(|s| interpolate(s, facts))
                 .unwrap_or_default(),
         },
         "noop" => LifecycleAction::Noop {
-            reason: spec
-                .params
-                .get("reason")
+            reason: spec.params.get("reason")
                 .and_then(|v| v.as_str())
                 .unwrap_or("rule matched")
                 .to_string(),
@@ -354,8 +313,8 @@ const DEFAULT_RULES_JSON: &str = r#"[
 
 #[cfg(test)]
 mod tests {
-    use super::super::facts::CIStatus;
     use super::*;
+    use super::super::facts::CIStatus;
 
     #[test]
     fn default_rules_parse() {

@@ -19,7 +19,10 @@ pub mod quality;
 /// Memory store trait and backend implementations.
 pub mod store;
 
-use std::{path::Path, sync::Arc};
+use std::{
+    path::Path,
+    sync::Arc,
+};
 
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -211,11 +214,7 @@ impl PluresLm {
     }
 
     /// Store a single factual statement as a memory entry.
-    pub async fn capture_fact(
-        &self,
-        fact: &str,
-        tags: Vec<String>,
-    ) -> Result<Option<String>, Error> {
+    pub async fn capture_fact(&self, fact: &str, tags: Vec<String>) -> Result<Option<String>, Error> {
         if !passes_quality_gate(fact) {
             debug!("capture_fact rejected: quality gate");
             return Ok(None);
@@ -323,12 +322,9 @@ impl PluresLm {
     /// Returns the number of chunks indexed.
     pub async fn ingest_documents_path(&self, path: impl AsRef<Path>) -> Result<usize, Error> {
         let path = path.as_ref();
-        let metadata = tokio::fs::metadata(path).await.map_err(|e| {
-            Error::Io(format!(
-                "failed to read metadata for {}: {e}",
-                path.display()
-            ))
-        })?;
+        let metadata = tokio::fs::metadata(path)
+            .await
+            .map_err(|e| Error::Io(format!("failed to read metadata for {}: {e}", path.display())))?;
 
         if metadata.is_dir() {
             self.ingest_documents_dir(path).await
@@ -392,11 +388,7 @@ impl PluresLm {
         let raw = tokio::fs::read_to_string(path)
             .await
             .map_err(|e| Error::Io(format!("failed to read file {}: {e}", path.display())))?;
-        let chunks = split_document_chunks(
-            &raw,
-            DOCUMENT_CHUNK_SIZE_CHARS,
-            DOCUMENT_CHUNK_OVERLAP_CHARS,
-        );
+        let chunks = split_document_chunks(&raw, DOCUMENT_CHUNK_SIZE_CHARS, DOCUMENT_CHUNK_OVERLAP_CHARS);
         if chunks.is_empty() {
             return Ok(0);
         }
@@ -623,9 +615,9 @@ fn classify_document_kind(path: &Path) -> Option<DocumentKind> {
     match ext.as_str() {
         "md" | "markdown" => Some(DocumentKind::Markdown),
         "txt" | "text" => Some(DocumentKind::Text),
-        "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "java" | "c" | "cc" | "cpp" | "h"
-        | "hpp" | "cs" | "swift" | "kt" | "kts" | "rb" | "php" | "scala" | "sh" | "bash"
-        | "zsh" | "fish" | "sql" | "toml" | "json" | "yaml" | "yml" => {
+        "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "java" | "c" | "cc" | "cpp"
+        | "h" | "hpp" | "cs" | "swift" | "kt" | "kts" | "rb" | "php" | "scala" | "sh"
+        | "bash" | "zsh" | "fish" | "sql" | "toml" | "json" | "yaml" | "yml" => {
             Some(DocumentKind::SourceCode)
         }
         _ => None,
@@ -678,17 +670,13 @@ fn split_document_chunks(text: &str, max_chars: usize, overlap_chars: usize) -> 
     out
 }
 
-fn format_document_chunk_content(
-    source: &str,
-    chunk_index: usize,
-    total_chunks: usize,
-    chunk: &str,
-) -> String {
+fn format_document_chunk_content(source: &str, chunk_index: usize, total_chunks: usize, chunk: &str) -> String {
     format!("Source: {source}\nChunk: {chunk_index}/{total_chunks}\n\n{chunk}")
 }
 
 /// Extract simple keyword tags from the exchange.
 fn extract_tags(exchange: &Exchange) -> Vec<String> {
+
     let combined = format!("{} {}", exchange.user, exchange.assistant).to_lowercase();
     let mut tags = Vec::new();
 
@@ -934,20 +922,18 @@ mod tests {
         )
         .await
         .unwrap();
-        tokio::fs::write(&bin, [0_u8, 1_u8, 2_u8, 3_u8])
-            .await
-            .unwrap();
+        tokio::fs::write(&bin, [0_u8, 1_u8, 2_u8, 3_u8]).await.unwrap();
 
         let indexed = lm.ingest_documents_path(root).await.unwrap();
         assert!(indexed >= 3, "expected supported files to be indexed");
 
-        let deployment = lm
-            .recall("deployment runbook staging", 5, &[])
-            .await
-            .unwrap();
+        let deployment = lm.recall("deployment runbook staging", 5, &[]).await.unwrap();
         assert!(deployment.iter().any(|m| m.content.contains("guide.md")));
 
-        let secret_notes = lm.recall("rotate secrets monthly", 5, &[]).await.unwrap();
+        let secret_notes = lm
+            .recall("rotate secrets monthly", 5, &[])
+            .await
+            .unwrap();
         assert!(secret_notes.iter().any(|m| m.content.contains("notes.txt")));
 
         let rust_code = lm

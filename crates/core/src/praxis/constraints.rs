@@ -294,7 +294,8 @@ impl TaskSizeConstraint {
         // C-0009 — task description word count ≤ 200
         store.upsert_constraint(Constraint {
             id: "C-0009".into(),
-            description: "Sub-agent task descriptions must not exceed 200 words (ADR-0013).".into(),
+            description: "Sub-agent task descriptions must not exceed 200 words (ADR-0013)."
+                .into(),
             when: Condition::FieldGt {
                 field: "task_description_word_count".into(),
                 threshold: MAX_DESCRIPTION_WORD_COUNT as f64,
@@ -444,14 +445,8 @@ mod tests {
         let ctx = AgentContext::new("dispatch_task", "agent-a", SessionType::SubAgent)
             .with_meta("task_description_word_count", json!(201));
         let violations = evaluate(&store, &ctx);
-        let ids: Vec<&str> = violations
-            .iter()
-            .map(|v| v.constraint.id.as_str())
-            .collect();
-        assert!(
-            ids.contains(&"C-0009"),
-            "C-0009 should fire for 201 words; got: {ids:?}"
-        );
+        let ids: Vec<&str> = violations.iter().map(|v| v.constraint.id.as_str()).collect();
+        assert!(ids.contains(&"C-0009"), "C-0009 should fire for 201 words; got: {ids:?}");
     }
 
     #[test]
@@ -461,14 +456,8 @@ mod tests {
         let ctx = AgentContext::new("dispatch_task", "agent-a", SessionType::SubAgent)
             .with_meta("task_description_word_count", json!(200));
         let violations = evaluate(&store, &ctx);
-        let ids: Vec<&str> = violations
-            .iter()
-            .map(|v| v.constraint.id.as_str())
-            .collect();
-        assert!(
-            !ids.contains(&"C-0009"),
-            "C-0009 must not fire for 200 words; got: {ids:?}"
-        );
+        let ids: Vec<&str> = violations.iter().map(|v| v.constraint.id.as_str()).collect();
+        assert!(!ids.contains(&"C-0009"), "C-0009 must not fire for 200 words; got: {ids:?}");
     }
 
     #[test]
@@ -479,10 +468,7 @@ mod tests {
             .with_meta("expected_output_type", json!("text"))
             .with_meta("expected_output_chars", json!(2001));
         let violations = evaluate(&store, &ctx);
-        let ids: Vec<&str> = violations
-            .iter()
-            .map(|v| v.constraint.id.as_str())
-            .collect();
+        let ids: Vec<&str> = violations.iter().map(|v| v.constraint.id.as_str()).collect();
         assert!(
             ids.contains(&"C-0010"),
             "C-0010 should fire for 2001 chars; got: {ids:?}"
@@ -497,10 +483,7 @@ mod tests {
             .with_meta("expected_output_type", json!("text"))
             .with_meta("expected_output_chars", json!(2000));
         let violations = evaluate(&store, &ctx);
-        let ids: Vec<&str> = violations
-            .iter()
-            .map(|v| v.constraint.id.as_str())
-            .collect();
+        let ids: Vec<&str> = violations.iter().map(|v| v.constraint.id.as_str()).collect();
         assert!(
             !ids.contains(&"C-0010"),
             "C-0010 must not fire for 2000 chars; got: {ids:?}"
@@ -515,10 +498,7 @@ mod tests {
             .with_meta("expected_output_type", json!("binary"))
             .with_meta("expected_output_chars", json!(99_999));
         let violations = evaluate(&store, &ctx);
-        let ids: Vec<&str> = violations
-            .iter()
-            .map(|v| v.constraint.id.as_str())
-            .collect();
+        let ids: Vec<&str> = violations.iter().map(|v| v.constraint.id.as_str()).collect();
         assert!(
             !ids.contains(&"C-0010"),
             "C-0010 must not fire for non-text output; got: {ids:?}"
@@ -541,9 +521,7 @@ mod tests {
     fn c0009_severity_is_error() {
         let mut store = PraxisStore::new();
         TaskSizeConstraint::register(&mut store);
-        let c = store
-            .get_constraint("C-0009")
-            .expect("C-0009 must be registered");
+        let c = store.get_constraint("C-0009").expect("C-0009 must be registered");
         assert_eq!(c.severity, Severity::Error);
     }
 
@@ -551,9 +529,7 @@ mod tests {
     fn c0010_severity_is_error() {
         let mut store = PraxisStore::new();
         TaskSizeConstraint::register(&mut store);
-        let c = store
-            .get_constraint("C-0010")
-            .expect("C-0010 must be registered");
+        let c = store.get_constraint("C-0010").expect("C-0010 must be registered");
         assert_eq!(c.severity, Severity::Error);
     }
 
@@ -589,10 +565,7 @@ mod tests {
         let RuleResult::Fail { reason } = gate().evaluate(&ctx) else {
             panic!("expected Fail");
         };
-        assert!(
-            reason.contains("ADR-0012"),
-            "reason should reference ADR-0012; got: {reason}"
-        );
+        assert!(reason.contains("ADR-0012"), "reason should reference ADR-0012; got: {reason}");
     }
 
     // Level 2: completed_recently → Warning (skip)
@@ -666,20 +639,18 @@ mod tests {
             panic!("expected Gate");
         };
         assert_eq!(action, "send_email");
-        assert!(
-            rationale.contains("ADR-0012"),
-            "rationale should reference ADR-0012; got: {rationale}"
-        );
+        assert!(rationale.contains("ADR-0012"), "rationale should reference ADR-0012; got: {rationale}");
     }
 
     // Level 4 does not fire when level 3 is triggered
     #[test]
     fn gate_level3_takes_priority_over_level4() {
-        let ctx = RuleContext::new("op", json!({"known_failure": true, "is_destructive": true}));
-        let result = gate().evaluate(&ctx);
-        assert!(
-            matches!(&result, RuleResult::Warning { message } if message.starts_with("known_failure:"))
+        let ctx = RuleContext::new(
+            "op",
+            json!({"known_failure": true, "is_destructive": true}),
         );
+        let result = gate().evaluate(&ctx);
+        assert!(matches!(&result, RuleResult::Warning { message } if message.starts_with("known_failure:")));
     }
 
     // Level 4: both is_destructive and is_external → Gate with "destructive and external"
