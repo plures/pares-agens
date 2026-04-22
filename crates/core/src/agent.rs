@@ -1235,9 +1235,24 @@ impl Agent {
                 })
             }
             "clear" => {
-                let new_session = {
-                    let mut guard = self.branch_state.lock().unwrap();
+                let (previous_session, new_session) = {
+                    let mut guard = match self.branch_state.lock() {
+                        Ok(guard) => guard,
+                        Err(e) => {
+                            error!(
+                                error = %e,
+                                channel,
+                                "failed to acquire branch_state lock for /clear"
+                            );
+                            return Some(Event::ModelResponse {
+                                request_id: id.to_string(),
+                                model: "command".into(),
+                                content: "Failed to clear conversation context due to internal state error.".into(),
+                            });
+                        }
+                    };
                     let state = guard.entry(channel.to_string()).or_default();
+                    let previous = state.active.clone();
                     let mut idx = 1usize;
                     let session = loop {
                         let candidate = format!("session-{idx}");
@@ -1248,14 +1263,38 @@ impl Agent {
                     };
                     state.branches.insert(session.clone());
                     state.active = session.clone();
-                    session
+                    (previous, session)
                 };
 
                 let new_session_channel = Self::scoped_channel(channel, &new_session);
                 {
-                    let mut history = self.conversation_history.lock().unwrap();
-                    history.entry(new_session_channel).or_default();
+                    match self.conversation_history.lock() {
+                        Ok(mut history) => {
+                            history.entry(new_session_channel).or_default();
+                        }
+                        Err(e) => {
+                            error!(
+                                error = %e,
+                                channel,
+                                "failed to acquire conversation_history lock for /clear"
+                            );
+                            return Some(Event::ModelResponse {
+                                request_id: id.to_string(),
+                                model: "command".into(),
+                                content: "Failed to clear conversation context due to internal state error."
+                                    .into(),
+                            });
+                        }
+                    }
                 }
+
+                info!(
+                    channel,
+                    from_session = previous_session.as_str(),
+                    to_session = new_session.as_str(),
+                    trigger = "/clear",
+                    "conversation session transitioned"
+                );
 
                 Some(Event::ModelResponse {
                     request_id: id.to_string(),
