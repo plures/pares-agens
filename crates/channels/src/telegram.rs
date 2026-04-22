@@ -47,7 +47,7 @@ const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
 /// The runtime strips this marker before model processing and uses it only to
 /// decide whether to append tool execution details to the Telegram reply.
 pub const TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER: &str = "__PARES_VERBOSE_TOOL_DETAILS__:";
-const TELEGRAM_HELP_COMMANDS: [(&str, &str); 15] = [
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 19] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
     ("/status", "status + health snapshot"),
@@ -59,6 +59,13 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 15] = [
     ("/model", "show current primary + deep model"),
     ("/model <name>", "switch primary model at runtime"),
     ("/model deep <name>", "switch deep model at runtime"),
+    (
+        "/config",
+        "show runtime config (model, endpoint, log level)",
+    ),
+    ("/config model <name>", "set runtime model"),
+    ("/config endpoint <url>", "set runtime endpoint"),
+    ("/config log-level <level>", "set runtime log level"),
     ("/reset", "full runtime reset (new session + config reload)"),
     ("/clear", "start a fresh conversation session"),
     ("/agents", "browse pares-modulus marketplace"),
@@ -275,7 +282,10 @@ fn format_service_logs_output(output: &std::process::Output) -> String {
             stdout
         }
     } else if stderr.is_empty() {
-        format!("Failed to read service logs ({status}).", status = output.status)
+        format!(
+            "Failed to read service logs ({status}).",
+            status = output.status
+        )
     } else {
         format!(
             "Failed to read service logs ({status}).\n{stderr}",
@@ -373,6 +383,8 @@ pub struct TelegramConfig {
     pub model_control: Option<Arc<dyn TelegramModelControl>>,
     /// Optional runtime reset control for `/reset`.
     pub runtime_control: Option<Arc<dyn TelegramRuntimeControl>>,
+    /// Optional runtime config control for `/config`.
+    pub config_control: Option<Arc<dyn TelegramConfigControl>>,
 }
 
 impl TelegramConfig {
@@ -384,6 +396,7 @@ impl TelegramConfig {
             marketplace_install_dir: DEFAULT_MARKETPLACE_INSTALL_DIR.to_string(),
             model_control: None,
             runtime_control: None,
+            config_control: None,
         }
     }
 
@@ -417,6 +430,13 @@ impl TelegramConfig {
         self.runtime_control = Some(runtime_control);
         self
     }
+
+    /// Enable `/config` runtime config control support.
+    #[must_use]
+    pub fn with_config_control(mut self, config_control: Arc<dyn TelegramConfigControl>) -> Self {
+        self.config_control = Some(config_control);
+        self
+    }
 }
 
 /// Runtime model control hooks used by the `/model` Telegram command.
@@ -437,6 +457,30 @@ pub trait TelegramRuntimeControl: Send + Sync {
     async fn reset_runtime(&self) -> Result<(), String>;
 }
 
+/// Runtime configuration hooks used by the `/config` Telegram command.
+#[async_trait]
+pub trait TelegramConfigControl: Send + Sync {
+    /// Return the current runtime configuration snapshot.
+    async fn current_config(&self) -> TelegramRuntimeConfig;
+    /// Update the primary runtime model.
+    async fn set_model(&self, model: &str) -> Result<(), String>;
+    /// Update the runtime endpoint URL.
+    async fn set_endpoint(&self, endpoint: &str) -> Result<(), String>;
+    /// Update the runtime log level.
+    async fn set_log_level(&self, log_level: &str) -> Result<(), String>;
+}
+
+/// Runtime configuration snapshot shown by `/config`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TelegramRuntimeConfig {
+    /// Primary model identifier.
+    pub model: String,
+    /// OpenAI-compatible endpoint URL.
+    pub endpoint: String,
+    /// Active runtime log level.
+    pub log_level: String,
+}
+
 /// A Telegram channel adapter that bridges Telegram messages to the agent event loop.
 ///
 /// Receives messages from Telegram via long-polling and emits [`Event::Message`]
@@ -451,6 +495,14 @@ enum ModelCommand {
     Show,
     SetPrimary(String),
     SetDeep(String),
+}
+
+#[derive(Debug)]
+enum ConfigCommand {
+    Show,
+    SetModel(String),
+    SetEndpoint(String),
+    SetLogLevel(String),
 }
 
 impl TelegramAdapter {
@@ -482,6 +534,26 @@ impl TelegramAdapter {
                 _ => Err("Usage: /verbose [on|off]"),
             },
             _ => Err("Usage: /verbose [on|off]"),
+        }
+    }
+
+    fn parse_config_command(args: Vec<&str>) -> Result<ConfigCommand, &'static str> {
+        match args.as_slice() {
+            [] => Ok(ConfigCommand::Show),
+            ["model", model] if !model.trim().is_empty() => {
+                Ok(ConfigCommand::SetModel(model.trim().to_string()))
+            }
+            ["endpoint", endpoint] if !endpoint.trim().is_empty() => {
+                Ok(ConfigCommand::SetEndpoint(endpoint.trim().to_string()))
+            }
+            ["log-level", level] | ["loglevel", level] | ["log_level", level]
+                if !level.trim().is_empty() =>
+            {
+                Ok(ConfigCommand::SetLogLevel(level.trim().to_string()))
+            }
+            _ => Err(
+                "Usage: /config | /config model <name> | /config endpoint <url> | /config log-level <level>",
+            ),
         }
     }
 
@@ -651,6 +723,7 @@ impl ChannelAdapter for TelegramAdapter {
         let index_url = self.config.marketplace_index_url.clone();
         let model_control = self.config.model_control.clone();
         let runtime_control = self.config.runtime_control.clone();
+        let config_control = self.config.config_control.clone();
         let verbose_by_chat = Arc::new(TokioMutex::new(HashMap::<i64, bool>::new()));
         let installer = std::sync::Arc::new(TokioMutex::new(
             Installer::new(&self.config.marketplace_install_dir)
@@ -665,6 +738,7 @@ impl ChannelAdapter for TelegramAdapter {
             let index_url = index_url.clone();
             let model_control = model_control.clone();
             let runtime_control = runtime_control.clone();
+            let config_control = config_control.clone();
             let verbose_by_chat = verbose_by_chat.clone();
             let update_flake_dir =
                 std::env::var("PARES_NIX_FLAKE_DIR").unwrap_or_else(|_| DEFAULT_NIX_FLAKE_DIR.into());
@@ -790,6 +864,56 @@ impl ChannelAdapter for TelegramAdapter {
                                 } else {
                                     "Runtime reset is unavailable for this deployment.".to_string()
                                 };
+                                let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            "config" => {
+                                let Some(control) = &config_control else {
+                                    let _ = Self::send_markdown_reply(
+                                        &bot,
+                                        &msg,
+                                        "Runtime config editing is unavailable for this deployment.",
+                                        None,
+                                    )
+                                    .await;
+                                    Self::acknowledge_message(&bot, &msg).await;
+                                    return respond(());
+                                };
+
+                                let reply = match Self::parse_config_command(cmd_parts.collect()) {
+                                    Ok(ConfigCommand::Show) => {
+                                        let config = control.current_config().await;
+                                        format!(
+                                            "Runtime config\nModel: {}\nEndpoint: {}\nLog level: {}",
+                                            config.model, config.endpoint, config.log_level
+                                        )
+                                    }
+                                    Ok(ConfigCommand::SetModel(model)) => {
+                                        match control.set_model(&model).await {
+                                            Ok(()) => format!("Updated runtime model to {model}"),
+                                            Err(e) => format!("Failed to update model: {e}"),
+                                        }
+                                    }
+                                    Ok(ConfigCommand::SetEndpoint(endpoint)) => {
+                                        match control.set_endpoint(&endpoint).await {
+                                            Ok(()) => {
+                                                format!("Updated runtime endpoint to {endpoint}")
+                                            }
+                                            Err(e) => format!("Failed to update endpoint: {e}"),
+                                        }
+                                    }
+                                    Ok(ConfigCommand::SetLogLevel(log_level)) => {
+                                        match control.set_log_level(&log_level).await {
+                                            Ok(()) => {
+                                                format!("Updated runtime log level to {log_level}")
+                                            }
+                                            Err(e) => format!("Failed to update log level: {e}"),
+                                        }
+                                    }
+                                    Err(e) => e.to_string(),
+                                };
+
                                 let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
@@ -1127,6 +1251,46 @@ mod tests {
     }
 
     #[test]
+    fn parse_config_command_show() {
+        assert!(matches!(
+            TelegramAdapter::parse_config_command(vec![]),
+            Ok(ConfigCommand::Show)
+        ));
+    }
+
+    #[test]
+    fn parse_config_command_set_model() {
+        assert!(matches!(
+            TelegramAdapter::parse_config_command(vec!["model", "gpt-4.1"]),
+            Ok(ConfigCommand::SetModel(model)) if model == "gpt-4.1"
+        ));
+    }
+
+    #[test]
+    fn parse_config_command_set_endpoint() {
+        assert!(matches!(
+            TelegramAdapter::parse_config_command(vec!["endpoint", "http://localhost:11434/v1"]),
+            Ok(ConfigCommand::SetEndpoint(endpoint)) if endpoint == "http://localhost:11434/v1"
+        ));
+    }
+
+    #[test]
+    fn parse_config_command_set_log_level() {
+        assert!(matches!(
+            TelegramAdapter::parse_config_command(vec!["log-level", "debug"]),
+            Ok(ConfigCommand::SetLogLevel(level)) if level == "debug"
+        ));
+    }
+
+    #[test]
+    fn parse_config_command_invalid_usage() {
+        assert_eq!(
+            TelegramAdapter::parse_config_command(vec!["endpoint"]).unwrap_err(),
+            "Usage: /config | /config model <name> | /config endpoint <url> | /config log-level <level>"
+        );
+    }
+
+    #[test]
     fn parse_verbose_command_toggles_when_no_args() {
         assert!(TelegramAdapter::parse_verbose_command(&[], false).unwrap());
         assert!(!TelegramAdapter::parse_verbose_command(&[], true).unwrap());
@@ -1148,7 +1312,10 @@ mod tests {
 
     #[test]
     fn parse_logs_tail_lines_defaults_and_clamps() {
-        assert_eq!(parse_logs_tail_lines(vec![]).unwrap(), DEFAULT_LOG_TAIL_LINES);
+        assert_eq!(
+            parse_logs_tail_lines(vec![]).unwrap(),
+            DEFAULT_LOG_TAIL_LINES
+        );
         assert_eq!(
             parse_logs_tail_lines(vec!["9999"]).unwrap(),
             MAX_LOG_TAIL_LINES
