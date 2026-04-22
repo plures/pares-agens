@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use pares_agens_core::Event;
 use pares_agens_marketplace::{installer::Installer, SkillCategory, SkillMetadata};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
 use teloxide::{
     prelude::*,
@@ -41,11 +42,17 @@ const MAX_INDEX_LISTING_ITEMS: usize = 10;
 const DEFAULT_NIX_FLAKE_DIR: &str = ".";
 const DEFAULT_NIX_HOST: &str = "praxisbot";
 const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
-const TELEGRAM_HELP_COMMANDS: [(&str, &str); 13] = [
+/// Internal prefix used to request inline tool execution details for a message.
+pub const TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER: &str = "__PARES_VERBOSE_TOOL_DETAILS__:";
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 14] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
     ("/status", "status + health snapshot"),
     ("/health", "alias for /status"),
+    (
+        "/verbose",
+        "toggle inline tool execution details (or /verbose on|off)",
+    ),
     ("/model", "show current primary + deep model"),
     ("/model <name>", "switch primary model at runtime"),
     ("/model deep <name>", "switch deep model at runtime"),
@@ -414,6 +421,18 @@ impl TelegramAdapter {
         }
     }
 
+    fn parse_verbose_command(args: &[&str], current: bool) -> Result<bool, &'static str> {
+        match args {
+            [] => Ok(!current),
+            [flag] => match flag.trim().to_ascii_lowercase().as_str() {
+                "on" | "true" | "1" => Ok(true),
+                "off" | "false" | "0" => Ok(false),
+                _ => Err("Usage: /verbose [on|off]"),
+            },
+            _ => Err("Usage: /verbose [on|off]"),
+        }
+    }
+
     /// Convert a Telegram [`Message`] into an agent [`Event`].
     ///
     /// Text messages become `Event::Message`. Photos and documents include
@@ -580,6 +599,7 @@ impl ChannelAdapter for TelegramAdapter {
         let index_url = self.config.marketplace_index_url.clone();
         let model_control = self.config.model_control.clone();
         let runtime_control = self.config.runtime_control.clone();
+        let verbose_by_chat = Arc::new(TokioMutex::new(HashMap::<i64, bool>::new()));
         let installer = std::sync::Arc::new(TokioMutex::new(
             Installer::new(&self.config.marketplace_install_dir)
                 .map_err(|e| ChannelError::Telegram(e.to_string()))?,
@@ -593,6 +613,7 @@ impl ChannelAdapter for TelegramAdapter {
             let index_url = index_url.clone();
             let model_control = model_control.clone();
             let runtime_control = runtime_control.clone();
+            let verbose_by_chat = verbose_by_chat.clone();
             let update_flake_dir =
                 std::env::var("PARES_NIX_FLAKE_DIR").unwrap_or_else(|_| DEFAULT_NIX_FLAKE_DIR.into());
             let update_host =
@@ -634,6 +655,29 @@ impl ChannelAdapter for TelegramAdapter {
                                     std::process::id(), memory, model_line,
                                 );
                                 let _ = Self::send_markdown_reply(&bot, &msg, &status, None).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            "verbose" => {
+                                let args: Vec<&str> = cmd_parts.collect();
+                                let chat_key = msg.chat.id.0;
+                                let current = {
+                                    let lock = verbose_by_chat.lock().await;
+                                    *lock.get(&chat_key).unwrap_or(&false)
+                                };
+                                let reply = match Self::parse_verbose_command(&args, current) {
+                                    Ok(new_state) => {
+                                        let mut lock = verbose_by_chat.lock().await;
+                                        lock.insert(chat_key, new_state);
+                                        if new_state {
+                                            "Verbose tool details enabled.".to_string()
+                                        } else {
+                                            "Verbose tool details disabled.".to_string()
+                                        }
+                                    }
+                                    Err(usage) => usage.to_string(),
+                                };
+                                let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
@@ -791,7 +835,16 @@ impl ChannelAdapter for TelegramAdapter {
                 }
 
                 // Normal message — send to agent
-                if let Some(event) = event {
+                if let Some(mut event) = event {
+                    let verbose_enabled = {
+                        let lock = verbose_by_chat.lock().await;
+                        *lock.get(&msg.chat.id.0).unwrap_or(&false)
+                    };
+                    if verbose_enabled {
+                        if let Event::Message { content, .. } = &mut event {
+                            *content = format!("{TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER}{content}");
+                        }
+                    }
                     if let Some(Event::ModelResponse {
                         request_id, content, ..
                     }) = on_event(event).await
@@ -965,6 +1018,26 @@ mod tests {
         assert_eq!(
             TelegramAdapter::parse_model_command(vec!["deep"]).unwrap_err(),
             "Usage: /model deep <name>"
+        );
+    }
+
+    #[test]
+    fn parse_verbose_command_toggles_when_no_args() {
+        assert!(TelegramAdapter::parse_verbose_command(&[], false).unwrap());
+        assert!(!TelegramAdapter::parse_verbose_command(&[], true).unwrap());
+    }
+
+    #[test]
+    fn parse_verbose_command_supports_explicit_values() {
+        assert!(TelegramAdapter::parse_verbose_command(&["on"], false).unwrap());
+        assert!(!TelegramAdapter::parse_verbose_command(&["off"], true).unwrap());
+    }
+
+    #[test]
+    fn parse_verbose_command_rejects_invalid_args() {
+        assert_eq!(
+            TelegramAdapter::parse_verbose_command(&["maybe"], false).unwrap_err(),
+            "Usage: /verbose [on|off]"
         );
     }
 
