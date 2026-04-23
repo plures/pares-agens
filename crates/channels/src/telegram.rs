@@ -47,7 +47,7 @@ const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
 /// The runtime strips this marker before model processing and uses it only to
 /// decide whether to append tool execution details to the Telegram reply.
 pub const TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER: &str = "__PARES_VERBOSE_TOOL_DETAILS__:";
-const TELEGRAM_HELP_COMMANDS: [(&str, &str); 19] = [
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 20] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
     ("/status", "status + health snapshot"),
@@ -55,6 +55,10 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 19] = [
     (
         "/verbose",
         "toggle inline tool execution details (or /verbose on|off)",
+    ),
+    (
+        "/reasoning",
+        "toggle deep model escalation (or /reasoning on|off)",
     ),
     ("/model", "show current primary + deep model"),
     ("/model <name>", "switch primary model at runtime"),
@@ -448,6 +452,10 @@ pub trait TelegramModelControl: Send + Sync {
     async fn set_primary_model(&self, model: &str) -> Result<(), String>;
     /// Update the deep model.
     async fn set_deep_model(&self, model: &str) -> Result<(), String>;
+    /// Return whether deep model escalation is enabled.
+    async fn deep_escalation_enabled(&self) -> bool;
+    /// Enable or disable deep model escalation.
+    async fn set_deep_escalation_enabled(&self, enabled: bool) -> Result<(), String>;
 }
 
 /// Runtime reset hooks used by the `/reset` Telegram command.
@@ -534,6 +542,18 @@ impl TelegramAdapter {
                 _ => Err("Usage: /verbose [on|off]"),
             },
             _ => Err("Usage: /verbose [on|off]"),
+        }
+    }
+
+    fn parse_reasoning_command(args: &[&str], current: bool) -> Result<bool, &'static str> {
+        match args {
+            [] => Ok(!current),
+            [flag] => match flag.trim().to_ascii_lowercase().as_str() {
+                "on" | "true" | "1" => Ok(true),
+                "off" | "false" | "0" => Ok(false),
+                _ => Err("Usage: /reasoning [on|off]"),
+            },
+            _ => Err("Usage: /reasoning [on|off]"),
         }
     }
 
@@ -801,6 +821,42 @@ impl ChannelAdapter for TelegramAdapter {
                                             "Verbose tool details disabled.".to_string()
                                         }
                                     }
+                                    Err(usage) => usage.to_string(),
+                                };
+                                let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            "reasoning" => {
+                                let Some(control) = &model_control else {
+                                    let _ = Self::send_markdown_reply(
+                                        &bot,
+                                        &msg,
+                                        "Runtime reasoning controls are unavailable for this deployment.",
+                                        None,
+                                    )
+                                    .await;
+                                    Self::acknowledge_message(&bot, &msg).await;
+                                    return respond(());
+                                };
+                                let args: Vec<&str> = cmd_parts.collect();
+                                let current = control.deep_escalation_enabled().await;
+                                let reply = match Self::parse_reasoning_command(&args, current) {
+                                    Ok(enabled) => match control
+                                        .set_deep_escalation_enabled(enabled)
+                                        .await
+                                    {
+                                        Ok(()) => {
+                                            if enabled {
+                                                "Deep model escalation enabled.".to_string()
+                                            } else {
+                                                "Deep model escalation disabled.".to_string()
+                                            }
+                                        }
+                                        Err(e) => {
+                                            format!("Failed to update deep model escalation: {e}")
+                                        }
+                                    },
                                     Err(usage) => usage.to_string(),
                                 };
                                 let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;
@@ -1307,6 +1363,26 @@ mod tests {
         assert_eq!(
             TelegramAdapter::parse_verbose_command(&["maybe"], false).unwrap_err(),
             "Usage: /verbose [on|off]"
+        );
+    }
+
+    #[test]
+    fn parse_reasoning_command_toggles_when_no_args() {
+        assert!(TelegramAdapter::parse_reasoning_command(&[], false).unwrap());
+        assert!(!TelegramAdapter::parse_reasoning_command(&[], true).unwrap());
+    }
+
+    #[test]
+    fn parse_reasoning_command_supports_explicit_values() {
+        assert!(TelegramAdapter::parse_reasoning_command(&["on"], false).unwrap());
+        assert!(!TelegramAdapter::parse_reasoning_command(&["off"], true).unwrap());
+    }
+
+    #[test]
+    fn parse_reasoning_command_rejects_invalid_args() {
+        assert_eq!(
+            TelegramAdapter::parse_reasoning_command(&["maybe"], false).unwrap_err(),
+            "Usage: /reasoning [on|off]"
         );
     }
 

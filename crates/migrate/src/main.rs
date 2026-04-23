@@ -70,6 +70,17 @@ struct RouterModelClient {
     api_key: Option<String>,
 }
 
+struct ToggleableModelClient {
+    inner: Arc<dyn ModelClient>,
+    enabled: Arc<RwLock<bool>>,
+}
+
+impl ToggleableModelClient {
+    fn new(inner: Arc<dyn ModelClient>, enabled: Arc<RwLock<bool>>) -> Self {
+        Self { inner, enabled }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct CopilotAuthCache {
     oauth_token: String,
@@ -93,6 +104,8 @@ tokio::task_local! {
 struct RuntimeModelOverride {
     model: String,
     deep_model: String,
+    #[serde(default = "default_deep_escalation_enabled")]
+    deep_escalation_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,7 +118,12 @@ struct RuntimeConfigOverride {
 struct RuntimeModelControl {
     primary_model: Arc<RwLock<String>>,
     deep_model: Arc<RwLock<String>>,
+    deep_escalation_enabled: Arc<RwLock<bool>>,
     state_store: Arc<dyn StateStore>,
+}
+
+fn default_deep_escalation_enabled() -> bool {
+    true
 }
 
 struct RuntimeConfigControl {
@@ -178,10 +196,15 @@ impl RuntimeModelControl {
     async fn persist_models(&self) {
         let model = self.primary_model.read().await.clone();
         let deep_model = self.deep_model.read().await.clone();
+        let deep_escalation_enabled = *self.deep_escalation_enabled.read().await;
         self.state_store
             .set(
                 MODEL_OVERRIDE_STATE_KEY,
-                json!(RuntimeModelOverride { model, deep_model }),
+                json!(RuntimeModelOverride {
+                    model,
+                    deep_model,
+                    deep_escalation_enabled
+                }),
             )
             .await;
     }
@@ -328,6 +351,20 @@ impl TelegramModelControl for RuntimeModelControl {
         };
         self.persist_models().await;
         tracing::info!(from_model = %previous, to_model = %model, "runtime deep model updated");
+        Ok(())
+    }
+
+    async fn deep_escalation_enabled(&self) -> bool {
+        *self.deep_escalation_enabled.read().await
+    }
+
+    async fn set_deep_escalation_enabled(&self, enabled: bool) -> Result<(), String> {
+        {
+            let mut guard = self.deep_escalation_enabled.write().await;
+            *guard = enabled;
+        }
+        self.persist_models().await;
+        tracing::info!(enabled, "runtime deep model escalation updated");
         Ok(())
     }
 }
@@ -495,6 +532,21 @@ impl ModelClient for RouterModelClient {
             tool_calls,
             logprobs,
         })
+    }
+}
+
+#[async_trait]
+impl ModelClient for ToggleableModelClient {
+    async fn complete(
+        &self,
+        messages: &[CoreChatMessage],
+        tools: &[ToolDefinition],
+        options: &ChatOptions,
+    ) -> Result<pares_agens_core::model::ModelCompletion, String> {
+        if !*self.enabled.read().await {
+            return Err("deep model escalation is disabled".to_string());
+        }
+        self.inner.complete(messages, tools, options).await
     }
 }
 
@@ -1945,6 +1997,7 @@ async fn main() {
             let mut model_url = model_url;
             let mut model = model;
             let mut deep_model = deep_model;
+            let mut deep_escalation_enabled = default_deep_escalation_enabled();
             let mut runtime_log_level = "info".to_string();
 
             if copilot {
@@ -1987,10 +2040,12 @@ async fn main() {
                 tracing::info!(
                     primary_model = %saved.model,
                     deep_model = %saved.deep_model,
+                    deep_escalation_enabled = saved.deep_escalation_enabled,
                     "loaded runtime model overrides from PluresDB state"
                 );
                 model = saved.model;
                 deep_model = saved.deep_model;
+                deep_escalation_enabled = saved.deep_escalation_enabled;
             }
 
             if let Some(saved) = runtime_state_store
@@ -2020,10 +2075,12 @@ async fn main() {
 
             let model_name = Arc::new(RwLock::new(model.clone()));
             let deep_model_name = Arc::new(RwLock::new(deep_model.clone()));
+            let deep_escalation_enabled_state = Arc::new(RwLock::new(deep_escalation_enabled));
             let runtime_log_level_state = Arc::new(RwLock::new(runtime_log_level.clone()));
             let runtime_model_control = Arc::new(RuntimeModelControl {
                 primary_model: Arc::clone(&model_name),
                 deep_model: Arc::clone(&deep_model_name),
+                deep_escalation_enabled: Arc::clone(&deep_escalation_enabled_state),
                 state_store: Arc::clone(&runtime_state_store),
             });
             let mut runtime_config_control: Option<Arc<dyn TelegramConfigControl>> = None;
@@ -2126,6 +2183,10 @@ async fn main() {
                         deep_router_client as Arc<dyn ModelClient>,
                     )
                 };
+            let deep_model_client: Arc<dyn ModelClient> = Arc::new(ToggleableModelClient::new(
+                deep_model_client,
+                Arc::clone(&deep_escalation_enabled_state),
+            ));
 
             // Set up PluresDB memory store + PluresLM (native)
             let memory_path = PathBuf::from(home).join(".pares-agens/memory");
@@ -2592,6 +2653,7 @@ mod tests {
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4.1".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
+            deep_escalation_enabled: Arc::new(RwLock::new(true)),
             state_store: Arc::clone(&state_store),
         };
 
@@ -2605,7 +2667,8 @@ mod tests {
             state_store.get(MODEL_OVERRIDE_STATE_KEY).await,
             Some(serde_json::json!({
                 "model": "gpt-4o",
-                "deep_model": "claude-opus-4.6"
+                "deep_model": "claude-opus-4.6",
+                "deep_escalation_enabled": true
             }))
         );
     }
@@ -2617,6 +2680,7 @@ mod tests {
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
+            deep_escalation_enabled: Arc::new(RwLock::new(true)),
             state_store: Arc::clone(&state_store),
         };
 
@@ -2630,7 +2694,32 @@ mod tests {
             state_store.get(MODEL_OVERRIDE_STATE_KEY).await,
             Some(serde_json::json!({
                 "model": "gpt-4o",
-                "deep_model": "claude-sonnet-4.5"
+                "deep_model": "claude-sonnet-4.5",
+                "deep_escalation_enabled": true
+            }))
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_model_control_persists_deep_escalation_toggle() {
+        let state_store: Arc<dyn StateStore> =
+            Arc::new(pares_agens_core::InMemoryStateStore::new());
+        let control = RuntimeModelControl {
+            primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
+            deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
+            deep_escalation_enabled: Arc::new(RwLock::new(true)),
+            state_store: Arc::clone(&state_store),
+        };
+
+        control.set_deep_escalation_enabled(false).await.unwrap();
+
+        assert!(!control.deep_escalation_enabled().await);
+        assert_eq!(
+            state_store.get(MODEL_OVERRIDE_STATE_KEY).await,
+            Some(serde_json::json!({
+                "model": "gpt-4o",
+                "deep_model": "claude-opus-4.6",
+                "deep_escalation_enabled": false
             }))
         );
     }
@@ -2653,6 +2742,7 @@ mod tests {
         let runtime_model_control = Arc::new(RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
+            deep_escalation_enabled: Arc::new(RwLock::new(true)),
             state_store: Arc::clone(&state_store),
         });
         let provider_config = ProviderConfig::new("http://localhost:11434/v1", None);
