@@ -29,6 +29,45 @@ pub enum InferenceError {
     #[error("out of memory during inference: {0}")]
     OutOfMemory(String),
 
+    /// Not enough RAM to load the requested expert model.
+    #[error("insufficient RAM: need {needed_mb} MB but only {available_mb} MB available")]
+    InsufficientRam {
+        /// RAM required by the model, in MiB.
+        needed_mb: u64,
+        /// RAM currently available in the pool, in MiB.
+        available_mb: u64,
+    },
+
+    /// The expert pool already holds the configured maximum number of experts.
+    #[error("expert pool is full: max_experts={max_experts}")]
+    ExpertPoolFull {
+        /// Configured maximum number of loaded experts.
+        max_experts: usize,
+    },
+
+    /// An expert with the same role is already loaded.
+    #[error("expert `{expert}` is already loaded")]
+    ExpertAlreadyLoaded {
+        /// Duplicate expert role name.
+        expert: String,
+    },
+
+    /// The requested expert is not loaded in the pool.
+    #[error("expert `{expert}` is not loaded")]
+    ExpertNotLoaded {
+        /// Expert role name that was not found.
+        expert: String,
+    },
+
+    /// The shared KV cache has no space left for this request.
+    #[error("KV cache exhausted: need {needed_mb} MB but only {available_mb} MB available")]
+    KvCacheExhausted {
+        /// KV cache required by the request, in MiB.
+        needed_mb: u64,
+        /// KV cache currently available, in MiB.
+        available_mb: u64,
+    },
+
     /// The model file appears to be corrupt or has an unsupported format.
     #[error("corrupt or incompatible model file `{path}`: {reason}")]
     CorruptModel {
