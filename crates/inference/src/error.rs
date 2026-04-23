@@ -59,6 +59,13 @@ pub enum InferenceError {
         expert: String,
     },
 
+    /// No cluster node currently advertises support for the requested expert.
+    #[error("no inference node available for expert `{expert}`")]
+    NoNodeForExpert {
+        /// Expert role name that could not be routed to any node.
+        expert: String,
+    },
+
     /// The shared KV cache has no space left for this request.
     #[error("KV cache exhausted: need {needed_mb} MB but only {available_mb} MB available")]
     KvCacheExhausted {
