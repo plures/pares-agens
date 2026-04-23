@@ -1,3 +1,8 @@
+## [1.1.0] — 2026-04-23
+
+- feat(inference): add CPU BitNet expert pool with shared KV cache and RAM-aware scheduling (#595) (83f5c40)
+- docs: comprehensive copilot-instructions with praxis, design-dojo, automation rules (c75e0df)
+
 ## [1.0.0] — 2026-04-23
 
 - feat(inference): add model auto-discovery API and canonical local-bitnet router config (#594) (2e24fd0)
