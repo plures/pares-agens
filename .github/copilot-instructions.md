@@ -21,7 +21,6 @@ Agent behavior belongs in PluresDB procedures, not in `.rs` files with match sta
 
 ### 2. Reactive Over Polling
 Every state transition is event-driven. No cron for core lifecycle logic.
-See: https://github.com/plures/development-guide/blob/main/practices/reactive-architecture.md
 
 ### 3. Structured Observability Is Mandatory
 Every module MUST have structured logging with `tracing`:
@@ -31,7 +30,6 @@ Every module MUST have structured logging with `tracing`:
 - **Errors**: log full context (status code, response body, request URL)
 
 One `tracing::debug!` line is NOT observability. Use `tracing::info!` for operational events.
-Future: all state transitions will emit Chronos causal diffs for full traceability.
 
 ### 4. Praxis Gates on Every Decision
 No bare `if/else` for business logic. Decisions go through Praxis rules:
@@ -46,15 +44,32 @@ engine.rule("auto-merge-ready", {
 });
 ```
 
+### 5. Design-Dojo for ALL UI
+All UI components MUST come from `@plures/design-dojo`. No raw HTML elements in application code. If a component doesn't exist, build it in design-dojo first, then import.
+
+### 6. Praxis-Composed Applications
+Apps are wholly composed of praxis primitives:
+- Every decision = a Rule with a Contract
+- Every state change = an Event processed by the Engine
+- Every UI component = design-dojo, generated from schemas
+- Every data operation = PluresDB graph write
+
 ## Organization Standards
 
 ### Source of Truth
 - **Development guide**: https://github.com/plures/development-guide
   - `standards/` — commit conventions, CI/CD, PR workflow, code style
   - `practices/` — copilot delegation, reactive architecture, automation-first
-  - `design/` — PARES-AGENS.md, THREE-AGENT-COGNITIVE-ARCHITECTURE.md, DEVELOPMENT-COORDINATOR.md
-  - `lessons-learned/` — past mistakes to avoid (read these!)
-  - `best-practices/praxis-adoption.md` — how to integrate Praxis
+  - `design/` — PARES-AGENS.md, THREE-AGENT-COGNITIVE-ARCHITECTURE.md
+  - `lessons-learned/` — past mistakes to avoid (READ THESE)
+
+### Automation Rules (ABSOLUTE)
+
+**Automation changes go straight to code.** Never create GitHub issues for workflow/CI/release pipeline/lifecycle changes. Implement directly — commit and push. Issues are for feature work and bugs only.
+
+**Zero nudges.** No `@copilot` comments, no retry comments. If stalled: close → recreate → reassign.
+
+**Single assignment authority.** Only the lifecycle workflow assigns Copilot.
 
 ### Conventional Commits (REQUIRED)
 ```
@@ -63,11 +78,7 @@ engine.rule("auto-merge-ready", {
 Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`, `ci`, `build`
 Breaking changes: add `!` after type or `BREAKING CHANGE:` in footer.
 
-### PR Titles — use conventional commit format (they become the squash commit).
-
-### Squash merge — always. Clean single commit on `main`.
-
-### Tests required — all new features need tests. Bug fixes need a failing test first.
+### Squash merge — always. Tests required — all new features need tests.
 
 ## Plures Stack Reference
 
@@ -79,19 +90,29 @@ Breaking changes: add `!` after type or `BREAKING CHANGE:` in footer.
 | `chronos` | Graph-native state chronicle (causal diffs) | https://github.com/plures/chronos |
 | `design-dojo` | UI component library (Svelte 5) | https://github.com/plures/design-dojo |
 | `unum` | Svelte 5 reactive bindings for PluresDB | https://github.com/plures/unum |
+| `pares-radix` | Application shell + plugin loader | https://github.com/plures/pares-radix |
+| `pares-modulus` | Plugin registry (gated, manifest-validated) | https://github.com/plures/pares-modulus |
 
 ## What NOT To Do
 
-- Do NOT add `#[allow(...)]` to suppress warnings — fix the underlying issue
-- Do NOT create sub-PRs that depend on other PRs
-- Do NOT touch files outside the requested scope
-- Do NOT manually bump version numbers
-- Do NOT add bare `println!` or `dbg!` — use `tracing` macros
-- Do NOT write imperative routing logic — use PluresDB procedures
-- Do NOT skip structured logging on any I/O boundary (HTTP calls, DB queries, file ops)
-- Do NOT add `eslint-disable` or `clippy::allow` without a comment explaining why
+- ❌ NO `#[allow(...)]` to suppress warnings — fix the underlying issue
+- ❌ NO creating GitHub issues for automation/workflow/CI changes — implement directly
+- ❌ NO sub-PRs that depend on other PRs
+- ❌ NO touching files outside the requested scope
+- ❌ NO manually bumping version numbers
+- ❌ NO bare `println!` or `dbg!` — use `tracing` macros
+- ❌ NO imperative routing logic — use PluresDB procedures
+- ❌ NO skipping structured logging on any I/O boundary
+- ❌ NO raw HTML elements — use design-dojo components
+- ❌ NO nudging Copilot with comments — close and recreate if stalled
+- ❌ NO cron jobs for orchestration — use reactive procedures
+- ❌ NO bare if/else business logic — use Praxis expectations
 
 ## Release Pipeline
 
-Reusable release workflow from `plures/.github`. Do NOT manually bump versions.
-Version bumps are automatic from conventional commits.
+Reusable release workflow from `plures/.github`. Supports `target_version` for milestone-driven releases. Do NOT manually bump versions.
+
+### When in Doubt
+1. Check the development guide
+2. Look for existing ADRs in `.praxis/decisions/`
+3. Ask before breaking established patterns
