@@ -27,7 +27,8 @@ pub struct NodeInferenceCapability {
 }
 
 impl NodeInferenceCapability {
-    fn supports(&self, expert: CpuExpert) -> bool {
+    /// Return true when this node advertises support for `expert`.
+    pub fn supports(&self, expert: CpuExpert) -> bool {
         self.experts.contains(&expert)
     }
 }
