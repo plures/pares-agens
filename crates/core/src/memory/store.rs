@@ -110,6 +110,8 @@ const TURN_PREFIX: &str = "turn:";
 const HOST_PREFIX: &str = "host/";
 /// The PluresDB key suffix for per-host adapter configuration.
 const ADAPTERS_SUFFIX: &str = "/adapters";
+/// The PluresDB key suffix for per-host inference capability advertisements.
+const INFERENCE_CAPABILITIES_SUFFIX: &str = "/inference-capabilities";
 const SEA_DATA_FIELD: &str = "_sea";
 const SEA_HOST_KEY_FILE: &str = ".sea-host-key.json";
 const SEA_SYNC_PAYLOAD_ENCODING: &str = "base64url";
@@ -136,6 +138,23 @@ struct HostAdaptersPayload {
     adapters: Vec<HostAdapterConfig>,
 }
 
+/// Distributed inference capability advertisement for a host.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HostInferenceCapability {
+    /// Hostname or IP advertised for inference calls.
+    pub host: String,
+    /// Port exposed by the host's inference endpoint.
+    pub port: u16,
+    /// Expert names currently available on this host.
+    #[serde(default)]
+    pub experts: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct HostInferenceCapabilityPayload {
+    capability: HostInferenceCapability,
+}
+
 /// Adapter configuration snapshot for a specific host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostAdapterRecord {
@@ -143,6 +162,15 @@ pub struct HostAdapterRecord {
     pub host: String,
     /// Adapters configured for this host.
     pub adapters: Vec<HostAdapterConfig>,
+}
+
+/// Inference capability snapshot for a specific host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostInferenceCapabilityRecord {
+    /// Host identifier from the key path: `host/<hostname>/inference-capabilities`.
+    pub host: String,
+    /// Capability payload advertised by this host.
+    pub capability: HostInferenceCapability,
 }
 
 /// Generate a new random Hyperswarm topic key as a 64-character lowercase hex string.
@@ -355,6 +383,61 @@ impl PluresDbStore {
                 records.push(HostAdapterRecord {
                     host: host.to_string(),
                     adapters: payload.adapters,
+                });
+            }
+        }
+        Ok(records)
+    }
+
+    /// Persist distributed inference capability under
+    /// `host/<hostname>/inference-capabilities`.
+    pub async fn set_host_inference_capability(
+        &self,
+        hostname: &str,
+        capability: HostInferenceCapability,
+    ) -> Result<(), Error> {
+        if hostname.trim().is_empty()
+            || hostname.contains('/')
+            || hostname.chars().any(|c| c.is_control())
+        {
+            return Err(Error::Store(
+                "hostname must be non-empty and must not contain '/' or control characters".into(),
+            ));
+        }
+        let payload = HostInferenceCapabilityPayload { capability };
+        let data = seal_value_for_storage(
+            serde_json::to_value(payload)
+                .map_err(|e| Error::Store(format!("serialise host inference capability failed: {e}")))?,
+            self.host_sea_key.as_ref(),
+        )?;
+        let key = format!("{HOST_PREFIX}{hostname}{INFERENCE_CAPABILITIES_SUFFIX}");
+        self.store.put(key, ACTOR, data);
+        Ok(())
+    }
+
+    /// List all host distributed inference capability snapshots from PluresDB.
+    pub async fn list_host_inference_capabilities(
+        &self,
+    ) -> Result<Vec<HostInferenceCapabilityRecord>, Error> {
+        let mut records = Vec::new();
+        for record in self.store.list() {
+            if !(record.id.starts_with(HOST_PREFIX)
+                && record.id.ends_with(INFERENCE_CAPABILITIES_SUFFIX))
+            {
+                continue;
+            }
+            let Some(host) = record
+                .id
+                .strip_prefix(HOST_PREFIX)
+                .and_then(|id| id.strip_suffix(INFERENCE_CAPABILITIES_SUFFIX))
+            else {
+                continue;
+            };
+            let value = unseal_value_from_storage(record.data, self.host_sea_key.as_ref())?;
+            if let Ok(payload) = serde_json::from_value::<HostInferenceCapabilityPayload>(value) {
+                records.push(HostInferenceCapabilityRecord {
+                    host: host.to_string(),
+                    capability: payload.capability,
                 });
             }
         }
@@ -897,6 +980,44 @@ mod tests {
         let store = PluresDbStore::in_memory();
         store.insert(make_entry("m1", "memory")).await.unwrap();
         let configs = store.list_host_adapters().await.unwrap();
+        assert!(configs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pluresdb_store_set_and_list_host_inference_capabilities_roundtrip() {
+        let store = PluresDbStore::in_memory();
+        let capability = HostInferenceCapability {
+            host: "10.0.0.10".to_string(),
+            port: 8081,
+            experts: vec!["routing".to_string(), "monitoring".to_string()],
+        };
+        store
+            .set_host_inference_capability("host-a", capability.clone())
+            .await
+            .unwrap();
+        let configs = store.list_host_inference_capabilities().await.unwrap();
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].host, "host-a");
+        assert_eq!(configs[0].capability, capability);
+    }
+
+    #[tokio::test]
+    async fn pluresdb_store_list_host_inference_capabilities_ignores_other_nodes() {
+        let store = PluresDbStore::in_memory();
+        store.insert(make_entry("m2", "memory")).await.unwrap();
+        store
+            .set_host_adapters(
+                "host-b",
+                vec![HostAdapterConfig {
+                    kind: "telegram".to_string(),
+                    connection_id: "abc".to_string(),
+                    single_connection: true,
+                }],
+            )
+            .await
+            .unwrap();
+
+        let configs = store.list_host_inference_capabilities().await.unwrap();
         assert!(configs.is_empty());
     }
 

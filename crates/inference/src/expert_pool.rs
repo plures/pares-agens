@@ -14,7 +14,7 @@ use std::sync::{
 use crate::{client::ModelClient, error::InferenceError, params::GenParams};
 
 /// Domain-specialized BitNet expert roles.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum CpuExpert {
     /// Deployment and release operations.
     Deployment,
@@ -29,7 +29,8 @@ pub enum CpuExpert {
 }
 
 impl CpuExpert {
-    fn as_str(self) -> &'static str {
+    /// Return the stable lowercase identifier for this expert role.
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Deployment => "deployment",
             Self::Routing => "routing",
