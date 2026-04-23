@@ -139,7 +139,6 @@ impl SharedKvCacheManager {
 }
 
 /// CPU pool for loading and running multiple specialized BitNet experts.
-#[derive(Clone)]
 pub struct CpuExpertPool {
     config: CpuExpertPoolConfig,
     loaded: HashMap<CpuExpert, LoadedExpert>,
@@ -301,14 +300,33 @@ impl CpuExpertPool {
             .clone();
 
         let request_id = self.kv_cache.allocate(kv_cache_mb)?;
-        let result = complete_from_client(&loaded.model, prompt, params).await;
-        self.kv_cache.free(request_id);
-        result
+        let _reservation = KvCacheReservation::new(self.kv_cache.as_ref(), request_id);
+        complete_from_client(&loaded.model, prompt, params).await
     }
 }
 
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
+}
+
+struct KvCacheReservation<'a> {
+    manager: &'a SharedKvCacheManager,
+    request_id: u64,
+}
+
+impl<'a> KvCacheReservation<'a> {
+    fn new(manager: &'a SharedKvCacheManager, request_id: u64) -> Self {
+        Self {
+            manager,
+            request_id,
+        }
+    }
+}
+
+impl Drop for KvCacheReservation<'_> {
+    fn drop(&mut self) {
+        self.manager.free(self.request_id);
+    }
 }
 
 async fn complete_from_client(
