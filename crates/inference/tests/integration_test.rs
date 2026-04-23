@@ -286,6 +286,28 @@ fn registry_scan_dir_populates_file_size() {
 }
 
 #[test]
+fn registry_auto_detect_scans_supported_files() {
+    let tmp = tempdir();
+    std::fs::write(tmp.join("auto-a.gguf"), b"gguf").unwrap();
+    std::fs::write(tmp.join("auto-b.bin"), b"bin").unwrap();
+    std::fs::write(tmp.join("notes.md"), b"ignore").unwrap();
+
+    let registry = ModelRegistry::auto_detect(&tmp).expect("auto_detect should succeed");
+    assert!(registry.get("auto-a").is_some());
+    assert!(registry.get("auto-b").is_some());
+    assert!(registry.get("notes").is_none());
+}
+
+#[test]
+fn registry_auto_detect_missing_dir_returns_empty_registry() {
+    let tmp = tempdir();
+    let missing = tmp.join("missing");
+
+    let registry = ModelRegistry::auto_detect(&missing).expect("missing dir should not error");
+    assert!(registry.entries().next().is_none());
+}
+
+#[test]
 fn registry_register_full_sets_all_fields() {
     let mut registry = ModelRegistry::new();
     registry.register_full(

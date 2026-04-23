@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
 
+/// Canonical provider name for local BitNet inference.
+pub const LOCAL_BITNET_PROVIDER: &str = "local-bitnet";
+
 // ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
@@ -72,6 +75,12 @@ impl RouterConfig {
             default_provider: name,
         }
     }
+
+    /// Build a single-provider config wired to the canonical local BitNet
+    /// provider name (`"local-bitnet"`).
+    pub fn local_bitnet(base_url: impl Into<String>) -> Self {
+        Self::single(LOCAL_BITNET_PROVIDER, ProviderConfig::new(base_url, None))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +136,19 @@ mod tests {
         assert_eq!(cfg.default_provider, "local");
         assert!(cfg.rules.is_empty());
         assert!(cfg.providers.contains_key("local"));
+    }
+
+    #[test]
+    fn router_config_local_bitnet_constructor() {
+        let cfg = RouterConfig::local_bitnet("http://127.0.0.1:12434");
+        assert_eq!(cfg.default_provider, LOCAL_BITNET_PROVIDER);
+        assert!(cfg.providers.contains_key(LOCAL_BITNET_PROVIDER));
+        assert!(cfg.rules.is_empty());
+        assert_eq!(
+            cfg.providers[LOCAL_BITNET_PROVIDER].base_url,
+            "http://127.0.0.1:12434"
+        );
+        assert!(cfg.providers[LOCAL_BITNET_PROVIDER].api_key.is_none());
     }
 
     #[test]

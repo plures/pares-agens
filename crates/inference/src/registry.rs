@@ -71,6 +71,37 @@ impl ModelRegistry {
         Self::default()
     }
 
+    /// Auto-detect models by scanning `model_dir` for supported file types.
+    ///
+    /// This is intended for first-run startup flows where models may already be
+    /// present on disk (e.g. pre-downloaded into a mounted cache directory).
+    ///
+    /// If `model_dir` does not exist, this returns an empty registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InferenceError::Io`] if `model_dir` exists but cannot be read.
+    pub fn auto_detect(model_dir: &Path) -> Result<Self, InferenceError> {
+        let mut registry = Self::new();
+        if model_dir.is_dir() {
+            registry.scan_dir(model_dir)?;
+        }
+        Ok(registry)
+    }
+
+    /// Auto-detect models in the platform default cache directory
+    /// (`~/.pares-agens/models`).
+    ///
+    /// If the directory does not exist, this returns an empty registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InferenceError::Io`] if the cache directory exists but cannot
+    /// be read.
+    pub fn auto_detect_default_cache() -> Result<Self, InferenceError> {
+        Self::auto_detect(&default_cache_dir())
+    }
+
     /// Register a model.
     ///
     /// If a model with the same `model_id` already exists it is replaced.
