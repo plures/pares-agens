@@ -13,6 +13,7 @@
 //! | [`LocalModelsConfig`] | `[models.local]` config section (cache dir, default model). |
 //! | [`ModelRegistry`] | Registry of locally available models. |
 //! | [`ModelDownloader`] | Manages model file caching on disk. |
+//! | [`CpuExpertPool`] | Multi-model CPU expert pool with shared KV cache and RAM-aware scheduling. |
 //! | [`InferenceError`] | Unified error type for all inference failures. |
 //! | [`ModelCommand`] | CLI sub-commands for `pares-agens model`. |
 //!
@@ -61,6 +62,7 @@ pub mod client;
 pub mod config;
 pub mod downloader;
 pub mod error;
+pub mod expert_pool;
 pub mod params;
 pub mod registry;
 pub mod runner;
@@ -70,6 +72,7 @@ pub use client::{ModelClient, TokenReceiver, TokenSender};
 pub use config::{InferenceConfig, LocalModelsConfig};
 pub use downloader::ModelDownloader;
 pub use error::InferenceError;
+pub use expert_pool::{CpuExpert, CpuExpertPool, CpuExpertPoolConfig, SharedKvCacheManager};
 pub use params::GenParams;
 pub use registry::{default_cache_dir, ModelEntry, ModelRegistry};
 pub use runner::BitNetLocalRunner;
