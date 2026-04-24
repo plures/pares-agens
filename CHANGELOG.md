@@ -1,3 +1,8 @@
+## [1.1.2] — 2026-04-24
+
+- fix: add glib to buildInputs — gobject-sys needs it (06fc35e)
+- docs: refresh ROADMAP.md with OASIS strategic alignment (5bf26e6)
+
 ## [1.1.1] — 2026-04-24
 
 - fix: tech-doc-writer YAML parse error + lifecycle false-positive CI failures (#600) (b05d349)
