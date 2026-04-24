@@ -1,17 +1,17 @@
 # Pares Agens Roadmap
 
+## Role in OASIS
+Pares Agens is the agent runtime that powers OASIS’s decentralized multi-agent orchestration: task decomposition, capability-based routing, and execution across local + cloud resources. It is the control plane that connects PluresDB procedures, PluresLM memory, and tool execution into a coherent, autonomous system.
+
 ## ✅ v0.5.0 — Dogfood Ready (10/10 closed)
 ## ✅ v0.6.0 — Cognitive Architecture (7/7 closed)
 ## ✅ v0.6.0 — Production Hardening (10/10 closed)
 ## ✅ v0.7.0 — Multi-Host Sync (8/8 closed)
 
 ## v0.8.0 — Ecosystem
-- [x] Agent marketplace — /install from pares-modulus (#514, #536)
 - [ ] Audit trail — Chronos decision logging (#515, partial)
 
 ## v0.9.0 — Desktop Experience
-- [x] System tray — crates/tauri-app/src/tray.rs
-- [x] Chat UI — Svelte 5 + design-dojo + PluresDB history
 - [ ] Hotkey activation (#516, PR #537 in progress)
 - [ ] Clipboard integration (#517)
 - [ ] Notification actions (#518)
@@ -35,8 +35,13 @@
 | #504 | Proactive org monitoring | Depends on #538 (scheduler) |
 | #505 | Direct code fixes | Open |
 | #506 | Self-update via NixOS rebuild | Open |
-| #507 | Telegram slash commands | ✅ Done |
 | #508 | Production hardening — error recovery | Open |
+| #578 | Telegram: /approve | Open (PR #601 in progress) |
+| #579 | Telegram: /cron | Open |
+| #580 | Telegram: /sessions | Open |
+| #581 | Telegram: /tools | Open |
+| #582 | Telegram: /web | Open |
+| #602 | Fix CI failures | Open |
 
 ### Polish & Ecosystem
 
@@ -53,7 +58,7 @@
 | Phase | Total | Done | Remaining |
 |-------|-------|------|-----------|
 | v0.5.0–v0.7.0 | 35 | 35 | 0 ✅ |
-| v0.8.0 | 2 | 1 | 1 |
-| v0.9.0 | 5 | 2 | 3 |
-| v1.0.0 | 16 | 1 | 15 |
-| **Total** | **58** | **39** | **19** |
+| v0.8.0 | 1 | 0 | 1 |
+| v0.9.0 | 3 | 0 | 3 |
+| v1.0.0 | 20 | 0 | 20 |
+| **Total** | **59** | **35** | **24** |
