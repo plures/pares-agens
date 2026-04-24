@@ -50,7 +50,7 @@ tar.extractall(os.environ['out'] + '/lib')
         cargoBuildFlags = [ "-p" "pares-agens" ];
 
         nativeBuildInputs = with pkgs; [ pkg-config cmake ];
-        buildInputs = with pkgs; [ openssl stdenv.cc.cc.lib glib pango cairo gdk-pixbuf atk gtk3 graphene ];
+        buildInputs = with pkgs; [ openssl stdenv.cc.cc.lib glib pango cairo gdk-pixbuf atk gtk3 graphene webkitgtk_4_1 libsoup_3 ];
 
         # Point ort-sys to prefetched ONNX Runtime (pure sandbox, no network)
         ORT_LIB_LOCATION = "${onnxruntimeLib { inherit pkgs; }}/lib";
@@ -81,6 +81,7 @@ tar.extractall(os.environ['out'] + '/lib')
           buildInputs = with pkgs; [
             rust pkg-config openssl cmake stdenv.cc.cc.lib cargo-watch
             glib pango cairo gdk-pixbuf atk gtk3 graphene
+            webkitgtk_4_1 libsoup_3
           ];
         };
       }
