@@ -600,6 +600,32 @@ impl TelegramAdapter {
         }
     }
 
+    /// Extract a display name for a Telegram [`User`].
+    fn sender_from_user(from: &User) -> String {
+        from.username
+            .as_deref()
+            .unwrap_or(&from.first_name)
+            .to_string()
+    }
+
+    /// Format the agent-facing content for an approval decision.
+    fn format_approval_decision_content(approved: bool, request_id: &str) -> String {
+        if approved {
+            format!("Approved. [request_id: {request_id}]")
+        } else {
+            format!("Denied. [request_id: {request_id}]")
+        }
+    }
+
+    /// Fallback reply when the agent does not return a `ModelResponse`.
+    fn format_approval_fallback_reply(approved: bool, request_id: &str) -> String {
+        if approved {
+            format!("Approved request {request_id}.")
+        } else {
+            format!("Denied request {request_id}.")
+        }
+    }
+
     /// Convert a Telegram [`Message`] into an agent [`Event`].
     ///
     /// Text messages become `Event::Message`. Photos and documents include
@@ -609,7 +635,7 @@ impl TelegramAdapter {
         let from = msg
             .from
             .as_ref()
-            .map(|u| u.username.as_deref().unwrap_or(&u.first_name).to_string())
+            .map(|u| Self::sender_from_user(u))
             .unwrap_or_else(|| format!("chat:{}", msg.chat.id));
 
         match &msg.kind {
@@ -1191,12 +1217,7 @@ impl ChannelAdapter for TelegramAdapter {
                                 let sender = msg
                                     .from
                                     .as_ref()
-                                    .map(|u| {
-                                        u.username
-                                            .as_deref()
-                                            .unwrap_or(&u.first_name)
-                                            .to_string()
-                                    })
+                                    .map(|u| Self::sender_from_user(u))
                                     .unwrap_or_else(|| format!("chat:{}", msg.chat.id));
 
                                 info!(
@@ -1206,15 +1227,12 @@ impl ChannelAdapter for TelegramAdapter {
                                     "telegram /approve|/deny: elevated action decision received"
                                 );
 
-                                let content = if approved {
-                                    format!("Approved. [request_id: {request_id}]")
-                                } else {
-                                    format!("Denied. [request_id: {request_id}]")
-                                };
-
                                 let approval_event = Event::Message {
                                     id: Uuid::new_v4().to_string(),
-                                    content,
+                                    content: Self::format_approval_decision_content(
+                                        approved,
+                                        &request_id,
+                                    ),
                                     channel: "telegram".to_string(),
                                     sender,
                                 };
@@ -1224,10 +1242,8 @@ impl ChannelAdapter for TelegramAdapter {
                                         on_event(approval_event).await
                                     {
                                         content
-                                    } else if approved {
-                                        format!("Approved request {request_id}.")
                                     } else {
-                                        format!("Denied request {request_id}.")
+                                        Self::format_approval_fallback_reply(approved, &request_id)
                                     };
 
                                 let _ =
@@ -1333,12 +1349,7 @@ impl ChannelAdapter for TelegramAdapter {
                     };
 
                     let approved = decision == "yes";
-                    let sender = q
-                        .from
-                        .username
-                        .as_deref()
-                        .unwrap_or(&q.from.first_name)
-                        .to_string();
+                    let sender = TelegramAdapter::sender_from_user(&q.from);
 
                     info!(
                         request_id = %request_id,
@@ -1353,15 +1364,12 @@ impl ChannelAdapter for TelegramAdapter {
                         .text(status_text)
                         .await;
 
-                    let content = if approved {
-                        format!("Approved. [request_id: {request_id}]")
-                    } else {
-                        format!("Denied. [request_id: {request_id}]")
-                    };
-
                     let approval_event = Event::Message {
                         id: Uuid::new_v4().to_string(),
-                        content,
+                        content: TelegramAdapter::format_approval_decision_content(
+                            approved,
+                            &request_id,
+                        ),
                         channel: "telegram".to_string(),
                         sender,
                     };
@@ -1370,10 +1378,8 @@ impl ChannelAdapter for TelegramAdapter {
                         on_event(approval_event).await
                     {
                         content
-                    } else if approved {
-                        format!("Approved request {request_id}.")
                     } else {
-                        format!("Denied request {request_id}.")
+                        TelegramAdapter::format_approval_fallback_reply(approved, &request_id)
                     };
 
                     let _ = bot
