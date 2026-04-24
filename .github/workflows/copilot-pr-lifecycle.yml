@@ -150,7 +150,7 @@ jobs:
               const checks = await github.rest.checks.listForRef({ owner, repo, ref: sha });
               const skipChecks = ['lifecycle', 'queue-advance', 'Copilot code review', 'Publish to npm', 'Conventional commit title'];
               const relevant = checks.data.check_runs.filter(c =>
-                !skipChecks.includes(c.name) && !c.name.startsWith('Build -')
+                !skipChecks.includes(c.name) && !c.name.startsWith('Build -') && !c.app?.slug?.includes('copilot')
               );
               const allDone = relevant.length === 0 || relevant.every(c => c.status === 'completed');
               const allGreen = allDone && (relevant.length === 0 || relevant.every(c =>
