@@ -25,8 +25,8 @@ use std::sync::Arc;
 use teloxide::{
     prelude::*,
     types::{
-        InlineKeyboardButton, InlineKeyboardMarkup, Message, MessageKind, ParseMode, ReactionType,
-        ReplyParameters,
+        CallbackQuery, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, Message, MessageKind,
+        ParseMode, ReactionType, ReplyParameters, User,
     },
 };
 use tokio::sync::Mutex as TokioMutex;
@@ -47,7 +47,7 @@ const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
 /// The runtime strips this marker before model processing and uses it only to
 /// decide whether to append tool execution details to the Telegram reply.
 pub const TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER: &str = "__PARES_VERBOSE_TOOL_DETAILS__:";
-const TELEGRAM_HELP_COMMANDS: [(&str, &str); 20] = [
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 22] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
     ("/status", "status + health snapshot"),
@@ -80,6 +80,8 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 20] = [
         "/update",
         "run NixOS self-update and rebuild if pares-agens changed",
     ),
+    ("/approve <id>", "approve a pending elevated action by request ID"),
+    ("/deny <id>", "deny a pending elevated action by request ID"),
 ];
 const DEFAULT_LOG_TAIL_LINES: usize = 80;
 const MAX_LOG_TAIL_LINES: usize = 400;
@@ -347,17 +349,13 @@ fn current_process_rss_kib() -> Option<u64> {
     }
 }
 
-fn is_update_authorized(msg: &Message) -> bool {
+fn is_user_authorized(from: &User) -> bool {
     let allowlist = std::env::var("PARES_TELEGRAM_UPDATE_ALLOWED_USERS")
         .ok()
         .unwrap_or_default();
     if allowlist.trim().is_empty() {
         return false;
     }
-    let Some(from) = msg.from.as_ref() else {
-        return false;
-    };
-
     let username = from.username.as_deref().unwrap_or_default();
     let user_id = from.id.0.to_string();
 
@@ -369,6 +367,10 @@ fn is_update_authorized(msg: &Message) -> bool {
             let normalized = entry.trim_start_matches('@');
             normalized.eq_ignore_ascii_case(username) || normalized == user_id
         })
+}
+
+fn is_update_authorized(msg: &Message) -> bool {
+    msg.from.as_ref().map(is_user_authorized).unwrap_or(false)
 }
 
 /// Configuration for the Telegram adapter.
@@ -505,12 +507,22 @@ enum ModelCommand {
     SetDeep(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum ConfigCommand {
     Show,
     SetModel(String),
     SetEndpoint(String),
     SetLogLevel(String),
+}
+
+/// Tracks an in-flight approval request that was emitted by the agent.
+///
+/// Stored in the shared `pending_approvals` map keyed by `request_id`.
+/// Removed when the user responds via `/approve`/`/deny` or the inline keyboard.
+#[derive(Debug, Clone)]
+struct PendingApproval {
+    /// Chat that the approval prompt was sent in, used to route the follow-up reply.
+    chat_id: ChatId,
 }
 
 impl TelegramAdapter {
@@ -574,6 +586,17 @@ impl TelegramAdapter {
             _ => Err(
                 "Usage: /config | /config model <name> | /config endpoint <url> | /config log-level <level>",
             ),
+        }
+    }
+
+    /// Parse the `<request_id>` argument for `/approve` and `/deny`.
+    ///
+    /// Returns `Ok(request_id)` when exactly one non-empty argument is provided,
+    /// or `Err(usage_string)` otherwise.
+    fn parse_approve_or_deny_command(args: &[&str]) -> Result<String, &'static str> {
+        match args {
+            [id] if !id.trim().is_empty() => Ok(id.trim().to_string()),
+            _ => Err("Usage: /approve <request_id> | /deny <request_id>"),
         }
     }
 
@@ -751,7 +774,11 @@ impl ChannelAdapter for TelegramAdapter {
         ));
 
         let on_event = std::sync::Arc::new(on_event);
-        let handler = Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
+        let on_event_cb = on_event.clone();
+        let pending_approvals =
+            Arc::new(TokioMutex::new(HashMap::<String, PendingApproval>::new()));
+        let pending_approvals_cb = pending_approvals.clone();
+        let msg_handler = Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
             let event = Self::message_to_event(&msg);
             let on_event = on_event.clone();
             let installer = installer.clone();
@@ -760,6 +787,7 @@ impl ChannelAdapter for TelegramAdapter {
             let runtime_control = runtime_control.clone();
             let config_control = config_control.clone();
             let verbose_by_chat = verbose_by_chat.clone();
+            let pending_approvals = pending_approvals.clone();
             let update_flake_dir =
                 std::env::var("PARES_NIX_FLAKE_DIR").unwrap_or_else(|_| DEFAULT_NIX_FLAKE_DIR.into());
             let update_host =
@@ -1114,6 +1142,99 @@ impl ChannelAdapter for TelegramAdapter {
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
+                            "approve" | "deny" => {
+                                if !is_update_authorized(&msg) {
+                                    let _ = Self::send_markdown_reply(
+                                        &bot,
+                                        &msg,
+                                        "Not authorized. Configure PARES_TELEGRAM_UPDATE_ALLOWED_USERS with approved Telegram usernames or numeric IDs.",
+                                        None,
+                                    )
+                                    .await;
+                                    Self::acknowledge_message(&bot, &msg).await;
+                                    return respond(());
+                                }
+                                let args: Vec<&str> = cmd_parts.collect();
+                                let request_id =
+                                    match Self::parse_approve_or_deny_command(&args) {
+                                        Ok(id) => id,
+                                        Err(usage) => {
+                                            let _ = Self::send_markdown_reply(
+                                                &bot, &msg, usage, None,
+                                            )
+                                            .await;
+                                            Self::acknowledge_message(&bot, &msg).await;
+                                            return respond(());
+                                        }
+                                    };
+
+                                let removed = {
+                                    let mut map = pending_approvals.lock().await;
+                                    map.remove(&request_id)
+                                };
+
+                                if removed.is_none() {
+                                    let _ = Self::send_markdown_reply(
+                                        &bot,
+                                        &msg,
+                                        &format!(
+                                            "No pending approval found with ID: {request_id}"
+                                        ),
+                                        None,
+                                    )
+                                    .await;
+                                    Self::acknowledge_message(&bot, &msg).await;
+                                    return respond(());
+                                }
+
+                                let approved = cmd == "approve";
+                                let sender = msg
+                                    .from
+                                    .as_ref()
+                                    .map(|u| {
+                                        u.username
+                                            .as_deref()
+                                            .unwrap_or(&u.first_name)
+                                            .to_string()
+                                    })
+                                    .unwrap_or_else(|| format!("chat:{}", msg.chat.id));
+
+                                info!(
+                                    request_id = %request_id,
+                                    approved,
+                                    sender = %sender,
+                                    "telegram /approve|/deny: elevated action decision received"
+                                );
+
+                                let content = if approved {
+                                    format!("Approved. [request_id: {request_id}]")
+                                } else {
+                                    format!("Denied. [request_id: {request_id}]")
+                                };
+
+                                let approval_event = Event::Message {
+                                    id: Uuid::new_v4().to_string(),
+                                    content,
+                                    channel: "telegram".to_string(),
+                                    sender,
+                                };
+
+                                let reply =
+                                    if let Some(Event::ModelResponse { content, .. }) =
+                                        on_event(approval_event).await
+                                    {
+                                        content
+                                    } else if approved {
+                                        format!("Approved request {request_id}.")
+                                    } else {
+                                        format!("Denied request {request_id}.")
+                                    };
+
+                                let _ =
+                                    Self::send_markdown_reply(&bot, &msg, &reply, None).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
                             _ => {} // fall through to agent
                         }
                     }
@@ -1135,6 +1256,19 @@ impl ChannelAdapter for TelegramAdapter {
                     }) = on_event(event).await
                     {
                         let reply_markup = if Self::is_approval_prompt(&content) {
+                            {
+                                let mut map = pending_approvals.lock().await;
+                                map.insert(
+                                    request_id.clone(),
+                                    PendingApproval {
+                                        chat_id: msg.chat.id,
+                                    },
+                                );
+                            }
+                            info!(
+                                request_id = %request_id,
+                                "telegram: queued pending approval"
+                            );
                             Some(Self::approval_keyboard(&request_id))
                         } else {
                             None
@@ -1152,11 +1286,118 @@ impl ChannelAdapter for TelegramAdapter {
             }
         });
 
-        Dispatcher::builder(bot, handler)
-            .enable_ctrlc_handler()
-            .build()
-            .dispatch()
-            .await;
+        let callback_handler =
+            Update::filter_callback_query().endpoint(move |bot: Bot, q: CallbackQuery| {
+                let on_event = on_event_cb.clone();
+                let pending_approvals = pending_approvals_cb.clone();
+                async move {
+                    let data = match q.data.as_deref() {
+                        Some(d) if d.starts_with("approval:") => d.to_string(),
+                        _ => {
+                            let _ = bot.answer_callback_query(q.id).await;
+                            return respond(());
+                        }
+                    };
+
+                    let parts: Vec<&str> = data.splitn(3, ':').collect();
+                    if parts.len() != 3 {
+                        let _ = bot.answer_callback_query(q.id).await;
+                        return respond(());
+                    }
+                    let decision = parts[1]; // "yes" or "no"
+                    let request_id = parts[2].to_string();
+
+                    // Authorization check — same allowlist as `/approve`/`/deny`
+                    if !is_user_authorized(&q.from) {
+                        let _ = bot
+                            .answer_callback_query(q.id)
+                            .text("Not authorized to approve or deny actions.")
+                            .await;
+                        return respond(());
+                    }
+
+                    let removed = {
+                        let mut map = pending_approvals.lock().await;
+                        map.remove(&request_id)
+                    };
+
+                    let pending = match removed {
+                        Some(p) => p,
+                        None => {
+                            let _ = bot
+                                .answer_callback_query(q.id)
+                                .text("This approval request has already been resolved or expired.")
+                                .await;
+                            return respond(());
+                        }
+                    };
+
+                    let approved = decision == "yes";
+                    let sender = q
+                        .from
+                        .username
+                        .as_deref()
+                        .unwrap_or(&q.from.first_name)
+                        .to_string();
+
+                    info!(
+                        request_id = %request_id,
+                        approved,
+                        sender = %sender,
+                        "telegram approval callback: decision received"
+                    );
+
+                    let status_text = if approved { "Approved" } else { "Denied" };
+                    let _ = bot
+                        .answer_callback_query(q.id)
+                        .text(status_text)
+                        .await;
+
+                    let content = if approved {
+                        format!("Approved. [request_id: {request_id}]")
+                    } else {
+                        format!("Denied. [request_id: {request_id}]")
+                    };
+
+                    let approval_event = Event::Message {
+                        id: Uuid::new_v4().to_string(),
+                        content,
+                        channel: "telegram".to_string(),
+                        sender,
+                    };
+
+                    let reply = if let Some(Event::ModelResponse { content, .. }) =
+                        on_event(approval_event).await
+                    {
+                        content
+                    } else if approved {
+                        format!("Approved request {request_id}.")
+                    } else {
+                        format!("Denied request {request_id}.")
+                    };
+
+                    let _ = bot
+                        .send_message(
+                            pending.chat_id,
+                            TelegramAdapter::escape_markdown_v2(&reply),
+                        )
+                        .parse_mode(ParseMode::MarkdownV2)
+                        .await;
+
+                    respond(())
+                }
+            });
+
+        Dispatcher::builder(
+            bot,
+            teloxide::dptree::entry()
+                .branch(msg_handler)
+                .branch(callback_handler),
+        )
+        .enable_ctrlc_handler()
+        .build()
+        .dispatch()
+        .await;
 
         Ok(())
     }
@@ -1260,6 +1501,48 @@ mod tests {
         assert_eq!(
             rows[0][1].kind,
             InlineKeyboardButtonKind::CallbackData("approval:no:req-42".to_string())
+        );
+    }
+
+    // ── parse_approve_or_deny_command ─────────────────────────────────────
+
+    #[test]
+    fn parse_approve_or_deny_command_returns_request_id() {
+        assert_eq!(
+            TelegramAdapter::parse_approve_or_deny_command(&["req-42"]),
+            Ok("req-42".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_approve_or_deny_command_trims_whitespace() {
+        assert_eq!(
+            TelegramAdapter::parse_approve_or_deny_command(&["  req-7  "]),
+            Ok("req-7".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_approve_or_deny_command_rejects_empty_args() {
+        assert_eq!(
+            TelegramAdapter::parse_approve_or_deny_command(&[]),
+            Err("Usage: /approve <request_id> | /deny <request_id>")
+        );
+    }
+
+    #[test]
+    fn parse_approve_or_deny_command_rejects_multiple_args() {
+        assert_eq!(
+            TelegramAdapter::parse_approve_or_deny_command(&["req-1", "req-2"]),
+            Err("Usage: /approve <request_id> | /deny <request_id>")
+        );
+    }
+
+    #[test]
+    fn parse_approve_or_deny_command_rejects_blank_id() {
+        assert_eq!(
+            TelegramAdapter::parse_approve_or_deny_command(&[""]),
+            Err("Usage: /approve <request_id> | /deny <request_id>")
         );
     }
 
