@@ -1,3 +1,10 @@
+## [1.1.1] — 2026-04-24
+
+- fix: tech-doc-writer YAML parse error + lifecycle false-positive CI failures (#600) (b05d349)
+- Initial plan (#598) (3ceb783)
+- [WIP] Add reasoning toggle for deep model escalation (#597) (02f606f)
+- [WIP] Add distributed BitNet inference across Hyperswarm cluster (#596) (29ffb21)
+
 ## [1.1.0] — 2026-04-23
 
 - feat(inference): add CPU BitNet expert pool with shared KV cache and RAM-aware scheduling (#595) (83f5c40)
