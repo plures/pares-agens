@@ -2135,15 +2135,28 @@ async fn main() {
                     let auth = CopilotAuth::new(oauth_token.clone());
                     let deep_auth = CopilotAuth::new(oauth_token);
 
+                    // Default fallback chain for Copilot: if the primary model
+                    // is unavailable (enterprise-only, rate-limited, etc.), try
+                    // progressively simpler models.
+                    let conscious_fallbacks = vec![
+                        "gpt-4o".to_string(),
+                        "gpt-4o-mini".to_string(),
+                        "claude-3.5-sonnet".to_string(),
+                    ];
+                    let deep_fallbacks = vec![
+                        "claude-3.5-sonnet".to_string(),
+                        "gpt-4o".to_string(),
+                    ];
+
                     (
                         Arc::new(CopilotModelClient::new_with_model_handle(
                             auth,
                             Arc::clone(&model_name),
-                        )),
+                        ).with_fallbacks(conscious_fallbacks)),
                         Arc::new(CopilotModelClient::new_with_model_handle(
                             deep_auth,
                             Arc::clone(&deep_model_name),
-                        )),
+                        ).with_fallbacks(deep_fallbacks)),
                     )
                 } else {
                     // Set up model router

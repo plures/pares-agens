@@ -100,23 +100,104 @@ impl ModelRouter {
     }
 
     /// Send a non-streaming chat completion request.
+    ///
+    /// On client errors (HTTP 4xx), automatically retries with each model in
+    /// [`RouterConfig::fallback_models`] before giving up.
     pub async fn chat(
         &self,
         request: &ChatCompletionRequest,
     ) -> Result<ChatCompletionResponse, Error> {
         let provider = self.select_provider(&request.model).to_owned();
-        self.get_client(&provider)?.chat_completion(request).await
+        match self.get_client(&provider)?.chat_completion(request).await {
+            Ok(resp) => Ok(resp),
+            Err(ref e) if Self::is_client_error(e) && !self.config.fallback_models.is_empty() => {
+                tracing::warn!(
+                    model = %request.model,
+                    error = %e,
+                    "primary model failed, trying fallbacks"
+                );
+                self.chat_with_fallbacks(request).await
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Send a streaming chat completion request.
+    ///
+    /// On client errors (HTTP 4xx), automatically retries with each model in
+    /// [`RouterConfig::fallback_models`] before giving up.
     pub async fn chat_stream(
         &self,
         request: &ChatCompletionRequest,
     ) -> Result<impl Stream<Item = Result<ChatCompletionChunk, Error>>, Error> {
         let provider = self.select_provider(&request.model).to_owned();
-        self.get_client(&provider)?
-            .chat_completion_stream(request)
-            .await
+        match self.get_client(&provider)?.chat_completion_stream(request).await {
+            Ok(stream) => Ok(stream),
+            Err(ref e) if Self::is_client_error(e) && !self.config.fallback_models.is_empty() => {
+                tracing::warn!(
+                    model = %request.model,
+                    error = %e,
+                    "primary model failed (stream), trying fallbacks"
+                );
+                self.chat_stream_with_fallbacks(request).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Returns `true` for HTTP 4xx client errors (model not available, auth issues, etc.).
+    fn is_client_error(err: &Error) -> bool {
+        matches!(err, Error::ApiError { status, .. } if (400..500).contains(status))
+    }
+
+    /// Try each fallback model in order until one succeeds.
+    async fn chat_with_fallbacks(
+        &self,
+        original: &ChatCompletionRequest,
+    ) -> Result<ChatCompletionResponse, Error> {
+        let mut last_err = None;
+        for fallback_model in &self.config.fallback_models {
+            let provider = self.select_provider(fallback_model).to_owned();
+            let mut req = original.clone();
+            req.model = fallback_model.clone();
+            tracing::info!(model = %fallback_model, "trying fallback model");
+            match self.get_client(&provider)?.chat_completion(&req).await {
+                Ok(resp) => {
+                    tracing::info!(model = %fallback_model, "fallback model succeeded");
+                    return Ok(resp);
+                }
+                Err(e) => {
+                    tracing::warn!(model = %fallback_model, error = %e, "fallback model failed");
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(last_err.unwrap_or(Error::NoProvider))
+    }
+
+    /// Try each fallback model in order for streaming until one succeeds.
+    async fn chat_stream_with_fallbacks(
+        &self,
+        original: &ChatCompletionRequest,
+    ) -> Result<impl Stream<Item = Result<ChatCompletionChunk, Error>>, Error> {
+        let mut last_err = None;
+        for fallback_model in &self.config.fallback_models {
+            let provider = self.select_provider(fallback_model).to_owned();
+            let mut req = original.clone();
+            req.model = fallback_model.clone();
+            tracing::info!(model = %fallback_model, "trying fallback model (stream)");
+            match self.get_client(&provider)?.chat_completion_stream(&req).await {
+                Ok(stream) => {
+                    tracing::info!(model = %fallback_model, "fallback model succeeded (stream)");
+                    return Ok(stream);
+                }
+                Err(e) => {
+                    tracing::warn!(model = %fallback_model, error = %e, "fallback model failed (stream)");
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(last_err.unwrap_or(Error::NoProvider))
     }
 
     /// Reload the router from a [`crate::config::ConfigStore`].
@@ -157,6 +238,7 @@ mod tests {
                 },
             ],
             default_provider: "local".into(),
+            fallback_models: vec![],
         };
         ModelRouter::new(config)
     }

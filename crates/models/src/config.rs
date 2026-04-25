@@ -63,6 +63,11 @@ pub struct RouterConfig {
     pub rules: Vec<RoutingRule>,
     /// Provider name to use when no rule matches.
     pub default_provider: String,
+    /// Ordered list of fallback models to try when the primary model returns
+    /// a client error (4xx). Each entry is a model name string routed through
+    /// the normal provider selection logic.
+    #[serde(default)]
+    pub fallback_models: Vec<String>,
 }
 
 impl RouterConfig {
@@ -73,6 +78,7 @@ impl RouterConfig {
             providers: HashMap::from([(name.clone(), provider)]),
             rules: vec![],
             default_provider: name,
+            fallback_models: vec![],
         }
     }
 

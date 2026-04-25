@@ -252,6 +252,8 @@ pub struct CopilotModelClient {
     auth: Arc<Mutex<CopilotAuth>>,
     model: Arc<RwLock<String>>,
     client: reqwest::Client,
+    /// Ordered list of fallback models to try when the primary returns a 4xx error.
+    fallback_models: Vec<String>,
 }
 
 impl CopilotModelClient {
@@ -269,7 +271,14 @@ impl CopilotModelClient {
                 .http1_only()
                 .build()
                 .expect("failed to build HTTP client"),
+            fallback_models: vec![],
         }
+    }
+
+    /// Set fallback models to try when the primary model fails with a 4xx error.
+    pub fn with_fallbacks(mut self, models: Vec<String>) -> Self {
+        self.fallback_models = models;
+        self
     }
 }
 
@@ -387,7 +396,41 @@ impl ModelClient for CopilotModelClient {
         let payload: Value = serde_json::from_str(&body_text)
             .map_err(|e| format!("error decoding response body: {e}\nBody: {}", &body_text[..body_text.len().min(500)]))?;
         if !status.is_success() {
-            return Err(format!("copilot error ({status}): {payload}"));
+            let is_client_error = status.is_client_error();
+            let err_msg = format!("copilot error ({status}): {payload}");
+
+            // On 4xx errors, try fallback models before giving up.
+            // Only attempt fallbacks from the primary call (check if current
+            // model matches the configured primary to avoid recursion).
+            let primary_model = {
+                // Re-read in case it was swapped — but since we hold no
+                // lock across the HTTP call this is fine.
+                self.model.read().await.clone()
+            };
+            if is_client_error && !self.fallback_models.is_empty() && model == primary_model {
+                tracing::warn!(
+                    model = %model,
+                    status = %status,
+                    "primary model failed with client error, trying fallbacks"
+                );
+                for fallback in &self.fallback_models {
+                    tracing::info!(model = %fallback, "trying fallback model");
+                    *self.model.write().await = fallback.clone();
+                    let result = self.complete(messages, tools, options).await;
+                    *self.model.write().await = primary_model.clone();
+                    match result {
+                        Ok(completion) => {
+                            tracing::info!(model = %fallback, "fallback model succeeded");
+                            return Ok(completion);
+                        }
+                        Err(e) => {
+                            tracing::warn!(model = %fallback, error = %e, "fallback model also failed");
+                        }
+                    }
+                }
+            }
+
+            return Err(err_msg);
         }
 
         let choice = payload
