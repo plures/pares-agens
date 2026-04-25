@@ -445,6 +445,31 @@ impl ModelClient for CopilotModelClient {
 }
 
 fn extract_api_base_url(token: &str) -> Option<String> {
+    // Method 1: Extract from proxy-ep field in semicolon-delimited token
+    // (how OpenClaw does it — the token contains routing metadata)
+    if let Some(proxy_ep) = token
+        .split(';')
+        .find_map(|part| part.trim().strip_prefix("proxy-ep="))
+    {
+        let host = proxy_ep.trim();
+        if !host.is_empty() {
+            // proxy.business.githubcopilot.com → api.business.githubcopilot.com
+            let api_host = if host.starts_with("proxy.") {
+                host.replacen("proxy.", "api.", 1)
+            } else {
+                host.to_string()
+            };
+            let base = if api_host.starts_with("https://") || api_host.starts_with("http://") {
+                api_host
+            } else {
+                format!("https://{api_host}")
+            };
+            tracing::info!(proxy_ep = host, api_base = %base, "derived API base from token proxy-ep");
+            return Some(base);
+        }
+    }
+
+    // Method 2: Extract from JWT vscu claim (fallback)
     let mut parts = token.split('.');
     parts.next()?;
     let payload = parts.next()?;
