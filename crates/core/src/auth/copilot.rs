@@ -67,7 +67,11 @@ impl CopilotAuth {
             client: reqwest::Client::builder()
                 .http1_only()
                 .build()
-                .expect("failed to build HTTP client"),    /// Start the Copilot device flow.
+                .expect("failed to build HTTP client"),
+        }
+    }
+
+    /// Start the Copilot device flow.
     pub async fn device_flow_start() -> Result<(String, String, String), CopilotAuthError> {
         #[derive(Deserialize)]
         struct DeviceCodeResponse {
@@ -264,7 +268,10 @@ impl CopilotModelClient {
             client: reqwest::Client::builder()
                 .http1_only()
                 .build()
-                .expect("failed to build HTTP client"),}
+                .expect("failed to build HTTP client"),
+        }
+    }
+}
 
 #[async_trait]
 impl ModelClient for CopilotModelClient {
