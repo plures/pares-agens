@@ -1,6 +1,7 @@
 //! Model router — selects the right provider for each request.
 
 use std::collections::HashMap;
+use std::pin::Pin;
 
 use futures_util::Stream;
 use tracing::debug;
@@ -129,10 +130,10 @@ impl ModelRouter {
     pub async fn chat_stream(
         &self,
         request: &ChatCompletionRequest,
-    ) -> Result<impl Stream<Item = Result<ChatCompletionChunk, Error>>, Error> {
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatCompletionChunk, Error>> + Send>>, Error> {
         let provider = self.select_provider(&request.model).to_owned();
         match self.get_client(&provider)?.chat_completion_stream(request).await {
-            Ok(stream) => Ok(stream),
+            Ok(stream) => Ok(Box::pin(stream)),
             Err(ref e) if Self::is_client_error(e) && !self.config.fallback_models.is_empty() => {
                 tracing::warn!(
                     model = %request.model,
@@ -179,7 +180,7 @@ impl ModelRouter {
     async fn chat_stream_with_fallbacks(
         &self,
         original: &ChatCompletionRequest,
-    ) -> Result<impl Stream<Item = Result<ChatCompletionChunk, Error>>, Error> {
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatCompletionChunk, Error>> + Send>>, Error> {
         let mut last_err = None;
         for fallback_model in &self.config.fallback_models {
             let provider = self.select_provider(fallback_model).to_owned();
@@ -189,7 +190,7 @@ impl ModelRouter {
             match self.get_client(&provider)?.chat_completion_stream(&req).await {
                 Ok(stream) => {
                     tracing::info!(model = %fallback_model, "fallback model succeeded (stream)");
-                    return Ok(stream);
+                    return Ok(Box::pin(stream));
                 }
                 Err(e) => {
                     tracing::warn!(model = %fallback_model, error = %e, "fallback model failed (stream)");

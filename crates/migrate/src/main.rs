@@ -2621,11 +2621,22 @@ async fn main() {
 
             // Main loop
             let result: Result<(), Box<dyn std::error::Error>> = 'main_loop: loop {
-                terminal.draw(|f| pares_agens_tui::ui::draw(f, &app))?;
+                match terminal.draw(|f| pares_agens_tui::ui::draw(f, &app)) {
+                    Ok(_) => {}
+                    Err(e) => break 'main_loop Err(e.into()),
+                }
 
                 // Poll for crossterm events with a short timeout
-                if ct_event::poll(std::time::Duration::from_millis(50))? {
-                    if let CtEvent::Key(key) = ct_event::read()? {
+                let has_event = match ct_event::poll(std::time::Duration::from_millis(50)) {
+                    Ok(v) => v,
+                    Err(e) => break 'main_loop Err(e.into()),
+                };
+                if has_event {
+                    let event = match ct_event::read() {
+                        Ok(v) => v,
+                        Err(e) => break 'main_loop Err(e.into()),
+                    };
+                    if let CtEvent::Key(key) = event {
                         if key.kind != KeyEventKind::Press {
                             continue;
                         }

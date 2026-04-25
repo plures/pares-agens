@@ -407,6 +407,7 @@ pub fn build_router_config(settings: &Settings) -> RouterConfig {
         providers,
         rules: vec![],
         default_provider,
+        fallback_models: vec![],
     }
 }
 
@@ -450,6 +451,7 @@ pub async fn rebuild_model_router(state: &AppState) {
         providers,
         rules: vec![],
         default_provider,
+        fallback_models: vec![],
     };
 
     // Ensure we don't accidentally enable multi-provider routing when using
