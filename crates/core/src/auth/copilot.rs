@@ -354,9 +354,12 @@ impl ModelClient for CopilotModelClient {
         }
 
         let url = format!("{}/chat/completions", api_base.trim_end_matches('/'));
+        let request_id = uuid::Uuid::new_v4();
+        let request_start = std::time::Instant::now();
         tracing::info!(
             url = %url,
             model = %model,
+            %request_id,
             message_count = messages.len(),
             tool_count = tools.len(),
             "sending Copilot completion request"
@@ -442,6 +445,8 @@ impl ModelClient for CopilotModelClient {
         };
         tracing::info!(
             %status,
+            %request_id,
+            latency_ms = request_start.elapsed().as_millis(),
             body_len = body_text.len(),
             body_preview = &body_text[..body_text.len().min(200)],
             "Copilot completion response"

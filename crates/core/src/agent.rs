@@ -15,10 +15,12 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use async_trait::async_trait;
 use tokio::sync::Mutex as TokioMutex;
 use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
 use crate::cerebellum::{Cerebellum, Route};
 use crate::delegation::aggregator::ResultAggregator;
@@ -261,6 +263,10 @@ impl Agent {
 
     /// Handle a single event and optionally return a response event.
     pub async fn handle_event(&self, event: Event) -> Option<Event> {
+        let request_id = Uuid::new_v4();
+        let _event_start = Instant::now();
+        let _span = tracing::info_span!("handle_event", %request_id, event_kind = %event.kind()).entered();
+        info!(%request_id, event_kind = %event.kind(), "received event");
         if let Event::Message {
             ref id,
             ref channel,
@@ -645,8 +651,11 @@ impl Agent {
 
         let mut final_reply = None;
         let mut final_logprobs = None;
-        for _ in 0..10 {
+        for turn in 0..10 {
+            let model_start = Instant::now();
             let completion = model_client.complete(&messages, &tools, options).await?;
+            let latency_ms = model_start.elapsed().as_millis();
+            info!(turn, latency_ms, tool_calls = completion.tool_calls.len(), "model completion received");
 
             if !completion.tool_calls.is_empty() {
                 let tool_calls = completion.tool_calls.clone();
