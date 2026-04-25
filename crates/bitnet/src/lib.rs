@@ -39,5 +39,11 @@
 mod error;
 pub mod runner;
 
+#[cfg(feature = "model-client")]
+pub mod model_client;
+
 pub use error::InferenceError;
 pub use runner::{BitNetContext, BitNetRunner, GenParams, TokenStream};
+
+#[cfg(feature = "model-client")]
+pub use model_client::BitnetModelClient;

@@ -29,6 +29,7 @@ reqwest.workspace = true
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 pares-agens-core = { path = "../core", features = ["embeddings"] }
+pares-agens-bitnet = { path = "../bitnet", features = ["model-client"] }
 pares-agens-channels = { path = "../channels" }
 pares-models = { path = "../models" }
 pares-agens-agenda = { path = "../agenda" }

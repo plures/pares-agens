@@ -11,9 +11,14 @@ repository.workspace = true
 # submodule and CMake ≥ 3.21 to be present.  Without this feature every
 # public function returns InferenceError::NativeUnavailable.
 inference = ["pares-agens-bitnet-sys/native"]
+model-client = ["dep:pares-agens-core", "dep:async-trait", "dep:tokio", "dep:tracing"]
 
 [dependencies]
 pares-agens-bitnet-sys = { path = "../bitnet-sys" }
+pares-agens-core = { path = "../core", optional = true }
+async-trait = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
 thiserror = "2"
 
 [dev-dependencies]

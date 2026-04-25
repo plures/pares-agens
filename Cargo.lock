@@ -4401,6 +4401,7 @@ dependencies = [
  "crossterm",
  "futures-util",
  "pares-agens-agenda",
+ "pares-agens-bitnet",
  "pares-agens-channels",
  "pares-agens-core",
  "pares-agens-tui",
@@ -4479,8 +4480,12 @@ dependencies = [
 name = "pares-agens-bitnet"
 version = "1.4.1"
 dependencies = [
+ "async-trait",
  "pares-agens-bitnet-sys",
+ "pares-agens-core",
  "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
