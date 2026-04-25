@@ -32,6 +32,8 @@ pares-agens-core = { path = "../core", features = ["embeddings"] }
 pares-agens-channels = { path = "../channels" }
 pares-models = { path = "../models" }
 pares-agens-agenda = { path = "../agenda" }
+pares-agens-tui = { path = "../tui" }
+crossterm = "0.28"
 
 [dev-dependencies]
 tempfile = "3"

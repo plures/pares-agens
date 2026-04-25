@@ -1,0 +1,19 @@
+[package]
+name = "pares-agens-tui"
+description = "Terminal UI frontend for Pares Agens"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+tokio.workspace = true
+async-trait.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+pares-agens-core = { path = "../core", features = ["embeddings"] }

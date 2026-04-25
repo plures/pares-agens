@@ -1927,6 +1927,33 @@ enum Commands {
         #[arg(long, env = "PARES_SYNC_SHARED_KEY")]
         sync_shared_key: Option<String>,
     },
+
+    /// Run the agent with an interactive terminal UI.
+    Tui {
+        /// OpenAI-compatible API URL.
+        #[arg(
+            long,
+            env = "PARES_MODEL_URL",
+            default_value = "https://models.inference.ai.azure.com"
+        )]
+        model_url: String,
+
+        /// Model name to use.
+        #[arg(long, env = "PARES_MODEL", default_value = "gpt-4.1")]
+        model: String,
+
+        /// Use GitHub Copilot device flow authentication.
+        #[arg(long)]
+        copilot: bool,
+
+        /// API key for the model provider.
+        #[arg(long, env = "PARES_API_KEY")]
+        api_key: Option<String>,
+
+        /// Path to a system prompt file.
+        #[arg(long, value_name = "PATH")]
+        system_prompt: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
@@ -2441,6 +2468,234 @@ async fn main() {
 
             if let Err(e) = adapter_result {
                 tracing::error!("{e}");
+                std::process::exit(1);
+            }
+        }
+
+        Commands::Tui {
+            model_url,
+            model,
+            copilot,
+            api_key,
+            system_prompt,
+        } => {
+            use crossterm::{
+                event::{self as ct_event, Event as CtEvent, KeyCode, KeyEventKind},
+                execute,
+                terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+            };
+            use ratatui::backend::CrosstermBackend;
+            use ratatui::Terminal;
+            use pares_agens_tui::app::{App, AppEvent};
+
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+            let mut model = model;
+
+            // Build model client
+            let model_name_handle = Arc::new(RwLock::new(model.clone()));
+            let model_client: Arc<dyn ModelClient> = if copilot {
+                if model == "gpt-4.1" || model == "gpt-4o" {
+                    model = "gpt-4.1".into();
+                    *model_name_handle.write().await = model.clone();
+                }
+                let auth_path = PathBuf::from(&home).join(".pares-agens/copilot-auth.json");
+                let cached = std::fs::read_to_string(&auth_path)
+                    .ok()
+                    .and_then(|raw| serde_json::from_str::<CopilotAuthCache>(&raw).ok());
+
+                let oauth_token = if let Some(cache) = cached {
+                    cache.oauth_token
+                } else {
+                    let (device_code, user_code, verification_uri) =
+                        match CopilotAuth::device_flow_start().await {
+                            Ok(response) => response,
+                            Err(e) => {
+                                eprintln!("Copilot device flow failed: {e}");
+                                std::process::exit(1);
+                            }
+                        };
+
+                    println!("Authorize Copilot: visit {verification_uri} and enter code {user_code}");
+
+                    let token = match CopilotAuth::device_flow_poll(&device_code).await {
+                        Ok(token) => token,
+                        Err(e) => {
+                            eprintln!("Copilot polling failed: {e}");
+                            std::process::exit(1);
+                        }
+                    };
+
+                    if let Some(parent) = auth_path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if let Ok(serialized) = serde_json::to_string_pretty(&CopilotAuthCache {
+                        oauth_token: token.clone(),
+                    }) {
+                        let _ = std::fs::write(&auth_path, serialized);
+                    }
+                    token
+                };
+
+                let auth = CopilotAuth::new(oauth_token);
+                Arc::new(CopilotModelClient::new_with_model_handle(
+                    auth,
+                    Arc::clone(&model_name_handle),
+                ).with_fallbacks(vec!["gpt-4o".into(), "gpt-4o-mini".into()]))
+            } else {
+                let provider_config = ProviderConfig::new(&model_url, api_key.clone());
+                let router_config = RouterConfig::single("default", provider_config);
+                let model_router = Arc::new(ModelRouter::new(router_config));
+                Arc::new(RouterModelClient {
+                    router: Arc::new(RwLock::new(model_router)),
+                    model: Arc::clone(&model_name_handle),
+                    endpoint: Arc::new(RwLock::new(model_url.clone())),
+                    api_key: api_key.clone(),
+                })
+            };
+
+            // Build memory + agent
+            let memory_path = PathBuf::from(&home).join(".pares-agens/memory");
+            let store: Arc<PluresDbStore> = match PluresDbStore::open_with_embeddings(&memory_path) {
+                Ok(store) => Arc::new(store),
+                Err(_) => match PluresDbStore::open(&memory_path) {
+                    Ok(store) => Arc::new(store),
+                    Err(e) => {
+                        eprintln!("Failed to open memory store: {e}");
+                        std::process::exit(1);
+                    }
+                },
+            };
+
+            let plures_lm = Arc::new(PluresLm::new(
+                Arc::clone(&store) as Arc<dyn pares_agens_core::memory::store::MemoryStore>,
+                Box::new(MockEmbedder),
+                128_000,
+            ));
+            let memory = Arc::new(PluresMemory {
+                plures_lm: Arc::clone(&plures_lm),
+            });
+
+            // Tools
+            let mut procedure_registry = ProcedureRegistry::new();
+            procedure_registry.register(Box::new(ReadFileProcedure));
+            procedure_registry.register(Box::new(WriteFileProcedure));
+            procedure_registry.register(Box::new(EditFileProcedure));
+            procedure_registry.register(Box::new(ListDirectoryProcedure));
+            procedure_registry.register(Box::new(RunCommandProcedure));
+            procedure_registry.register(Box::new(WebFetchProcedure));
+            let procedure_registry = Arc::new(procedure_registry);
+            let tool_dispatcher: Arc<dyn ToolDispatcher> = Arc::new(ProcedureToolDispatcher {
+                registry: Arc::clone(&procedure_registry),
+                trace_store: ToolTraceStore::default(),
+            });
+
+            let cerebellum = Cerebellum::new(CerebellumConfig::default());
+            let system_prompt_text = build_system_prompt(system_prompt)
+                .unwrap_or_else(|e| {
+                    eprintln!("Warning: {e}");
+                    "You are Pares Agens, an AI assistant. Be direct and helpful.".to_string()
+                });
+
+            let mut registry = pares_agens_core::delegation::registry::AgentRegistry::new();
+            registry.register_builtins();
+
+            let agent = Arc::new(
+                Agent::with_cerebellum(memory, cerebellum, plures_lm)
+                    .with_model(
+                        Arc::clone(&model_client),
+                        Arc::clone(&tool_dispatcher),
+                        system_prompt_text,
+                    )
+                    .with_turn_store(Arc::clone(&store) as Arc<dyn pares_agens_core::memory::store::MemoryStore>),
+            );
+
+            // Set up terminal
+            enable_raw_mode().expect("failed to enable raw mode");
+            let mut stdout = std::io::stdout();
+            execute!(stdout, EnterAlternateScreen).expect("failed to enter alternate screen");
+            let backend = CrosstermBackend::new(stdout);
+            let mut terminal = Terminal::new(backend).expect("failed to create terminal");
+
+            let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<AppEvent>();
+            let mut app = App::new(agent, model.clone(), event_tx);
+
+            // Main loop
+            let result: Result<(), Box<dyn std::error::Error>> = 'main_loop: loop {
+                terminal.draw(|f| pares_agens_tui::ui::draw(f, &app))?;
+
+                // Poll for crossterm events with a short timeout
+                if ct_event::poll(std::time::Duration::from_millis(50))? {
+                    if let CtEvent::Key(key) = ct_event::read()? {
+                        if key.kind != KeyEventKind::Press {
+                            continue;
+                        }
+                        match key.code {
+                            KeyCode::Enter => {
+                                app.submit_input();
+                            }
+                            KeyCode::Char(c) => {
+                                app.input.insert(app.input_cursor, c);
+                                app.input_cursor += 1;
+                            }
+                            KeyCode::Backspace => {
+                                if app.input_cursor > 0 {
+                                    app.input_cursor -= 1;
+                                    app.input.remove(app.input_cursor);
+                                }
+                            }
+                            KeyCode::Left => {
+                                if app.input_cursor > 0 {
+                                    app.input_cursor -= 1;
+                                }
+                            }
+                            KeyCode::Right => {
+                                if app.input_cursor < app.input.len() {
+                                    app.input_cursor += 1;
+                                }
+                            }
+                            KeyCode::Home => {
+                                app.input_cursor = 0;
+                            }
+                            KeyCode::End => {
+                                app.input_cursor = app.input.len();
+                            }
+                            KeyCode::PageUp => {
+                                app.scroll_offset = app.scroll_offset.saturating_add(10);
+                            }
+                            KeyCode::PageDown => {
+                                app.scroll_offset = app.scroll_offset.saturating_sub(10);
+                            }
+                            KeyCode::Esc => {
+                                break 'main_loop Ok(());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                // Drain app events (non-blocking)
+                while let Ok(ev) = event_rx.try_recv() {
+                    match ev {
+                        AppEvent::AgentResponse(content) => {
+                            app.handle_agent_response(content);
+                        }
+                        AppEvent::Quit => {
+                            break 'main_loop Ok(());
+                        }
+                        AppEvent::Redraw => {}
+                        AppEvent::UserInput(_) => {}
+                    }
+                }
+            };
+
+            // Restore terminal
+            disable_raw_mode().expect("failed to disable raw mode");
+            execute!(terminal.backend_mut(), LeaveAlternateScreen)
+                .expect("failed to leave alternate screen");
+            terminal.show_cursor().expect("failed to show cursor");
+
+            if let Err(e) = result {
+                eprintln!("TUI error: {e}");
                 std::process::exit(1);
             }
         }
