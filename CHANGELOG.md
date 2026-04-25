@@ -1,3 +1,7 @@
+## [1.4.1] — 2026-04-25
+
+- fix: default Tauri app to Copilot provider, not Ollama (399ef33)
+
 ## [1.4.0] — 2026-04-25
 
 - feat: embed git commit hash in logs and /status output (de26fa9)
