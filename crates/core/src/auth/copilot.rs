@@ -64,11 +64,10 @@ impl CopilotAuth {
             session_token: None,
             session_expires_at: 0,
             api_base_url: DEFAULT_API_BASE.to_string(),
-            client: reqwest::Client::new(),
-        }
-    }
-
-    /// Start the Copilot device flow.
+            client: reqwest::Client::builder()
+                .http1_only()
+                .build()
+                .expect("failed to build HTTP client"),    /// Start the Copilot device flow.
     pub async fn device_flow_start() -> Result<(String, String, String), CopilotAuthError> {
         #[derive(Deserialize)]
         struct DeviceCodeResponse {
@@ -77,7 +76,7 @@ impl CopilotAuth {
             verification_uri: String,
         }
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder().http1_only().build().expect("failed to build HTTP client");
         let response = client
             .post(DEVICE_CODE_URL)
             .header(ACCEPT, "application/json")
@@ -106,7 +105,7 @@ impl CopilotAuth {
             error_description: Option<String>,
         }
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder().http1_only().build().expect("failed to build HTTP client");
         let mut interval = Duration::from_secs(5);
         loop {
             let response = client
@@ -164,7 +163,7 @@ impl CopilotAuth {
             expires_at: Value,
         }
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder().http1_only().build().expect("failed to build HTTP client");
         tracing::info!(url = COPILOT_TOKEN_URL, "exchanging OAuth token for Copilot session token");
         let response = client
             .get(COPILOT_TOKEN_URL)
@@ -262,10 +261,10 @@ impl CopilotModelClient {
         Self {
             auth: Arc::new(Mutex::new(auth)),
             model,
-            client: reqwest::Client::new(),
-        }
-    }
-}
+            client: reqwest::Client::builder()
+                .http1_only()
+                .build()
+                .expect("failed to build HTTP client"),}
 
 #[async_trait]
 impl ModelClient for CopilotModelClient {
