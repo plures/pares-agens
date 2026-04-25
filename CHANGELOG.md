@@ -1,3 +1,7 @@
+## [1.5.0] — 2026-04-25
+
+- feat: add TUI crate (ratatui + crossterm) with Tui CLI subcommand (9138e6a)
+
 ## [1.4.1] — 2026-04-25
 
 - fix: default Tauri app to Copilot provider, not Ollama (399ef33)
