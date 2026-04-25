@@ -26,7 +26,7 @@ use crate::telemetry::TelemetryService;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderEntry {
-    /// Unique identifier for this provider (e.g. `"ollama"`, `"openai"`).
+    /// Unique identifier for this provider (e.g. `"copilot"`, `"openai"`).
     pub name: String,
     /// OpenAI-compatible base URL (e.g. `"http://localhost:11434/v1"`).
     pub base_url: String,
@@ -238,8 +238,8 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            model: "llama3".to_string(),
-            endpoint: "http://localhost:11434".to_string(),
+            model: "gpt-4.1".to_string(),
+            endpoint: "https://api.enterprise.githubcopilot.com".to_string(),
             channel: "tauri".to_string(),
             system_prompt: "You are Pares Agens, a helpful desktop AI assistant.".to_string(),
             api_key: None,
@@ -247,15 +247,15 @@ impl Default for Settings {
             auto_start: false,
             activation_hotkey: default_activation_hotkey(),
             providers: vec![ProviderEntry {
-                name: "ollama".to_string(),
-                base_url: "http://localhost:11434".to_string(),
+                name: "copilot".to_string(),
+                base_url: "https://api.enterprise.githubcopilot.com".to_string(),
                 api_key: None,
-                models: vec!["llama3".to_string(), "llama3.1:8b".to_string()],
+                models: vec!["gpt-4.1".to_string(), "claude-opus-4.6".to_string()],
             }],
             routing: RoutingPrefs {
                 interactive: Some(ModelRef {
-                    provider: "ollama".to_string(),
-                    model: "llama3".to_string(),
+                    provider: "copilot".to_string(),
+                    model: "gpt-4.1".to_string(),
                 }),
                 background: None,
                 coding: None,
@@ -401,7 +401,7 @@ pub fn build_router_config(settings: &Settings) -> RouterConfig {
                 None
             }
         })
-        .unwrap_or_else(|| "ollama".to_string());
+        .unwrap_or_else(|| "copilot".to_string());
 
     RouterConfig {
         providers,
@@ -444,7 +444,7 @@ pub async fn rebuild_model_router(state: &AppState) {
         .as_ref()
         .map(|r| r.provider.clone())
         .or_else(|| provider_entries.first().map(|p| p.name.clone()))
-        .unwrap_or_else(|| "ollama".to_string());
+        .unwrap_or_else(|| "copilot".to_string());
 
     let mut config = RouterConfig {
         providers,
@@ -480,10 +480,10 @@ mod tests {
         let settings = Settings::default();
         let config = build_router_config(&settings);
 
-        // Default settings have one provider: "ollama".
+        // Default settings have one provider: "copilot".
         assert_eq!(config.providers.len(), 1);
-        assert!(config.providers.contains_key("ollama"));
-        assert_eq!(config.default_provider, "ollama");
+        assert!(config.providers.contains_key("copilot"));
+        assert_eq!(config.default_provider, "copilot");
     }
 
     #[test]
@@ -521,7 +521,7 @@ mod tests {
     }
 
     #[test]
-    fn build_router_config_empty_providers_and_endpoint_defaults_to_ollama() {
+    fn build_router_config_empty_providers_and_endpoint_defaults_to_copilot() {
         let mut settings = Settings::default();
         settings.providers.clear();
         settings.endpoint = String::new();
@@ -529,7 +529,7 @@ mod tests {
         let config = build_router_config(&settings);
 
         assert!(config.providers.is_empty());
-        assert_eq!(config.default_provider, "ollama");
+        assert_eq!(config.default_provider, "copilot");
     }
 
     #[test]
@@ -565,7 +565,7 @@ mod tests {
             secret_store: secret_store as Arc<dyn SecretStore>,
             settings: Arc::new(Mutex::new(settings)),
             model_router: Arc::new(RwLock::new(ModelRouter::new(RouterConfig::single(
-                "ollama",
+                "copilot",
                 ProviderConfig::new("http://localhost:11434/v1", None),
             )))),
             wizard_completed: Mutex::new(false),
