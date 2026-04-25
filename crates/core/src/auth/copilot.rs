@@ -378,7 +378,7 @@ impl ModelClient for CopilotModelClient {
         let response = self
             .client
             .post(&url)
-            .headers(headers)
+            .headers(headers.clone())
             .json(&body)
             .send()
             .await
@@ -386,6 +386,60 @@ impl ModelClient for CopilotModelClient {
 
         let status = response.status();
         let body_text = response.text().await.map_err(|e| format!("response body read error: {e}"))?;
+
+        // Retry logic for transient failures.
+        let (status, body_text) = if status == reqwest::StatusCode::MISDIRECTED_REQUEST {
+            // 421: HTTP/2 connection coalescing issue — rebuild client and retry once.
+            tracing::warn!(attempt = 1, "421 Misdirected Request — retrying with fresh connection");
+            let fresh_client = reqwest::Client::builder()
+                .pool_max_idle_per_host(0)
+                .build()
+                .map_err(|e| format!("failed to build fresh HTTP client: {e}"))?;
+            let resp = fresh_client
+                .post(&url)
+                .headers(headers.clone())
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            let s = resp.status();
+            let t = resp.text().await.map_err(|e| format!("response body read error: {e}"))?;
+            (s, t)
+        } else if status == reqwest::StatusCode::UNAUTHORIZED {
+            // 401: token may have expired — refresh and retry once.
+            tracing::warn!(attempt = 1, "401 Unauthorized — refreshing token and retrying");
+            let new_token = {
+                let mut auth = self.auth.lock().await;
+                auth.ensure_fresh_token().await.map_err(|e| e.to_string())?.to_string()
+            };
+            let mut retry_headers = headers.clone();
+            retry_headers.insert(
+                AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {new_token}")).map_err(|e| e.to_string())?,
+            );
+            let resp = self.client.post(&url).headers(retry_headers).json(&body).send().await.map_err(|e| e.to_string())?;
+            let s = resp.status();
+            let t = resp.text().await.map_err(|e| format!("response body read error: {e}"))?;
+            (s, t)
+        } else if status.is_server_error() {
+            // 5xx: retry up to 2 times with exponential backoff.
+            let mut last_status = status;
+            let mut last_body = body_text;
+            let backoffs = [Duration::from_secs(1), Duration::from_secs(3)];
+            for (i, delay) in backoffs.iter().enumerate() {
+                tracing::warn!(attempt = i + 1, status = %last_status, delay_ms = delay.as_millis(), "server error — retrying");
+                sleep(*delay).await;
+                let resp = self.client.post(&url).headers(headers.clone()).json(&body).send().await.map_err(|e| e.to_string())?;
+                last_status = resp.status();
+                last_body = resp.text().await.map_err(|e| format!("response body read error: {e}"))?;
+                if !last_status.is_server_error() {
+                    break;
+                }
+            }
+            (last_status, last_body)
+        } else {
+            (status, body_text)
+        };
         tracing::info!(
             %status,
             body_len = body_text.len(),
