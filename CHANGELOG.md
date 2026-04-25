@@ -1,3 +1,13 @@
+## [1.6.0] — 2026-04-25
+
+- refactor: rename OllamaEmbedder to OpenAiEmbedder, fix Send bound (4891a21)
+- ci: add build-all workflow for all binaries and tests (33729de)
+- feat: add pares-agens-desktop to flake.nix outputs and NixOS modules (8bb9316)
+- feat: add request_id, latency_ms, and tracing spans to hot path (b2ddc61)
+- feat: add retry logic for Copilot model client (3754f65)
+- feat: wire BitNet as local model client with --bitnet-model-path flag (91c21f7)
+- fix: resolve compile errors across workspace (c3809f7)
+
 ## [1.5.0] — 2026-04-25
 
 - feat: add TUI crate (ratatui + crossterm) with Tui CLI subcommand (9138e6a)
