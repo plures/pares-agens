@@ -1,3 +1,7 @@
+## [1.3.0] — 2026-04-25
+
+- feat: send Telegram typing indicator while agent processes messages (49024e1)
+
 ## [1.2.0] — 2026-04-25
 
 - feat: model fallback on 4xx errors (2010854)
