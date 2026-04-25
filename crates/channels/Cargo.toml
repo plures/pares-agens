@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 async-trait.workspace = true
 tokio.workspace = true
+tokio-util = { version = "0.7", features = ["rt"] }
 thiserror.workspace = true
 uuid.workspace = true
 tracing.workspace = true

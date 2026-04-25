@@ -25,8 +25,8 @@ use std::sync::Arc;
 use teloxide::{
     prelude::*,
     types::{
-        InlineKeyboardButton, InlineKeyboardMarkup, Message, MessageKind, ParseMode, ReactionType,
-        ReplyParameters,
+        ChatAction, InlineKeyboardButton, InlineKeyboardMarkup, Message, MessageKind, ParseMode,
+        ReactionType, ReplyParameters,
     },
 };
 use tokio::sync::Mutex as TokioMutex;
@@ -1177,10 +1177,26 @@ impl ChannelAdapter for TelegramAdapter {
                             *content = format!("{TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER}{content}");
                         }
                     }
+                    // Send typing indicator and keep it alive while the agent processes
+                    let typing_bot = bot.clone();
+                    let typing_chat_id = msg.chat.id;
+                    let typing_cancel = tokio_util::sync::CancellationToken::new();
+                    let typing_token = typing_cancel.clone();
+                    tokio::spawn(async move {
+                        loop {
+                            let _ = typing_bot.send_chat_action(typing_chat_id, ChatAction::Typing).await;
+                            tokio::select! {
+                                _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {},
+                                _ = typing_token.cancelled() => break,
+                            }
+                        }
+                    });
+
                     if let Some(Event::ModelResponse {
                         request_id, content, ..
                     }) = on_event(event).await
                     {
+                        typing_cancel.cancel();
                         let reply_markup = if Self::is_approval_prompt(&content) {
                             Some(Self::approval_keyboard(&request_id))
                         } else {
@@ -1193,6 +1209,8 @@ impl ChannelAdapter for TelegramAdapter {
                         } else {
                             Self::acknowledge_message(&bot, &msg).await;
                         }
+                    } else {
+                        typing_cancel.cancel();
                     }
                 }
                 respond(())
