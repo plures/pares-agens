@@ -1,3 +1,15 @@
+## [1.2.0] — 2026-04-25
+
+- feat: model fallback on 4xx errors (2010854)
+- fix: chunk Telegram replies exceeding 4096 char limit (4e1befe)
+- fix: derive Copilot API base URL from token proxy-ep field (86da7b0)
+- fix: restore missing closing braces in copilot.rs (6c1d883)
+- fix: force HTTP/1.1 for Copilot API — fixes 421 Misdirected Request (a3788a3)
+- fix: add webkitgtk + libsoup for Tauri desktop crate deps (b6efb05)
+- fix: add full GTK stack to buildInputs (pango, cairo, gdk-pixbuf, atk, gtk3, graphene) (db39c58)
+- fix: add glib to buildInputs — gobject-sys needs it (06fc35e)
+- docs: refresh ROADMAP.md with OASIS strategic alignment (5bf26e6)
+
 ## [1.1.1] — 2026-04-24
 
 - fix: tech-doc-writer YAML parse error + lifecycle false-positive CI failures (#600) (b05d349)
