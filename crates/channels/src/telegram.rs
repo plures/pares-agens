@@ -694,22 +694,69 @@ impl TelegramAdapter {
         ]])
     }
 
+    /// Telegram enforces a 4096-character limit per message.
+    /// Split long replies into chunks on paragraph boundaries and send sequentially.
+    const TELEGRAM_MAX_LEN: usize = 4096;
+
+    fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
+        if text.len() <= max_len {
+            return vec![text.to_string()];
+        }
+
+        let mut chunks = Vec::new();
+        let mut remaining = text;
+
+        while !remaining.is_empty() {
+            if remaining.len() <= max_len {
+                chunks.push(remaining.to_string());
+                break;
+            }
+
+            // Find a split point: prefer double-newline (paragraph), then single newline, then space
+            let search_range = &remaining[..max_len];
+            let split_at = search_range.rfind("\n\n")
+                .map(|i| i + 2)
+                .or_else(|| search_range.rfind('\n').map(|i| i + 1))
+                .or_else(|| search_range.rfind(' ').map(|i| i + 1))
+                .unwrap_or(max_len);
+
+            chunks.push(remaining[..split_at].to_string());
+            remaining = &remaining[split_at..];
+        }
+
+        chunks
+    }
+
     async fn send_markdown_reply(
         bot: &Bot,
         msg: &Message,
         content: &str,
         reply_markup: Option<InlineKeyboardMarkup>,
     ) -> Result<(), teloxide::RequestError> {
-        let mut req = bot
-            .send_message(msg.chat.id, Self::escape_markdown_v2(content))
-            .parse_mode(ParseMode::MarkdownV2)
-            .reply_parameters(ReplyParameters::new(msg.id));
+        let escaped = Self::escape_markdown_v2(content);
+        let chunks = Self::chunk_message(&escaped, Self::TELEGRAM_MAX_LEN);
 
-        if let Some(markup) = reply_markup {
-            req = req.reply_markup(markup);
+        for (i, chunk) in chunks.iter().enumerate() {
+            let mut req = bot
+                .send_message(msg.chat.id, chunk.clone())
+                .parse_mode(ParseMode::MarkdownV2);
+
+            // Only reply to the original message on the first chunk
+            if i == 0 {
+                req = req.reply_parameters(ReplyParameters::new(msg.id));
+            }
+
+            // Only attach reply markup to the last chunk
+            if i == chunks.len() - 1 {
+                if let Some(ref markup) = reply_markup {
+                    req = req.reply_markup(markup.clone());
+                }
+            }
+
+            req.await?;
         }
 
-        req.await.map(|_| ())
+        Ok(())
     }
 
     async fn acknowledge_message(bot: &Bot, msg: &Message) {
