@@ -1,3 +1,7 @@
+## [1.4.0] — 2026-04-25
+
+- feat: embed git commit hash in logs and /status output (de26fa9)
+
 ## [1.3.0] — 2026-04-25
 
 - feat: send Telegram typing indicator while agent processes messages (49024e1)
