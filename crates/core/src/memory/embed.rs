@@ -59,18 +59,18 @@ impl EmbeddingProvider for MockEmbedder {
 }
 
 // ---------------------------------------------------------------------------
-// Ollama/OpenAI-compatible embedder
+// OpenAI-compatible embedder
 // ---------------------------------------------------------------------------
 
-/// OpenAI-compatible embedding client (works with Ollama or cloud providers).
-pub struct OllamaEmbedder {
+/// OpenAI-compatible embedding client (works with any OpenAI-compatible endpoint).
+pub struct OpenAiEmbedder {
     base_url: String,
     model: String,
     api_key: Option<String>,
     client: reqwest::Client,
 }
 
-impl OllamaEmbedder {
+impl OpenAiEmbedder {
     /// Create a new OpenAI-compatible embedding client.
     pub fn new(base_url: impl Into<String>, model: impl Into<String>, api_key: Option<String>) -> Self {
         Self {
@@ -99,7 +99,7 @@ struct EmbeddingData {
 }
 
 #[async_trait]
-impl EmbeddingProvider for OllamaEmbedder {
+impl EmbeddingProvider for OpenAiEmbedder {
     async fn embed(&self, text: &str) -> Result<Vec<f32>, Error> {
         let url = format!("{}/v1/embeddings", self.base_url);
         let mut req = self

@@ -35,7 +35,7 @@ use pares_agens_core::auth::copilot::{CopilotAuth, CopilotModelClient};
 use pares_agens_core::cerebellum::{Cerebellum, CerebellumConfig};
 use pares_agens_core::delegation::{broker::DelegationBroker, registry::AgentRegistry};
 use pares_agens_core::memory::{
-    embed::{EmbeddingProvider, MockEmbedder, OllamaEmbedder},
+    embed::{EmbeddingProvider, MockEmbedder, OpenAiEmbedder},
     entry::Exchange,
     store::{HostAdapterConfig, HostAdapterRecord, PluresDbStore},
     PluresLm,
@@ -269,7 +269,7 @@ fn apply_runtime_log_level(
 impl RuntimeAgentFactory {
     fn build_embedder(&self) -> Box<dyn EmbeddingProvider> {
         match &self.embed_url {
-            Some(url) => Box::new(OllamaEmbedder::new(
+            Some(url) => Box::new(OpenAiEmbedder::new(
                 url.clone(),
                 self.embed_model.clone(),
                 self.api_key.clone(),

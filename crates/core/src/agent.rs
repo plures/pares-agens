@@ -265,7 +265,6 @@ impl Agent {
     pub async fn handle_event(&self, event: Event) -> Option<Event> {
         let request_id = Uuid::new_v4();
         let _event_start = Instant::now();
-        let _span = tracing::info_span!("handle_event", %request_id, event_kind = %event.kind()).entered();
         info!(%request_id, event_kind = %event.kind(), "received event");
         if let Event::Message {
             ref id,
