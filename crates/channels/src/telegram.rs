@@ -844,8 +844,8 @@ impl ChannelAdapter for TelegramAdapter {
                                     "GPT-4.1 + Opus 4.6".to_string()
                                 };
                                 let status = format!(
-                                    "Pares Agens status snapshot\nPID: {}\nMemory RSS: {}\nModel: {}\nPluresDB: ~/.pares-agens/memory/",
-                                    std::process::id(), memory, model_line,
+                                    "Pares Agens status snapshot\nCommit: {}\nPID: {}\nMemory RSS: {}\nModel: {}\nPluresDB: ~/.pares-agens/memory/",
+                                    option_env!("GIT_COMMIT_HASH").unwrap_or("unknown"), std::process::id(), memory, model_line,
                                 );
                                 let _ = Self::send_markdown_reply(&bot, &msg, &status, None).await;
                                 Self::acknowledge_message(&bot, &msg).await;

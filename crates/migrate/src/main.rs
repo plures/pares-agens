@@ -1642,7 +1642,7 @@ fn spawn_memory_monitor() -> tokio::task::JoinHandle<()> {
         loop {
             interval.tick().await;
             if let Some(rss_kib) = current_process_rss_kib() {
-                tracing::info!(memory_rss_kib = rss_kib, "process memory usage");
+                tracing::info!(memory_rss_kib = rss_kib, commit = env!("GIT_COMMIT_HASH"), "process memory usage");
             }
         }
     })
@@ -1988,7 +1988,7 @@ async fn main() {
             sync_topic_key,
             sync_shared_key,
         } => {
-            tracing::info!("Starting Pares Agens daemon");
+            tracing::info!(commit = env!("GIT_COMMIT_HASH"), "Starting Pares Agens daemon");
             let started_at = Instant::now();
             let sync_enabled = sync_topic_key.is_some();
 
