@@ -65,6 +65,36 @@ tar.extractall(os.environ['out'] + '/lib')
           mainProgram = "pares-agens";
         };
       };
+
+      # Package builder for the desktop (system tray) Tauri app — no npm step needed.
+      mkDesktopPkg = pkgs: pkgs.rustPlatform.buildRustPackage {
+        pname = "pares-agens-desktop";
+        version = "0.5.0";
+        src = pkgs.lib.cleanSource ./.;
+
+        cargoLock = {
+          lockFile = ./Cargo.lock;
+          allowBuiltinFetchGit = true;
+        };
+
+        cargoBuildFlags = [ "-p" "pares-agens-desktop" ];
+
+        nativeBuildInputs = with pkgs; [ pkg-config cmake ];
+        buildInputs = with pkgs; [
+          openssl stdenv.cc.cc.lib glib pango cairo gdk-pixbuf atk gtk3
+          graphene webkitgtk_4_1 libsoup_3
+        ];
+
+        ORT_LIB_LOCATION = "${onnxruntimeLib { inherit pkgs; }}/lib";
+        FASTEMBED_CACHE_PATH = "/tmp/fastembed-cache";
+
+        meta = {
+          description = "Pares Agens desktop app — system tray agent node";
+          homepage = "https://github.com/plures/pares-agens";
+          license = pkgs.lib.licenses.bsl11;
+          mainProgram = "pares-agens-desktop";
+        };
+      };
     in
     flake-utils.lib.eachDefaultSystem (system:
       let
@@ -76,6 +106,7 @@ tar.extractall(os.environ['out'] + '/lib')
       in
       {
         packages.default = mkPkg pkgs;
+        packages.pares-agens-desktop = mkDesktopPkg pkgs;
 
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
@@ -89,6 +120,7 @@ tar.extractall(os.environ['out'] + '/lib')
       # Overlay — builds pares-agens with the CONSUMER's pkgs (inherits allowUnfree)
       overlays.default = final: prev: {
         pares-agens = mkPkg final;
+        pares-agens-desktop = mkDesktopPkg final;
       };
 
       # NixOS module
@@ -274,6 +306,28 @@ tar.extractall(os.environ['out'] + '/lib')
                     ${extraArgs}
                 '';
             };
+          };
+        };
+
+      # NixOS module for the desktop (system tray) app — runs as a user service.
+      nixosModules.desktop = { config, lib, pkgs, ... }:
+        let
+          cfg = config.services.pares-agens-desktop;
+        in
+        {
+          options.services.pares-agens-desktop = {
+            enable = lib.mkEnableOption "Pares Agens desktop system-tray agent";
+
+            package = lib.mkOption {
+              type = lib.types.package;
+              default = pkgs.pares-agens-desktop;
+              defaultText = lib.literalExpression "pkgs.pares-agens-desktop";
+              description = "The pares-agens-desktop package to use.";
+            };
+          };
+
+          config = lib.mkIf cfg.enable {
+            environment.systemPackages = [ cfg.package ];
           };
         };
     };
