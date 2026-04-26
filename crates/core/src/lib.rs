@@ -86,3 +86,5 @@ pub mod personality;
 pub mod prompt_builder;
 /// Channel-specific output renderers.
 pub mod renderers;
+/// Tool execution governance — policies, timeouts, blocked-command filtering.
+pub mod tool_governance;

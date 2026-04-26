@@ -50,7 +50,7 @@ const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
 /// The runtime strips this marker before model processing and uses it only to
 /// decide whether to append tool execution details to the Telegram reply.
 pub const TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER: &str = "__PARES_VERBOSE_TOOL_DETAILS__:";
-const TELEGRAM_HELP_COMMANDS: [(&str, &str); 21] = [
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 22] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
     ("/status", "status + health snapshot"),
@@ -79,6 +79,7 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 21] = [
     ("/browse", "alias for /agents"),
     ("/install <id>", "install an agent/plugin"),
     ("/logs [n]", "tail recent pares-agens service logs"),
+    ("/tools", "show tool governance policies"),
     (
         "/update",
         "run NixOS self-update and rebuild if pares-agens changed",
@@ -1293,6 +1294,14 @@ impl ChannelAdapter for TelegramAdapter {
                                     Err(e) => format!("Marketplace lookup failed: {e}"),
                                 };
 
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            "tools" => {
+                                use pares_agens_core::tool_governance::ToolGovernor;
+                                let gov = ToolGovernor::with_defaults();
+                                let reply = gov.format_policies();
                                 Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());

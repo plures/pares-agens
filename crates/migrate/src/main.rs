@@ -45,6 +45,7 @@ use pares_agens_core::model::{
     ChatMessage as CoreChatMessage, ChatOptions, ModelClient, ToolDefinition, ToolDispatcher,
 };
 use pares_agens_core::procedure::{Procedure, ProcedureRegistry};
+use pares_agens_core::tool_governance::{GovernanceVerdict, ToolGovernor};
 use pares_agens_core::Event;
 use pares_agens_core::{PluresDbStateStore, StateStore};
 use pares_agens_bitnet::BitnetModelClient;
@@ -629,6 +630,7 @@ impl ModelClient for ToggleableModelClient {
 struct ProcedureToolDispatcher {
     registry: Arc<ProcedureRegistry>,
     trace_store: ToolTraceStore,
+    governor: Arc<ToolGovernor>,
 }
 
 #[async_trait]
@@ -639,6 +641,23 @@ impl ToolDispatcher for ProcedureToolDispatcher {
 
     async fn call_tool(&self, name: &str, arguments: serde_json::Value) -> String {
         let args_for_trace = arguments.clone();
+        let args_str = arguments.to_string();
+
+        // --- Governance pre-execution check ---
+        match self.governor.check(name, &args_str) {
+            GovernanceVerdict::Blocked { pattern } => {
+                let result = format!("Command blocked by policy: matched blocked pattern \"{}\".", pattern);
+                self.trace_store
+                    .record_for_current_request(name, &args_for_trace, &result, true)
+                    .await;
+                return result;
+            }
+            GovernanceVerdict::AllowWithApprovalWarning => {
+                tracing::info!(tool = name, "tool execution proceeding with approval warning (Phase 5+)");
+            }
+            GovernanceVerdict::Allow => {}
+        }
+
         let handler = match self.registry.matching(name).next() {
             Some(h) => h,
             None => {
@@ -657,7 +676,31 @@ impl ToolDispatcher for ProcedureToolDispatcher {
             content: arguments.to_string(),
         };
 
-        let results = handler.execute(&event).await;
+        // --- Governance timeout wrapper ---
+        let policy = self.governor.policy_for(name);
+        let timeout_duration = policy.timeout();
+        let start = Instant::now();
+
+        let execution = handler.execute(&event);
+        let results = match tokio::time::timeout(timeout_duration, execution).await {
+            Ok(results) => results,
+            Err(_) => {
+                let output = format!(
+                    "Tool '{}' timed out after {:.1}s (limit: {:.1}s)",
+                    name,
+                    start.elapsed().as_secs_f64(),
+                    timeout_duration.as_secs_f64(),
+                );
+                tracing::warn!(tool = name, "{}", output);
+                self.trace_store
+                    .record_for_current_request(name, &args_for_trace, &output, true)
+                    .await;
+                return output;
+            }
+        };
+
+        let elapsed = start.elapsed();
+        tracing::debug!(tool = name, elapsed_ms = elapsed.as_millis() as u64, "tool execution completed");
         for result in results {
             if let Event::ToolResult {
                 content, is_error, ..
@@ -875,27 +918,61 @@ impl Procedure for RunCommandProcedure {
                 let result = match parse_tool_args(content) {
                     Ok(args) => match args.get("command").and_then(|v| v.as_str()) {
                         Some(command) => {
-                            let output = tokio::process::Command::new("sh")
+                            // Default 30s timeout — the governance layer may
+                            // override this, but RunCommandProcedure also
+                            // enforces its own as a safety net.
+                            let timeout_secs: u64 = std::env::var("PARES_CMD_TIMEOUT_SECS")
+                                .ok()
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(30);
+                            let timeout_dur = Duration::from_secs(timeout_secs);
+
+                            let mut child = match tokio::process::Command::new("sh")
                                 .arg("-c")
                                 .arg(command)
-                                .output()
-                                .await
-                                .map_err(|e| e.to_string());
-                            match output {
-                                Ok(output) => {
-                                    let stdout = String::from_utf8_lossy(&output.stdout);
-                                    let stderr = String::from_utf8_lossy(&output.stderr);
-                                    let status = output
-                                        .status
+                                .stdout(std::process::Stdio::piped())
+                                .stderr(std::process::Stdio::piped())
+                                .kill_on_drop(true)
+                                .spawn()
+                            {
+                                Ok(child) => child,
+                                Err(e) => return vec![Event::ToolResult {
+                                    tool_call_id: id.clone(),
+                                    tool_name: "run_command".into(),
+                                    content: format!("failed to spawn command: {e}"),
+                                    is_error: true,
+                                }],
+                            };
+
+                            match tokio::time::timeout(timeout_dur, child.wait()).await {
+                                Ok(Ok(status)) => {
+                                    let mut stdout_buf = Vec::new();
+                                    let mut stderr_buf = Vec::new();
+                                    if let Some(mut out) = child.stdout.take() {
+                                        let _ = tokio::io::AsyncReadExt::read_to_end(&mut out, &mut stdout_buf).await;
+                                    }
+                                    if let Some(mut err) = child.stderr.take() {
+                                        let _ = tokio::io::AsyncReadExt::read_to_end(&mut err, &mut stderr_buf).await;
+                                    }
+                                    let stdout = String::from_utf8_lossy(&stdout_buf);
+                                    let stderr = String::from_utf8_lossy(&stderr_buf);
+                                    let code = status
                                         .code()
                                         .map(|c| c.to_string())
                                         .unwrap_or_else(|| "signal".into());
                                     Ok(format!(
                                         "exit_code: {}\nstdout:\n{}\nstderr:\n{}",
-                                        status, stdout, stderr
+                                        code, stdout, stderr
                                     ))
                                 }
-                                Err(e) => Err(e),
+                                Ok(Err(e)) => Err(format!("command I/O error: {e}")),
+                                Err(_) => {
+                                    // Timeout — kill the child process (kill_on_drop also covers this)
+                                    let _ = child.kill().await;
+                                    Err(format!(
+                                        "command timed out after {timeout_secs}s and was killed"
+                                    ))
+                                }
                             }
                         }
                         None => Err("missing 'command'".into()),
@@ -2456,9 +2533,11 @@ async fn main() {
             let procedure_registry = Arc::new(procedure_registry);
 
             let tool_trace_store = ToolTraceStore::default();
+            let governor = Arc::new(ToolGovernor::with_defaults());
             let tool_dispatcher: Arc<dyn ToolDispatcher> = Arc::new(ProcedureToolDispatcher {
                 registry: Arc::clone(&procedure_registry),
                 trace_store: tool_trace_store.clone(),
+                governor: Arc::clone(&governor),
             });
 
             let mut registry = AgentRegistry::new();
@@ -2718,9 +2797,11 @@ async fn main() {
             procedure_registry.register(Box::new(RunCommandProcedure));
             procedure_registry.register(Box::new(WebFetchProcedure));
             let procedure_registry = Arc::new(procedure_registry);
+            let governor = Arc::new(ToolGovernor::with_defaults());
             let tool_dispatcher: Arc<dyn ToolDispatcher> = Arc::new(ProcedureToolDispatcher {
                 registry: Arc::clone(&procedure_registry),
                 trace_store: ToolTraceStore::default(),
+                governor: Arc::clone(&governor),
             });
 
             let cerebellum = Cerebellum::new(CerebellumConfig::default());
