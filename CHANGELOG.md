@@ -1,3 +1,7 @@
+## [1.10.1] — 2026-04-26
+
+- fix(copilot): parse logprobs.content instead of token_logprobs (#604) (8888bee)
+
 ## [1.10.0] — 2026-04-26
 
 - feat: Phase 4 — tool execution governance (d0971a5)
