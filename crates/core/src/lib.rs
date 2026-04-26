@@ -75,4 +75,10 @@ pub use agent::Memory as AgentMemory;
 pub use agent::{Agent, InMemory};
 pub use event::Event;
 pub use state::{InMemoryStateStore, PluresDbStateStore, StateStore};
+/// Channel capability contracts for output rendering.
+pub mod channel_contract;
+/// Event spine — bridges pares-agens to PluresDB's AgensRuntime.
+pub mod event_spine;
 pub mod lifecycle;
+/// Channel-specific output renderers.
+pub mod renderers;

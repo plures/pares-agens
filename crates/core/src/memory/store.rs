@@ -240,6 +240,14 @@ pub struct PluresDbStore {
 }
 
 impl PluresDbStore {
+    /// Return a reference to the underlying [`CrdtStore`].
+    ///
+    /// This is used by the event spine to initialize `AgensRuntime` on top of
+    /// the same CRDT store that backs memory.
+    pub fn crdt_store(&self) -> &CrdtStore {
+        &self.store
+    }
+
     /// Open or create a PluresDB-backed store at `path`.
     ///
     /// # Errors

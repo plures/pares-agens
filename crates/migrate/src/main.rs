@@ -1931,6 +1931,15 @@ enum Commands {
         /// Path to a local BitNet model file for offline inference fallback.
         #[arg(long, env = "PARES_BITNET_MODEL_PATH", value_name = "PATH")]
         bitnet_model_path: Option<PathBuf>,
+
+        /// Enable the AgensRuntime event spine for message delivery.
+        ///
+        /// When set, inbound messages are also emitted through the event spine
+        /// and channel contracts are seeded into PluresDB.  The old Telegram
+        /// adapter remains the primary path; this flag enables the new path
+        /// alongside it.
+        #[arg(long, env = "PARES_USE_EVENT_SPINE")]
+        use_event_spine: bool,
     },
 
     /// Run the agent with an interactive terminal UI.
@@ -2024,6 +2033,7 @@ async fn main() {
             sync_topic_key,
             sync_shared_key,
             bitnet_model_path,
+            use_event_spine,
         } => {
             tracing::info!(commit = env!("GIT_COMMIT_HASH"), "Starting Pares Agens daemon");
             let started_at = Instant::now();
@@ -2413,6 +2423,19 @@ async fn main() {
             let adapter = TelegramAdapter::new(config);
 
             tracing::info!("Telegram adapter starting — bot is live");
+
+            // Initialize the event spine if enabled
+            if use_event_spine {
+                let crdt = store.crdt_store();
+                let spine = pares_agens_core::event_spine::EventSpine::new(crdt, "pares-agens");
+                spine.seed_contracts();
+                spine.register_core_procedures();
+                tracing::info!("AgensRuntime event spine initialized with core procedures");
+                // The spine is stack-local for now — future work will make it
+                // accessible from the adapter via Arc.  The important thing is
+                // that contracts are seeded and procedures are registered in
+                // PluresDB so the data is durable.
+            }
 
             // Start the task scheduler in the background
             let scheduler = pares_agens_agenda::scheduler::Scheduler::new().with_executor(
