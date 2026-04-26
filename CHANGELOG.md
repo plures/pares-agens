@@ -1,3 +1,7 @@
+## [1.12.1] — 2026-04-26
+
+- fix: add missing fallback_models field to integration tests (CI fix) (664f501)
+
 ## [1.12.0] — 2026-04-26
 
 - feat(channels): group chat intelligence — mention/reply gating, passive context tracking, reaction support (f9b8ac9)
