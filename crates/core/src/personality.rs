@@ -36,7 +36,28 @@ pub struct PersonalityContract {
     /// Channel-specific rule overrides keyed by channel name (e.g. "telegram").
     #[serde(default)]
     pub channel_overrides: HashMap<String, Vec<BehaviorRule>>,
+    /// Whether proactive behavior (heartbeats, scheduled tasks) is enabled.
+    #[serde(default = "default_true")]
+    pub proactive_enabled: bool,
+    /// Heartbeat interval in minutes.
+    #[serde(default = "default_heartbeat_interval")]
+    pub heartbeat_interval_mins: u32,
+    /// Start of quiet hours (hour 0-23).
+    #[serde(default = "default_quiet_start")]
+    pub quiet_hours_start: u8,
+    /// End of quiet hours (hour 0-23).
+    #[serde(default = "default_quiet_end")]
+    pub quiet_hours_end: u8,
+    /// Maximum proactive messages per day.
+    #[serde(default = "default_max_proactive")]
+    pub max_proactive_per_day: u8,
 }
+
+fn default_true() -> bool { true }
+fn default_heartbeat_interval() -> u32 { 30 }
+fn default_quiet_start() -> u8 { 23 }
+fn default_quiet_end() -> u8 { 8 }
+fn default_max_proactive() -> u8 { 6 }
 
 impl PersonalityContract {
     /// Build the default personality contract seeded on first run.
@@ -133,6 +154,11 @@ impl PersonalityContract {
                 );
                 overrides
             },
+            proactive_enabled: true,
+            heartbeat_interval_mins: 30,
+            quiet_hours_start: 23,
+            quiet_hours_end: 8,
+            max_proactive_per_day: 6,
         }
     }
 

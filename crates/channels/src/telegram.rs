@@ -37,6 +37,7 @@ use crate::adapter::{ChannelAdapter, ChannelError};
 use pares_agens_core::channel_contract::ChannelContract;
 use pares_agens_core::event_spine::EventSpineHandle;
 use pares_agens_core::renderers::telegram as html_renderer;
+use pares_agens_agenda::scheduler::Scheduler;
 
 const PARES_MODULUS_INDEX_URL: &str =
     "https://raw.githubusercontent.com/plures/pares-modulus/main/index.json";
@@ -50,7 +51,7 @@ const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
 /// The runtime strips this marker before model processing and uses it only to
 /// decide whether to append tool execution details to the Telegram reply.
 pub const TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER: &str = "__PARES_VERBOSE_TOOL_DETAILS__:";
-const TELEGRAM_HELP_COMMANDS: [(&str, &str); 22] = [
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 23] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
     ("/status", "status + health snapshot"),
@@ -87,6 +88,10 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 22] = [
     (
         "/personality",
         "show or modify personality (set tone <t>, rule add <r>, rule remove <id>)",
+    ),
+    (
+        "/cron",
+        "manage scheduled tasks (list, add, remove, pause, resume)",
     ),
 ];
 const DEFAULT_LOG_TAIL_LINES: usize = 80;
@@ -399,6 +404,8 @@ pub struct TelegramConfig {
     pub config_control: Option<Arc<dyn TelegramConfigControl>>,
     /// Optional personality control for `/personality`.
     pub personality_control: Option<Arc<dyn TelegramPersonalityControl>>,
+    /// Optional scheduler for `/cron` commands.
+    pub scheduler: Option<Arc<Scheduler>>,
 }
 
 impl TelegramConfig {
@@ -412,6 +419,7 @@ impl TelegramConfig {
             runtime_control: None,
             config_control: None,
             personality_control: None,
+            scheduler: None,
         }
     }
 
@@ -457,6 +465,13 @@ impl TelegramConfig {
     #[must_use]
     pub fn with_personality_control(mut self, control: Arc<dyn TelegramPersonalityControl>) -> Self {
         self.personality_control = Some(control);
+        self
+    }
+
+    /// Enable `/cron` scheduling commands.
+    #[must_use]
+    pub fn with_scheduler(mut self, scheduler: Arc<Scheduler>) -> Self {
+        self.scheduler = Some(scheduler);
         self
     }
 }
@@ -1028,6 +1043,7 @@ impl ChannelAdapter for TelegramAdapter {
         let runtime_control = self.config.runtime_control.clone();
         let config_control = self.config.config_control.clone();
         let personality_control = self.config.personality_control.clone();
+        let scheduler = self.config.scheduler.clone();
         let event_spine = self.event_spine.clone();
         let verbose_by_chat = Arc::new(TokioMutex::new(HashMap::<i64, bool>::new()));
         let installer = std::sync::Arc::new(TokioMutex::new(
@@ -1045,6 +1061,7 @@ impl ChannelAdapter for TelegramAdapter {
             let runtime_control = runtime_control.clone();
             let config_control = config_control.clone();
             let personality_control = personality_control.clone();
+            let scheduler = scheduler.clone();
             let verbose_by_chat = verbose_by_chat.clone();
             let event_spine = event_spine.clone();
             let update_flake_dir =
@@ -1446,6 +1463,88 @@ impl ChannelAdapter for TelegramAdapter {
                                         }
                                     }
                                     _ => "Usage: /personality [show | set tone <t> | rule add <text> | rule remove <id>]".to_string(),
+                                };
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            "cron" => {
+                                let Some(sched) = &scheduler else {
+                                    Self::send_reply_with_fallback(
+                                        &bot,
+                                        &msg,
+                                        "Scheduler is unavailable for this deployment.",
+                                        None, event_spine.as_ref(),).await;
+                                    Self::acknowledge_message(&bot, &msg).await;
+                                    return respond(());
+                                };
+
+                                let args: Vec<&str> = cmd_parts.collect();
+                                let reply = match args.first().copied() {
+                                    None | Some("list") => {
+                                        let tasks = sched.list().await;
+                                        if tasks.is_empty() {
+                                            "No scheduled tasks.".to_string()
+                                        } else {
+                                            let mut out = String::from("Scheduled tasks:\n");
+                                            for t in &tasks {
+                                                let status = if t.enabled { "✓" } else { "⏸" };
+                                                let last = t.last_run
+                                                    .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
+                                                    .unwrap_or_else(|| "never".to_string());
+                                                out.push_str(&format!(
+                                                    "\n{status} {id} — {name}\n  Last: {last}",
+                                                    id = t.id, name = t.name,
+                                                ));
+                                            }
+                                            out
+                                        }
+                                    }
+                                    Some("add") => {
+                                        // Re-parse the full text for proper quoting
+                                        match Scheduler::parse_cron_add(text) {
+                                            Ok(task) => {
+                                                let reply = format!("✓ Scheduled '{}' ({})", task.name, task.id);
+                                                sched.add(task).await;
+                                                reply
+                                            }
+                                            Err(e) => format!("Error: {e}\nUsage: /cron add '<schedule>' '<command>'"),
+                                        }
+                                    }
+                                    Some("remove") | Some("rm") | Some("delete") => {
+                                        if let Some(id) = args.get(1) {
+                                            if sched.remove(id).await {
+                                                format!("Task '{id}' removed.")
+                                            } else {
+                                                format!("Task '{id}' not found.")
+                                            }
+                                        } else {
+                                            "Usage: /cron remove <id>".to_string()
+                                        }
+                                    }
+                                    Some("pause") => {
+                                        if let Some(id) = args.get(1) {
+                                            if sched.set_enabled(id, false).await {
+                                                format!("Task '{id}' paused.")
+                                            } else {
+                                                format!("Task '{id}' not found.")
+                                            }
+                                        } else {
+                                            "Usage: /cron pause <id>".to_string()
+                                        }
+                                    }
+                                    Some("resume") => {
+                                        if let Some(id) = args.get(1) {
+                                            if sched.set_enabled(id, true).await {
+                                                format!("Task '{id}' resumed.")
+                                            } else {
+                                                format!("Task '{id}' not found.")
+                                            }
+                                        } else {
+                                            "Usage: /cron resume <id>".to_string()
+                                        }
+                                    }
+                                    Some(_) => "Usage: /cron [list | add '<schedule>' '<command>' | remove <id> | pause <id> | resume <id>]".to_string(),
                                 };
                                 Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
