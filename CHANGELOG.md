@@ -1,3 +1,8 @@
+## [1.8.0] — 2026-04-26
+
+- feat(telegram): progressive delivery with placeholder edit pattern (3a403e9)
+- feat: wire Telegram adapter through event spine with HTML rendering (31cee6e)
+
 ## [1.7.0] — 2026-04-26
 
 - feat: add AgensRuntime event spine with channel contracts and thin Telegram renderer (b84b5ea)
