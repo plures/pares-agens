@@ -772,6 +772,89 @@ impl TelegramAdapter {
         Ok(())
     }
 
+    /// Edit a placeholder message with the full response.
+    ///
+    /// If the response fits in one message, edits the placeholder in-place.
+    /// If it requires multiple chunks, edits the placeholder with the first chunk
+    /// and sends remaining chunks as new messages.
+    /// Returns `Some((format, msg_ids))` on success, `None` if editing failed.
+    async fn edit_placeholder_with_response(
+        bot: &Bot,
+        chat_id: ChatId,
+        placeholder_id: teloxide::types::MessageId,
+        content: &str,
+        reply_markup: Option<InlineKeyboardMarkup>,
+        _event_spine: Option<&EventSpineHandle>,
+    ) -> Option<(&'static str, Vec<i64>)> {
+        let contract = ChannelContract::telegram();
+        let (html_chunks, plain_chunks) = html_renderer::render_for_telegram(content, &contract);
+        let mut sent_ids = vec![placeholder_id.0 as i64];
+
+        // Try editing placeholder with first HTML chunk
+        let first_html = html_chunks.first()?;
+        let mut edit_req = bot.edit_message_text(chat_id, placeholder_id, first_html.clone())
+            .parse_mode(ParseMode::Html);
+        if html_chunks.len() == 1 {
+            if let Some(ref markup) = reply_markup {
+                edit_req = edit_req.reply_markup(markup.clone());
+            }
+        }
+        match edit_req.await {
+            Ok(_) => {
+                // Send remaining HTML chunks as new messages
+                for (i, chunk) in html_chunks.iter().skip(1).enumerate() {
+                    let mut req = bot.send_message(chat_id, chunk.clone())
+                        .parse_mode(ParseMode::Html);
+                    if i == html_chunks.len() - 2 {
+                        if let Some(ref markup) = reply_markup {
+                            req = req.reply_markup(markup.clone());
+                        }
+                    }
+                    match req.await {
+                        Ok(sent) => sent_ids.push(sent.id.0 as i64),
+                        Err(e) => {
+                            error!(error = %e, "Failed to send extra HTML chunk after placeholder edit");
+                            return Some(("html", sent_ids));
+                        }
+                    }
+                }
+                Some(("html", sent_ids))
+            }
+            Err(e) => {
+                debug!(error = %e, "HTML edit of placeholder failed, trying plain text");
+                // Try plain text edit
+                let first_plain = plain_chunks.first()?;
+                let mut plain_edit = bot.edit_message_text(chat_id, placeholder_id, first_plain.clone());
+                if plain_chunks.len() == 1 {
+                    if let Some(ref markup) = reply_markup {
+                        plain_edit = plain_edit.reply_markup(markup.clone());
+                    }
+                }
+                match plain_edit.await {
+                    Ok(_) => {
+                        for (i, chunk) in plain_chunks.iter().skip(1).enumerate() {
+                            let mut req = bot.send_message(chat_id, chunk.clone());
+                            if i == plain_chunks.len() - 2 {
+                                if let Some(ref markup) = reply_markup {
+                                    req = req.reply_markup(markup.clone());
+                                }
+                            }
+                            match req.await {
+                                Ok(sent) => sent_ids.push(sent.id.0 as i64),
+                                Err(e) => {
+                                    error!(error = %e, "Failed to send extra plain chunk");
+                                    return Some(("plain", sent_ids));
+                                }
+                            }
+                        }
+                        Some(("plain", sent_ids))
+                    }
+                    Err(_) => None, // give up, caller will delete placeholder and send fresh
+                }
+            }
+        }
+    }
+
     /// Send a reply using HTML formatting with plain-text fallback.
     ///
     /// Converts model markdown output to Telegram HTML via the core renderer,
@@ -1293,7 +1376,16 @@ impl ChannelAdapter for TelegramAdapter {
                             *content = format!("{TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER}{content}");
                         }
                     }
-                    // Send typing indicator and keep it alive while the agent processes
+                    // Progressive delivery: send placeholder, keep typing, edit when done
+                    let placeholder_bot = bot.clone();
+                    let placeholder_msg = placeholder_bot
+                        .send_message(msg.chat.id, "⏳")
+                        .reply_parameters(ReplyParameters::new(msg.id))
+                        .await;
+
+                    let placeholder_id = placeholder_msg.as_ref().ok().map(|m| m.id);
+
+                    // Keep typing indicator alive while agent processes
                     let typing_bot = bot.clone();
                     let typing_chat_id = msg.chat.id;
                     let typing_cancel = tokio_util::sync::CancellationToken::new();
@@ -1325,21 +1417,48 @@ impl ChannelAdapter for TelegramAdapter {
                             None
                         };
 
-                        match Self::send_html_reply(&bot, &msg, &content, reply_markup, event_spine.as_ref()).await {
-                            Ok((format_used, msg_ids)) => {
-                                if let Some(ref spine) = event_spine {
-                                    for mid in &msg_ids {
-                                        spine.emit_delivery_success(msg.chat.id.0, "telegram", *mid, format_used);
-                                    }
+                        // Try to edit the placeholder with the response
+                        let delivered_via_edit = if let Some(pid) = placeholder_id {
+                            Self::edit_placeholder_with_response(
+                                &bot, msg.chat.id, pid, &content, reply_markup.clone(), event_spine.as_ref()
+                            ).await
+                        } else {
+                            None
+                        };
+
+                        if let Some((format_used, msg_ids)) = delivered_via_edit {
+                            // Delivered by editing the placeholder
+                            if let Some(ref spine) = event_spine {
+                                for mid in &msg_ids {
+                                    spine.emit_delivery_success(msg.chat.id.0, "telegram", *mid, format_used);
                                 }
-                                Self::acknowledge_message(&bot, &msg).await;
                             }
-                            Err(e) => {
-                                error!("Failed to send Telegram reply: {e}");
+                            Self::acknowledge_message(&bot, &msg).await;
+                        } else {
+                            // Placeholder edit failed or wasn't possible — delete placeholder and send fresh
+                            if let Some(pid) = placeholder_id {
+                                let _ = bot.delete_message(msg.chat.id, pid).await;
+                            }
+                            match Self::send_html_reply(&bot, &msg, &content, reply_markup, event_spine.as_ref()).await {
+                                Ok((format_used, msg_ids)) => {
+                                    if let Some(ref spine) = event_spine {
+                                        for mid in &msg_ids {
+                                            spine.emit_delivery_success(msg.chat.id.0, "telegram", *mid, format_used);
+                                        }
+                                    }
+                                    Self::acknowledge_message(&bot, &msg).await;
+                                }
+                                Err(e) => {
+                                    error!("Failed to send Telegram reply: {e}");
+                                }
                             }
                         }
                     } else {
                         typing_cancel.cancel();
+                        // No response — delete the placeholder
+                        if let Some(pid) = placeholder_id {
+                            let _ = bot.delete_message(msg.chat.id, pid).await;
+                        }
                     }
                 }
                 respond(())

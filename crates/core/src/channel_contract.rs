@@ -29,6 +29,14 @@ pub struct ChannelContract {
     pub supports_reactions: bool,
     /// Whether the channel supports threaded replies.
     pub supports_threads: bool,
+    /// Whether the channel supports editing sent messages for progressive updates.
+    pub supports_message_edit: bool,
+    /// Maximum time (ms) before the channel must show *something* to the user.
+    pub initial_response_timeout_ms: u64,
+    /// Minimum interval (ms) between message edits to avoid rate limits.
+    pub edit_throttle_ms: u64,
+    /// Whether to show a typing indicator while processing.
+    pub typing_indicator: bool,
 }
 
 impl ChannelContract {
@@ -48,6 +56,10 @@ impl ChannelContract {
             supports_inline_buttons: true,
             supports_reactions: true,
             supports_threads: true,
+            supports_message_edit: true,
+            initial_response_timeout_ms: 30_000,
+            edit_throttle_ms: 500,
+            typing_indicator: true,
         }
     }
 
@@ -64,6 +76,10 @@ impl ChannelContract {
             "supports_inline_buttons": self.supports_inline_buttons,
             "supports_reactions": self.supports_reactions,
             "supports_threads": self.supports_threads,
+            "supports_message_edit": self.supports_message_edit,
+            "initial_response_timeout_ms": self.initial_response_timeout_ms,
+            "edit_throttle_ms": self.edit_throttle_ms,
+            "typing_indicator": self.typing_indicator,
         })
     }
 
