@@ -276,6 +276,7 @@ async fn test_routing_by_model_prefix() {
             provider: "openai".into(),
         }],
         default_provider: "local".into(),
+            fallback_models: vec![],
     };
     let router = ModelRouter::new(config);
 
@@ -342,6 +343,7 @@ async fn test_provider_not_found() {
         providers: HashMap::new(),
         rules: vec![],
         default_provider: "ghost".into(),
+        fallback_models: vec![],
     };
     let router = ModelRouter::new(config);
     let req = ChatCompletionRequest::new("gpt-4o", vec![ChatMessage::text(Role::User, "hi")]);
@@ -379,6 +381,7 @@ fn test_new_multi_multiple_providers_blocked_on_free_tier() {
         ]),
         rules: vec![],
         default_provider: "a".into(),
+        fallback_models: vec![],
     };
     let license = pares_agens_core::license::License::free();
     let result = ModelRouter::new_multi(config, &license);
@@ -404,6 +407,7 @@ fn test_new_multi_routing_rules_blocked_on_free_tier() {
             provider: "local".into(),
         }],
         default_provider: "local".into(),
+            fallback_models: vec![],
     };
     let license = pares_agens_core::license::License::free();
     let result = ModelRouter::new_multi(config, &license);
@@ -435,6 +439,7 @@ fn test_new_multi_multiple_providers_allowed_on_pro_tier() {
             provider: "openai".into(),
         }],
         default_provider: "local".into(),
+            fallback_models: vec![],
     };
     let license = pares_agens_core::license::License::pro(None);
     let result = ModelRouter::new_multi(config, &license);
