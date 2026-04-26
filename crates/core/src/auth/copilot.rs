@@ -528,13 +528,15 @@ impl ModelClient for CopilotModelClient {
             })
             .unwrap_or_default();
 
+        // Fix #604: OpenAI API returns logprobs.content[{token, logprob, ...}],
+        // not logprobs.token_logprobs.
         let logprobs = choice
             .get("logprobs")
-            .and_then(|v| v.get("token_logprobs"))
+            .and_then(|v| v.get("content"))
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|v| v.as_f64())
+                    .filter_map(|v| v.get("logprob").and_then(|lp| lp.as_f64()))
                     .collect::<Vec<f64>>()
             });
 
