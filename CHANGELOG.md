@@ -1,3 +1,7 @@
+## [1.10.0] — 2026-04-26
+
+- feat: Phase 4 — tool execution governance (d0971a5)
+
 ## [1.9.0] — 2026-04-26
 
 - feat: personality framework and dynamic system prompt builder (18dafb7)
