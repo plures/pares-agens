@@ -50,7 +50,7 @@ const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
 /// The runtime strips this marker before model processing and uses it only to
 /// decide whether to append tool execution details to the Telegram reply.
 pub const TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER: &str = "__PARES_VERBOSE_TOOL_DETAILS__:";
-const TELEGRAM_HELP_COMMANDS: [(&str, &str); 20] = [
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 21] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
     ("/status", "status + health snapshot"),
@@ -82,6 +82,10 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 20] = [
     (
         "/update",
         "run NixOS self-update and rebuild if pares-agens changed",
+    ),
+    (
+        "/personality",
+        "show or modify personality (set tone <t>, rule add <r>, rule remove <id>)",
     ),
 ];
 const DEFAULT_LOG_TAIL_LINES: usize = 80;
@@ -392,6 +396,8 @@ pub struct TelegramConfig {
     pub runtime_control: Option<Arc<dyn TelegramRuntimeControl>>,
     /// Optional runtime config control for `/config`.
     pub config_control: Option<Arc<dyn TelegramConfigControl>>,
+    /// Optional personality control for `/personality`.
+    pub personality_control: Option<Arc<dyn TelegramPersonalityControl>>,
 }
 
 impl TelegramConfig {
@@ -404,6 +410,7 @@ impl TelegramConfig {
             model_control: None,
             runtime_control: None,
             config_control: None,
+            personality_control: None,
         }
     }
 
@@ -444,6 +451,13 @@ impl TelegramConfig {
         self.config_control = Some(config_control);
         self
     }
+
+    /// Enable `/personality` runtime personality control.
+    #[must_use]
+    pub fn with_personality_control(mut self, control: Arc<dyn TelegramPersonalityControl>) -> Self {
+        self.personality_control = Some(control);
+        self
+    }
 }
 
 /// Runtime model control hooks used by the `/model` Telegram command.
@@ -479,6 +493,19 @@ pub trait TelegramConfigControl: Send + Sync {
     async fn set_endpoint(&self, endpoint: &str) -> Result<(), String>;
     /// Update the runtime log level.
     async fn set_log_level(&self, log_level: &str) -> Result<(), String>;
+}
+
+/// Runtime personality control for `/personality`.
+#[async_trait::async_trait]
+pub trait TelegramPersonalityControl: Send + Sync {
+    /// Return the current personality summary.
+    async fn show(&self, channel: Option<&str>) -> String;
+    /// Set the tone.
+    async fn set_tone(&self, tone: &str) -> Result<(), String>;
+    /// Add or update a behavioral rule.
+    async fn add_rule(&self, rule_text: &str) -> Result<String, String>;
+    /// Remove a behavioral rule by ID.
+    async fn remove_rule(&self, id: &str) -> Result<(), String>;
 }
 
 /// Runtime configuration snapshot shown by `/config`.
@@ -999,6 +1026,7 @@ impl ChannelAdapter for TelegramAdapter {
         let model_control = self.config.model_control.clone();
         let runtime_control = self.config.runtime_control.clone();
         let config_control = self.config.config_control.clone();
+        let personality_control = self.config.personality_control.clone();
         let event_spine = self.event_spine.clone();
         let verbose_by_chat = Arc::new(TokioMutex::new(HashMap::<i64, bool>::new()));
         let installer = std::sync::Arc::new(TokioMutex::new(
@@ -1015,6 +1043,7 @@ impl ChannelAdapter for TelegramAdapter {
             let model_control = model_control.clone();
             let runtime_control = runtime_control.clone();
             let config_control = config_control.clone();
+            let personality_control = personality_control.clone();
             let verbose_by_chat = verbose_by_chat.clone();
             let event_spine = event_spine.clone();
             let update_flake_dir =
@@ -1346,6 +1375,68 @@ impl ChannelAdapter for TelegramAdapter {
                                         truncate_telegram_message(format_update_command_output(&output))
                                     }
                                     Err(e) => format!("Failed to start self-update command: {e}"),
+                                };
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            "personality" => {
+                                let Some(control) = &personality_control else {
+                                    Self::send_reply_with_fallback(
+                                        &bot,
+                                        &msg,
+                                        "Personality control is unavailable for this deployment.",
+                                        None, event_spine.as_ref(),).await;
+                                    Self::acknowledge_message(&bot, &msg).await;
+                                    return respond(());
+                                };
+
+                                let args: Vec<&str> = cmd_parts.collect();
+                                let reply = match args.first().copied() {
+                                    None | Some("show") => {
+                                        control.show(Some("telegram")).await
+                                    }
+                                    Some("set") => {
+                                        if args.get(1).copied() == Some("tone") {
+                                            if let Some(tone) = args.get(2) {
+                                                match control.set_tone(tone).await {
+                                                    Ok(()) => format!("Tone updated to '{tone}'."),
+                                                    Err(e) => format!("Failed: {e}"),
+                                                }
+                                            } else {
+                                                "Usage: /personality set tone <tone>".to_string()
+                                            }
+                                        } else {
+                                            "Usage: /personality set tone <tone>".to_string()
+                                        }
+                                    }
+                                    Some("rule") => {
+                                        match args.get(1).copied() {
+                                            Some("add") => {
+                                                let rule_text: String = args[2..].join(" ");
+                                                if rule_text.is_empty() {
+                                                    "Usage: /personality rule add <rule text>".to_string()
+                                                } else {
+                                                    match control.add_rule(&rule_text).await {
+                                                        Ok(id) => format!("Rule added: {id}"),
+                                                        Err(e) => format!("Failed: {e}"),
+                                                    }
+                                                }
+                                            }
+                                            Some("remove") | Some("rm") => {
+                                                if let Some(id) = args.get(2) {
+                                                    match control.remove_rule(id).await {
+                                                        Ok(()) => format!("Rule '{id}' removed."),
+                                                        Err(e) => format!("Failed: {e}"),
+                                                    }
+                                                } else {
+                                                    "Usage: /personality rule remove <id>".to_string()
+                                                }
+                                            }
+                                            _ => "Usage: /personality rule add <text> | rule remove <id>".to_string(),
+                                        }
+                                    }
+                                    _ => "Usage: /personality [show | set tone <t> | rule add <text> | rule remove <id>]".to_string(),
                                 };
                                 Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;

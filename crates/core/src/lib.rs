@@ -80,5 +80,9 @@ pub mod channel_contract;
 /// Event spine — bridges pares-agens to PluresDB's AgensRuntime.
 pub mod event_spine;
 pub mod lifecycle;
+/// Personality contracts — identity, tone, and behavioral rules.
+pub mod personality;
+/// Dynamic system prompt builder from personality contracts.
+pub mod prompt_builder;
 /// Channel-specific output renderers.
 pub mod renderers;

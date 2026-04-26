@@ -28,7 +28,8 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use pares_agens_channels::adapter::ChannelAdapter;
 use pares_agens_channels::telegram::{
     TelegramAdapter, TelegramConfig, TelegramConfigControl, TelegramModelControl,
-    TelegramRuntimeConfig, TelegramRuntimeControl, TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER,
+    TelegramPersonalityControl, TelegramRuntimeConfig, TelegramRuntimeControl,
+    TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER,
 };
 use pares_agens_core::agent::{Agent, Memory};
 use pares_agens_core::auth::copilot::{CopilotAuth, CopilotModelClient};
@@ -139,6 +140,12 @@ struct RuntimeConfigControl {
 struct RuntimeResetControl {
     agent: Arc<RwLock<Arc<Agent>>>,
     factory: Arc<RuntimeAgentFactory>,
+}
+
+#[allow(dead_code)]
+struct RuntimePersonalityControl {
+    state_store: Arc<dyn StateStore>,
+    agent: Arc<RwLock<Arc<Agent>>>,
 }
 
 #[derive(Clone)]
@@ -293,6 +300,10 @@ impl RuntimeAgentFactory {
         });
         let cerebellum = Cerebellum::new(CerebellumConfig::default());
         let system_prompt = self.load_system_prompt()?;
+
+        // Create default personality contract. Runtime seeding into PluresDB
+        // happens in the async serve path.
+        let personality = pares_agens_core::personality::PersonalityContract::default_contract(None);
         let delegation_broker = DelegationBroker::new(
             Arc::clone(&self.registry),
             Arc::clone(&self.model_client),
@@ -309,7 +320,8 @@ impl RuntimeAgentFactory {
                 )
                 .with_deep_model(Arc::clone(&self.deep_model_client))
                 .with_delegation(delegation_broker)
-                .with_turn_store(turn_store),
+                .with_turn_store(turn_store)
+                .with_personality(personality),
         ))
     }
 }
@@ -432,6 +444,69 @@ impl TelegramRuntimeControl for RuntimeResetControl {
             *guard = new_agent;
         }
         tracing::info!("telegram /reset completed successfully");
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl TelegramPersonalityControl for RuntimePersonalityControl {
+    async fn show(&self, channel: Option<&str>) -> String {
+        use pares_agens_core::personality::{PersonalityContract, PERSONALITY_STATE_KEY};
+        match self.state_store.get(PERSONALITY_STATE_KEY).await {
+            Some(v) => match serde_json::from_value::<PersonalityContract>(v) {
+                Ok(p) => p.display_summary(channel),
+                Err(e) => format!("Failed to parse personality: {e}"),
+            },
+            None => "No personality contract configured.".to_string(),
+        }
+    }
+
+    async fn set_tone(&self, tone: &str) -> Result<(), String> {
+        use pares_agens_core::personality::{PersonalityContract, PERSONALITY_STATE_KEY};
+        let mut contract = match self.state_store.get(PERSONALITY_STATE_KEY).await {
+            Some(v) => serde_json::from_value::<PersonalityContract>(v)
+                .map_err(|e| format!("parse error: {e}"))?,
+            None => PersonalityContract::default_contract(None),
+        };
+        contract.tone = tone.to_string();
+        let value = serde_json::to_value(&contract).map_err(|e| format!("serialize: {e}"))?;
+        self.state_store.set(PERSONALITY_STATE_KEY, value).await;
+        // TODO: rebuild agent system prompt live
+        Ok(())
+    }
+
+    async fn add_rule(&self, rule_text: &str) -> Result<String, String> {
+        use pares_agens_core::personality::{BehaviorRule, PersonalityContract, PERSONALITY_STATE_KEY};
+        let mut contract = match self.state_store.get(PERSONALITY_STATE_KEY).await {
+            Some(v) => serde_json::from_value::<PersonalityContract>(v)
+                .map_err(|e| format!("parse error: {e}"))?,
+            None => PersonalityContract::default_contract(None),
+        };
+        let id = format!("custom-{}", uuid::Uuid::new_v4().as_simple());
+        contract.upsert_rule(BehaviorRule {
+            id: id.clone(),
+            category: "communication".into(),
+            rule: rule_text.to_string(),
+            priority: 5,
+            enforced: false,
+        });
+        let value = serde_json::to_value(&contract).map_err(|e| format!("serialize: {e}"))?;
+        self.state_store.set(PERSONALITY_STATE_KEY, value).await;
+        Ok(id)
+    }
+
+    async fn remove_rule(&self, id: &str) -> Result<(), String> {
+        use pares_agens_core::personality::{PersonalityContract, PERSONALITY_STATE_KEY};
+        let mut contract = match self.state_store.get(PERSONALITY_STATE_KEY).await {
+            Some(v) => serde_json::from_value::<PersonalityContract>(v)
+                .map_err(|e| format!("parse error: {e}"))?,
+            None => return Err("No personality contract configured.".to_string()),
+        };
+        if !contract.remove_rule(id) {
+            return Err(format!("Rule '{id}' not found."));
+        }
+        let value = serde_json::to_value(&contract).map_err(|e| format!("serialize: {e}"))?;
+        self.state_store.set(PERSONALITY_STATE_KEY, value).await;
         Ok(())
     }
 }
@@ -2420,6 +2495,10 @@ async fn main() {
             if let Some(control) = runtime_config_control {
                 config = config.with_config_control(control);
             }
+            config = config.with_personality_control(Arc::new(RuntimePersonalityControl {
+                state_store: Arc::clone(&runtime_state_store),
+                agent: Arc::clone(&agent_handle),
+            }));
             let adapter = TelegramAdapter::new(config);
 
             tracing::info!("Telegram adapter starting — bot is live");
@@ -2435,6 +2514,19 @@ async fn main() {
                 // accessible from the adapter via Arc.  The important thing is
                 // that contracts are seeded and procedures are registered in
                 // PluresDB so the data is durable.
+            }
+
+            // Seed personality contract into PluresDB state if not present
+            {
+                use pares_agens_core::personality::{PersonalityContract, PERSONALITY_STATE_KEY};
+                let existing = runtime_state_store.get(PERSONALITY_STATE_KEY).await;
+                if existing.and_then(|v| serde_json::from_value::<PersonalityContract>(v).ok()).is_none() {
+                    let default = PersonalityContract::default_contract(None);
+                    if let Ok(value) = serde_json::to_value(&default) {
+                        runtime_state_store.set(PERSONALITY_STATE_KEY, value).await;
+                        tracing::info!("Seeded default personality contract into PluresDB state");
+                    }
+                }
             }
 
             // Start the task scheduler in the background

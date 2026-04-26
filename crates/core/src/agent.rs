@@ -135,8 +135,12 @@ pub struct Agent {
     deep_model_client: Option<Arc<dyn ModelClient>>,
     /// Tool dispatcher for model tool calls.
     tool_dispatcher: Option<Arc<dyn ToolDispatcher>>,
-    /// Base system prompt.
+    /// Base system prompt (legacy fallback).
     system_prompt: String,
+    /// Personality contract for dynamic prompt building.
+    personality: Option<crate::personality::PersonalityContract>,
+    /// Current channel name (e.g. "telegram").
+    current_channel: std::sync::Mutex<Option<String>>,
     /// Per-channel conversation history keyed by channel/session label.
     conversation_history: Mutex<HashMap<String, Vec<ChatMessage>>>,
     /// Optional persistent turn store (PluresDB). When `Some`, conversation
@@ -181,6 +185,8 @@ impl Agent {
             deep_model_client: None,
             tool_dispatcher: None,
             system_prompt: String::new(),
+            personality: None,
+            current_channel: std::sync::Mutex::new(None),
             conversation_history: Mutex::new(HashMap::new()),
             turn_store: None,
             audit_store: None,
@@ -209,6 +215,8 @@ impl Agent {
             deep_model_client: None,
             tool_dispatcher: None,
             system_prompt: String::new(),
+            personality: None,
+            current_channel: std::sync::Mutex::new(None),
             conversation_history: Mutex::new(HashMap::new()),
             turn_store: None,
             audit_store: None,
@@ -228,6 +236,29 @@ impl Agent {
         self.tool_dispatcher = Some(dispatcher);
         self.system_prompt = system_prompt;
         self
+    }
+
+    /// Attach a personality contract for dynamic prompt building.
+    pub fn with_personality(mut self, personality: crate::personality::PersonalityContract) -> Self {
+        self.personality = Some(personality);
+        self
+    }
+
+    /// Set the current channel name for personality overrides.
+    pub fn set_channel(&self, channel: &str) {
+        if let Ok(mut ch) = self.current_channel.lock() {
+            *ch = Some(channel.to_string());
+        }
+    }
+
+    /// Get a mutable reference to the personality contract.
+    pub fn personality_mut(&mut self) -> Option<&mut crate::personality::PersonalityContract> {
+        self.personality.as_mut()
+    }
+
+    /// Get a reference to the personality contract.
+    pub fn personality(&self) -> Option<&crate::personality::PersonalityContract> {
+        self.personality.as_ref()
     }
 
     /// Attach a deep model client used for low-confidence escalation.
@@ -617,6 +648,19 @@ impl Agent {
     }
 
     fn build_system_prompt(&self, learned_context: &str, deep: bool) -> String {
+        // If a personality contract is set, use the dynamic prompt builder.
+        if let Some(personality) = &self.personality {
+            let channel = self.current_channel.lock().ok().and_then(|ch| ch.clone());
+            let ctx = crate::prompt_builder::AgentContext {
+                channel: channel.as_deref(),
+                learned_context,
+                conversation_summary: None,
+                deep,
+            };
+            return crate::prompt_builder::build_system_prompt(personality, &ctx);
+        }
+
+        // Legacy fallback: flat system prompt string.
         let mut prompt = String::new();
         if deep {
             prompt.push_str("Think deeply about this. Analyze thoroughly.");
