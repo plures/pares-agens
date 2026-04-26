@@ -1,3 +1,7 @@
+## [1.12.0] — 2026-04-26
+
+- feat(channels): group chat intelligence — mention/reply gating, passive context tracking, reaction support (f9b8ac9)
+
 ## [1.11.0] — 2026-04-26
 
 - feat: phase 6 — heartbeat system, /cron command, proactive contracts (3dfafa8)
