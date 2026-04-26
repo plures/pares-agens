@@ -92,6 +92,39 @@ impl ChannelContract {
     }
 }
 
+/// Policy governing bot participation in group chats.
+///
+/// Controls when the bot responds vs. passively observes in multi-user
+/// conversations. In 1:1 chats, the bot always responds regardless of policy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroupChatPolicy {
+    /// Respond when the bot is @-mentioned.
+    pub respond_on_mention: bool,
+    /// Respond when a user replies to a previous bot message.
+    pub respond_on_reply: bool,
+    /// Respond when the message starts with this prefix (e.g. `"!"`).
+    pub respond_on_prefix: Option<String>,
+    /// Store messages the bot doesn't respond to for conversational context.
+    pub passive_observe: bool,
+    /// Number of recent messages to keep per chat for context injection.
+    pub context_window: usize,
+    /// Maximum proactive (unprompted) messages per hour in group chats.
+    pub max_unprompted_per_hour: u8,
+}
+
+impl Default for GroupChatPolicy {
+    fn default() -> Self {
+        Self {
+            respond_on_mention: true,
+            respond_on_reply: true,
+            respond_on_prefix: None,
+            passive_observe: true,
+            context_window: 50,
+            max_unprompted_per_hour: 2,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

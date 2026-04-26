@@ -12,6 +12,7 @@
 //! Use [`check_channel_count`] to enforce this at startup.
 
 pub mod adapter;
+pub mod group_context;
 pub mod stdin;
 pub mod tauri_ipc;
 pub mod telegram;

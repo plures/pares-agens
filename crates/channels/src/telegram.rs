@@ -34,7 +34,8 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::adapter::{ChannelAdapter, ChannelError};
-use pares_agens_core::channel_contract::ChannelContract;
+use crate::group_context::{GroupContextBuffer, GroupMessage};
+use pares_agens_core::channel_contract::{ChannelContract, GroupChatPolicy};
 use pares_agens_core::event_spine::EventSpineHandle;
 use pares_agens_core::renderers::telegram as html_renderer;
 use pares_agens_agenda::scheduler::Scheduler;
@@ -406,6 +407,8 @@ pub struct TelegramConfig {
     pub personality_control: Option<Arc<dyn TelegramPersonalityControl>>,
     /// Optional scheduler for `/cron` commands.
     pub scheduler: Option<Arc<Scheduler>>,
+    /// Policy for group chat participation.
+    pub group_chat_policy: GroupChatPolicy,
 }
 
 impl TelegramConfig {
@@ -420,6 +423,7 @@ impl TelegramConfig {
             config_control: None,
             personality_control: None,
             scheduler: None,
+            group_chat_policy: GroupChatPolicy::default(),
         }
     }
 
@@ -472,6 +476,13 @@ impl TelegramConfig {
     #[must_use]
     pub fn with_scheduler(mut self, scheduler: Arc<Scheduler>) -> Self {
         self.scheduler = Some(scheduler);
+        self
+    }
+
+    /// Override the default group chat participation policy.
+    #[must_use]
+    pub fn with_group_chat_policy(mut self, policy: GroupChatPolicy) -> Self {
+        self.group_chat_policy = policy;
         self
     }
 }
@@ -1021,6 +1032,72 @@ impl TelegramAdapter {
             debug!("failed to add Telegram reaction acknowledgement: {e}");
         }
     }
+
+    /// Check if a chat is a group or supergroup.
+    fn is_group_chat(msg: &Message) -> bool {
+        use teloxide::types::ChatKind;
+        matches!(&msg.chat.kind, ChatKind::Public(public) if matches!(
+            public.kind,
+            teloxide::types::PublicChatKind::Group | teloxide::types::PublicChatKind::Supergroup(_)
+        ))
+    }
+
+    /// Determine if the bot should respond in a group chat based on trigger conditions.
+    fn should_respond_in_group(
+        msg: &Message,
+        bot_username: &str,
+        policy: &GroupChatPolicy,
+    ) -> bool {
+        let text = msg.text().unwrap_or_default();
+
+        // Check @mention
+        if policy.respond_on_mention {
+            let mention = format!("@{}", bot_username);
+            if text.contains(&mention) {
+                return true;
+            }
+        }
+
+        // Check reply-to-bot
+        if policy.respond_on_reply {
+            if let Some(reply) = msg.reply_to_message() {
+                if let Some(from) = reply.from.as_ref() {
+                    if from.username.as_deref() == Some(bot_username) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // Check prefix trigger
+        if let Some(ref prefix) = policy.respond_on_prefix {
+            if text.starts_with(prefix.as_str()) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// React to a message with a contextually appropriate emoji.
+    #[allow(dead_code)]
+    async fn react_contextually(bot: &Bot, msg: &Message) {
+        let text = msg.text().unwrap_or_default().to_lowercase();
+        let emoji = if text.contains('?') {
+            "🤔"
+        } else {
+            "👀"
+        };
+        if let Err(e) = bot
+            .set_message_reaction(msg.chat.id, msg.id)
+            .reaction(vec![ReactionType::Emoji {
+                emoji: emoji.to_string(),
+            }])
+            .await
+        {
+            debug!("failed to add contextual group reaction: {e}");
+        }
+    }
 }
 
 #[async_trait]
@@ -1038,6 +1115,18 @@ impl ChannelAdapter for TelegramAdapter {
     ) -> Result<(), ChannelError> {
         info!("Starting Telegram adapter");
         let bot = Bot::new(self.config.token.clone());
+
+        // Fetch bot username for group mention detection
+        let bot_me = bot.get_me().await.map_err(|e| ChannelError::Telegram(format!("failed to get bot info: {e}")))?;
+        let bot_username: Arc<str> = Arc::from(
+            bot_me.username.as_deref().unwrap_or("bot").to_string().into_boxed_str()
+        );
+
+        let group_policy = Arc::new(self.config.group_chat_policy.clone());
+        let group_context = Arc::new(TokioMutex::new(
+            GroupContextBuffer::new(self.config.group_chat_policy.context_window),
+        ));
+
         let index_url = self.config.marketplace_index_url.clone();
         let model_control = self.config.model_control.clone();
         let runtime_control = self.config.runtime_control.clone();
@@ -1064,6 +1153,9 @@ impl ChannelAdapter for TelegramAdapter {
             let scheduler = scheduler.clone();
             let verbose_by_chat = verbose_by_chat.clone();
             let event_spine = event_spine.clone();
+            let bot_username = bot_username.clone();
+            let group_policy = group_policy.clone();
+            let group_context = group_context.clone();
             let update_flake_dir =
                 std::env::var("PARES_NIX_FLAKE_DIR").unwrap_or_else(|_| DEFAULT_NIX_FLAKE_DIR.into());
             let update_host =
@@ -1557,6 +1649,42 @@ impl ChannelAdapter for TelegramAdapter {
 
                 // Normal message — send to agent
                 if let Some(mut event) = event {
+                    // ── Group chat gate ──────────────────────────────────────
+                    let is_group = Self::is_group_chat(&msg);
+                    if is_group {
+                        // Always record in context buffer for passive observation
+                        if group_policy.passive_observe {
+                            let sender_name = msg.from.as_ref()
+                                .map(|u| u.username.as_deref().unwrap_or(&u.first_name).to_string())
+                                .unwrap_or_else(|| "unknown".into());
+                            let text = msg.text().unwrap_or_default().to_string();
+                            let ts = msg.date.timestamp();
+                            let mut ctx = group_context.lock().await;
+                            ctx.push(msg.chat.id.0, GroupMessage {
+                                sender: sender_name,
+                                text,
+                                timestamp: ts,
+                            });
+                        }
+
+                        // Check if bot should respond
+                        if !Self::should_respond_in_group(&msg, &bot_username, &group_policy) {
+                            // Not triggered — optionally react and skip model call
+                            debug!(chat_id = msg.chat.id.0, "group message not triggered, skipping");
+                            return respond(());
+                        }
+
+                        // Triggered in group — inject context into event content
+                        if group_policy.passive_observe {
+                            if let Event::Message { content, .. } = &mut event {
+                                let ctx_lock = group_context.lock().await;
+                                if let Some(context_str) = ctx_lock.format_context(msg.chat.id.0) {
+                                    *content = format!("{context_str}\n\n---\nTriggered message: {content}");
+                                }
+                            }
+                        }
+                    }
+                    // ── End group chat gate ──────────────────────────────────
                     // Emit inbound message to event spine
                     if let Some(ref spine) = event_spine {
                         let (user, text) = match &event {
