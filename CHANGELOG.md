@@ -1,3 +1,7 @@
+## [1.9.0] — 2026-04-26
+
+- feat: personality framework and dynamic system prompt builder (18dafb7)
+
 ## [1.8.0] — 2026-04-26
 
 - feat(telegram): progressive delivery with placeholder edit pattern (3a403e9)
