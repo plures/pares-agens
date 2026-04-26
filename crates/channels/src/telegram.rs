@@ -34,6 +34,9 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::adapter::{ChannelAdapter, ChannelError};
+use pares_agens_core::channel_contract::ChannelContract;
+use pares_agens_core::event_spine::EventSpineHandle;
+use pares_agens_core::renderers::telegram as html_renderer;
 
 const PARES_MODULUS_INDEX_URL: &str =
     "https://raw.githubusercontent.com/plures/pares-modulus/main/index.json";
@@ -496,6 +499,7 @@ pub struct TelegramRuntimeConfig {
 /// Telegram messages.
 pub struct TelegramAdapter {
     config: TelegramConfig,
+    event_spine: Option<EventSpineHandle>,
 }
 
 #[derive(Debug)]
@@ -516,7 +520,12 @@ enum ConfigCommand {
 impl TelegramAdapter {
     /// Create a new [`TelegramAdapter`] with the given configuration.
     pub fn new(config: TelegramConfig) -> Self {
-        Self { config }
+        Self { config, event_spine: None }
+    }
+
+    /// Create a new [`TelegramAdapter`] with an event spine handle.
+    pub fn with_event_spine(config: TelegramConfig, spine: EventSpineHandle) -> Self {
+        Self { config, event_spine: Some(spine) }
     }
 
     fn parse_model_command(args: Vec<&str>) -> Result<ModelCommand, &'static str> {
@@ -696,8 +705,10 @@ impl TelegramAdapter {
 
     /// Telegram enforces a 4096-character limit per message.
     /// Split long replies into chunks on paragraph boundaries and send sequentially.
+    #[allow(dead_code)]
     const TELEGRAM_MAX_LEN: usize = 4096;
 
+    #[allow(dead_code)]
     fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
         if text.len() <= max_len {
             return vec![text.to_string()];
@@ -727,6 +738,8 @@ impl TelegramAdapter {
         chunks
     }
 
+    #[deprecated(note = "Use send_html_reply instead — HTML is the preferred Telegram format")]
+    #[allow(dead_code)]
     async fn send_markdown_reply(
         bot: &Bot,
         msg: &Message,
@@ -757,6 +770,118 @@ impl TelegramAdapter {
         }
 
         Ok(())
+    }
+
+    /// Send a reply using HTML formatting with plain-text fallback.
+    ///
+    /// Converts model markdown output to Telegram HTML via the core renderer,
+    /// chunks according to the channel contract, and sends with `ParseMode::Html`.
+    /// If HTML send fails, retries with plain text (no formatting).
+    ///
+    /// Returns `("html" | "plain", Vec<message_id>)` on success for event tracking.
+    async fn send_html_reply(
+        bot: &Bot,
+        msg: &Message,
+        content: &str,
+        reply_markup: Option<InlineKeyboardMarkup>,
+        event_spine: Option<&EventSpineHandle>,
+    ) -> Result<(&'static str, Vec<i64>), teloxide::RequestError> {
+        let contract = ChannelContract::telegram();
+        let (html_chunks, plain_chunks) = html_renderer::render_for_telegram(content, &contract);
+        let mut sent_ids = Vec::new();
+
+        // Try HTML first
+        let mut html_failed = false;
+        for (i, chunk) in html_chunks.iter().enumerate() {
+            let mut req = bot
+                .send_message(msg.chat.id, chunk.clone())
+                .parse_mode(ParseMode::Html);
+
+            if i == 0 {
+                req = req.reply_parameters(ReplyParameters::new(msg.id));
+            }
+            if i == html_chunks.len() - 1 {
+                if let Some(ref markup) = reply_markup {
+                    req = req.reply_markup(markup.clone());
+                }
+            }
+
+            match req.await {
+                Ok(sent) => {
+                    sent_ids.push(sent.id.0 as i64);
+                }
+                Err(e) => {
+                    error!(error = %e, chunk_index = i, "HTML send failed, falling back to plain text");
+                    html_failed = true;
+                    break;
+                }
+            }
+        }
+
+        if !html_failed {
+            return Ok(("html", sent_ids));
+        }
+
+        // Fallback: plain text (no formatting at all)
+        sent_ids.clear();
+        for (i, chunk) in plain_chunks.iter().enumerate() {
+            let mut req = bot.send_message(msg.chat.id, chunk.clone());
+
+            if i == 0 {
+                req = req.reply_parameters(ReplyParameters::new(msg.id));
+            }
+            if i == plain_chunks.len() - 1 {
+                if let Some(ref markup) = reply_markup {
+                    req = req.reply_markup(markup.clone());
+                }
+            }
+
+            match req.await {
+                Ok(sent) => {
+                    sent_ids.push(sent.id.0 as i64);
+                }
+                Err(e) => {
+                    error!(error = %e, chunk_index = i, "Plain text fallback also failed");
+                    if let Some(spine) = event_spine {
+                        spine.emit_delivery_failure(
+                            msg.chat.id.0,
+                            "telegram",
+                            &e.to_string(),
+                            false,
+                        );
+                    }
+                    return Err(e);
+                }
+            }
+        }
+
+        Ok(("plain", sent_ids))
+    }
+
+    /// Send a reply with error handling and event spine integration.
+    ///
+    /// Logs errors, emits delivery failure events, and falls back to plain text.
+    /// This is the standard send path for all command responses.
+    async fn send_reply_with_fallback(
+        bot: &Bot,
+        msg: &Message,
+        content: &str,
+        reply_markup: Option<InlineKeyboardMarkup>,
+        event_spine: Option<&EventSpineHandle>,
+    ) {
+        match Self::send_html_reply(bot, msg, content, reply_markup, event_spine).await {
+            Ok((format_used, msg_ids)) => {
+                if let Some(spine) = event_spine {
+                    for mid in &msg_ids {
+                        spine.emit_delivery_success(msg.chat.id.0, "telegram", *mid, format_used);
+                    }
+                }
+            }
+            Err(e) => {
+                error!(error = %e, chat_id = msg.chat.id.0, "Failed to send Telegram reply (all formats)");
+                // Delivery failure already emitted inside send_html_reply
+            }
+        }
     }
 
     async fn acknowledge_message(bot: &Bot, msg: &Message) {
@@ -791,6 +916,7 @@ impl ChannelAdapter for TelegramAdapter {
         let model_control = self.config.model_control.clone();
         let runtime_control = self.config.runtime_control.clone();
         let config_control = self.config.config_control.clone();
+        let event_spine = self.event_spine.clone();
         let verbose_by_chat = Arc::new(TokioMutex::new(HashMap::<i64, bool>::new()));
         let installer = std::sync::Arc::new(TokioMutex::new(
             Installer::new(&self.config.marketplace_install_dir)
@@ -807,6 +933,7 @@ impl ChannelAdapter for TelegramAdapter {
             let runtime_control = runtime_control.clone();
             let config_control = config_control.clone();
             let verbose_by_chat = verbose_by_chat.clone();
+            let event_spine = event_spine.clone();
             let update_flake_dir =
                 std::env::var("PARES_NIX_FLAKE_DIR").unwrap_or_else(|_| DEFAULT_NIX_FLAKE_DIR.into());
             let update_host =
@@ -823,13 +950,7 @@ impl ChannelAdapter for TelegramAdapter {
                         match cmd {
                             "start" | "help" => {
                                 let help = telegram_help_text();
-                                let _ = Self::send_markdown_reply(
-                                    &bot,
-                                    &msg,
-                                    &help,
-                                    None,
-                                )
-                                .await;
+                                Self::send_reply_with_fallback(&bot, &msg, &help, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
@@ -847,7 +968,7 @@ impl ChannelAdapter for TelegramAdapter {
                                     "Pares Agens status snapshot\nCommit: {}\nPID: {}\nMemory RSS: {}\nModel: {}\nPluresDB: ~/.pares-agens/memory/",
                                     option_env!("GIT_COMMIT_HASH").unwrap_or("unknown"), std::process::id(), memory, model_line,
                                 );
-                                let _ = Self::send_markdown_reply(&bot, &msg, &status, None).await;
+                                Self::send_reply_with_fallback(&bot, &msg, &status, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
@@ -870,19 +991,17 @@ impl ChannelAdapter for TelegramAdapter {
                                     }
                                     Err(usage) => usage.to_string(),
                                 };
-                                let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
                             "reasoning" => {
                                 let Some(control) = &model_control else {
-                                    let _ = Self::send_markdown_reply(
+                                    Self::send_reply_with_fallback(
                                         &bot,
                                         &msg,
                                         "Runtime reasoning controls are unavailable for this deployment.",
-                                        None,
-                                    )
-                                    .await;
+                                        None, event_spine.as_ref(),).await;
                                     Self::acknowledge_message(&bot, &msg).await;
                                     return respond(());
                                 };
@@ -906,19 +1025,17 @@ impl ChannelAdapter for TelegramAdapter {
                                     },
                                     Err(usage) => usage.to_string(),
                                 };
-                                let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
                             "model" => {
                                 let Some(control) = &model_control else {
-                                    let _ = Self::send_markdown_reply(
+                                    Self::send_reply_with_fallback(
                                         &bot,
                                         &msg,
                                         "Runtime model switching is unavailable for this deployment.",
-                                        None,
-                                    )
-                                    .await;
+                                        None, event_spine.as_ref(),).await;
                                     Self::acknowledge_message(&bot, &msg).await;
                                     return respond(());
                                 };
@@ -949,7 +1066,7 @@ impl ChannelAdapter for TelegramAdapter {
                                     Err(e) => e.to_string(),
                                 };
 
-                                let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
@@ -967,19 +1084,17 @@ impl ChannelAdapter for TelegramAdapter {
                                 } else {
                                     "Runtime reset is unavailable for this deployment.".to_string()
                                 };
-                                let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
                             "config" => {
                                 let Some(control) = &config_control else {
-                                    let _ = Self::send_markdown_reply(
+                                    Self::send_reply_with_fallback(
                                         &bot,
                                         &msg,
                                         "Runtime config editing is unavailable for this deployment.",
-                                        None,
-                                    )
-                                    .await;
+                                        None, event_spine.as_ref(),).await;
                                     Self::acknowledge_message(&bot, &msg).await;
                                     return respond(());
                                 };
@@ -1017,7 +1132,7 @@ impl ChannelAdapter for TelegramAdapter {
                                     Err(e) => e.to_string(),
                                 };
 
-                                let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
@@ -1026,19 +1141,17 @@ impl ChannelAdapter for TelegramAdapter {
                                     Ok(skills) => format_index_listing(&skills),
                                     Err(e) => format!("Marketplace lookup failed: {e}"),
                                 };
-                                let _ = Self::send_markdown_reply(&bot, &msg, &message, None).await;
+                                Self::send_reply_with_fallback(&bot, &msg, &message, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
                             "install" => {
                                 let Some(id) = cmd_parts.next() else {
-                                    let _ = Self::send_markdown_reply(
+                                    Self::send_reply_with_fallback(
                                         &bot,
                                         &msg,
                                         "Usage: /install <id>",
-                                        None,
-                                    )
-                                    .await;
+                                        None, event_spine.as_ref(),).await;
                                     Self::acknowledge_message(&bot, &msg).await;
                                     return respond(());
                                 };
@@ -1068,26 +1181,24 @@ impl ChannelAdapter for TelegramAdapter {
                                     Err(e) => format!("Marketplace lookup failed: {e}"),
                                 };
 
-                                let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
                             "logs" => {
                                 if !is_update_authorized(&msg) {
-                                    let _ = Self::send_markdown_reply(
+                                    Self::send_reply_with_fallback(
                                         &bot,
                                         &msg,
                                         "Logs denied. Configure PARES_TELEGRAM_UPDATE_ALLOWED_USERS with approved Telegram usernames or numeric IDs.",
-                                        None,
-                                    )
-                                    .await;
+                                        None, event_spine.as_ref(),).await;
                                     return respond(());
                                 }
                                 let tail_lines = match parse_logs_tail_lines(cmd_parts.collect()) {
                                     Ok(lines) => lines,
                                     Err(usage) => {
                                         let _ =
-                                            Self::send_markdown_reply(&bot, &msg, usage, None).await;
+                                            Self::send_reply_with_fallback(&bot, &msg, usage, None, event_spine.as_ref()).await;
                                         Self::acknowledge_message(&bot, &msg).await;
                                         return respond(());
                                     }
@@ -1121,31 +1232,27 @@ impl ChannelAdapter for TelegramAdapter {
                                     }
                                     Err(e) => format!("Failed to start log tail command: {e}"),
                                 };
-                                let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
                             "update" => {
                                 if !is_update_authorized(&msg) {
-                                    let _ = Self::send_markdown_reply(
+                                    Self::send_reply_with_fallback(
                                         &bot,
                                         &msg,
                                         "Update denied. Configure PARES_TELEGRAM_UPDATE_ALLOWED_USERS with approved Telegram usernames or numeric IDs.",
-                                        None,
-                                    )
-                                    .await;
+                                        None, event_spine.as_ref(),).await;
                                     return respond(());
                                 }
-                                let _ = Self::send_markdown_reply(
+                                Self::send_reply_with_fallback(
                                     &bot,
                                     &msg,
                                     &format!(
                                         "Running self-update in `{}` for host `{}`.",
                                         update_flake_dir, update_host
                                     ),
-                                    None,
-                                )
-                                .await;
+                                    None, event_spine.as_ref(),).await;
                                 let reply = match tokio::process::Command::new("sh")
                                     .arg("-c")
                                     .arg(&update_command)
@@ -1157,7 +1264,7 @@ impl ChannelAdapter for TelegramAdapter {
                                     }
                                     Err(e) => format!("Failed to start self-update command: {e}"),
                                 };
-                                let _ = Self::send_markdown_reply(&bot, &msg, &reply, None).await;
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
@@ -1168,6 +1275,15 @@ impl ChannelAdapter for TelegramAdapter {
 
                 // Normal message — send to agent
                 if let Some(mut event) = event {
+                    // Emit inbound message to event spine
+                    if let Some(ref spine) = event_spine {
+                        let (user, text) = match &event {
+                            Event::Message { sender, content, .. } => (sender.clone(), content.clone()),
+                            _ => ("unknown".to_string(), String::new()),
+                        };
+                        spine.emit_inbound_message(msg.chat.id.0, &user, &text);
+                    }
+
                     let verbose_enabled = {
                         let lock = verbose_by_chat.lock().await;
                         *lock.get(&msg.chat.id.0).unwrap_or(&false)
@@ -1197,17 +1313,30 @@ impl ChannelAdapter for TelegramAdapter {
                     }) = on_event(event).await
                     {
                         typing_cancel.cancel();
+
+                        // Emit model response to event spine
+                        if let Some(ref spine) = event_spine {
+                            spine.emit_model_response(msg.chat.id.0, "telegram", &content);
+                        }
+
                         let reply_markup = if Self::is_approval_prompt(&content) {
                             Some(Self::approval_keyboard(&request_id))
                         } else {
                             None
                         };
 
-                        if let Err(e) = Self::send_markdown_reply(&bot, &msg, &content, reply_markup).await
-                        {
-                            error!("Failed to send Telegram reply: {e}");
-                        } else {
-                            Self::acknowledge_message(&bot, &msg).await;
+                        match Self::send_html_reply(&bot, &msg, &content, reply_markup, event_spine.as_ref()).await {
+                            Ok((format_used, msg_ids)) => {
+                                if let Some(ref spine) = event_spine {
+                                    for mid in &msg_ids {
+                                        spine.emit_delivery_success(msg.chat.id.0, "telegram", *mid, format_used);
+                                    }
+                                }
+                                Self::acknowledge_message(&bot, &msg).await;
+                            }
+                            Err(e) => {
+                                error!("Failed to send Telegram reply: {e}");
+                            }
                         }
                     } else {
                         typing_cancel.cancel();
@@ -1618,5 +1747,68 @@ mod tests {
         let formatted_failure = format_service_logs_output(&failure);
         assert!(formatted_failure.contains("Failed to read service logs"));
         assert!(formatted_failure.contains("denied"));
+    }
+
+    // ── HTML renderer integration tests ───────────────────────────────────
+
+    #[test]
+    fn html_render_typical_model_output() {
+        use pares_agens_core::channel_contract::ChannelContract;
+        use pares_agens_core::renderers::telegram as renderer;
+
+        let contract = ChannelContract::telegram();
+        let content = "**Bold text** and *italic* with `code` and a [link](https://example.com)\n\n```rust\nfn main() {}\n```";
+        let (html_chunks, plain_chunks) = renderer::render_for_telegram(content, &contract);
+
+        assert!(!html_chunks.is_empty());
+        assert!(html_chunks[0].contains("<b>Bold text</b>"));
+        assert!(html_chunks[0].contains("<i>italic</i>"));
+        assert!(html_chunks[0].contains("<code>code</code>"));
+
+        assert!(!plain_chunks.is_empty());
+        assert!(!plain_chunks[0].contains("<b>"));
+    }
+
+    #[test]
+    fn html_render_chunking_long_message() {
+        use pares_agens_core::channel_contract::ChannelContract;
+        use pares_agens_core::renderers::telegram as renderer;
+
+        let contract = ChannelContract::telegram();
+        // Create a message that's definitely > 4096 chars
+        let long_content = "Hello world\n".repeat(500);
+        let (html_chunks, plain_chunks) = renderer::render_for_telegram(&long_content, &contract);
+
+        assert!(html_chunks.len() > 1, "should chunk into multiple messages");
+        assert!(plain_chunks.len() > 1);
+        for chunk in &html_chunks {
+            assert!(chunk.len() <= 4096, "each chunk must be within limit");
+        }
+    }
+
+    #[test]
+    fn html_render_html_entities_escaped() {
+        use pares_agens_core::channel_contract::ChannelContract;
+        use pares_agens_core::renderers::telegram as renderer;
+
+        let contract = ChannelContract::telegram();
+        let content = "Use a < b && c > d for comparison";
+        let (html_chunks, _) = renderer::render_for_telegram(content, &contract);
+        assert!(html_chunks[0].contains("&lt;"));
+        assert!(html_chunks[0].contains("&amp;"));
+        assert!(html_chunks[0].contains("&gt;"));
+    }
+
+    #[test]
+    fn telegram_adapter_with_event_spine() {
+        use pares_agens_core::event_spine::EventSpineHandle;
+        use pluresdb::CrdtStore;
+
+        let store = std::sync::Arc::new(CrdtStore::default());
+        let handle = EventSpineHandle::from_arc_store(store, "test");
+        let config = TelegramConfig::new("test-token");
+        let adapter = TelegramAdapter::with_event_spine(config, handle);
+        assert_eq!(adapter.name(), "telegram");
+        assert!(adapter.event_spine.is_some());
     }
 }

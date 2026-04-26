@@ -211,6 +211,115 @@ impl<'a> EventSpine<'a> {
     }
 }
 
+/// A `Send + Sync + 'static` handle to the event spine.
+///
+/// Unlike [`EventSpine`] which borrows a `CrdtStore`, this handle clones the
+/// store (which is `Arc`-backed internally) so it can be moved into `async`
+/// closures and across thread boundaries.
+#[derive(Clone)]
+pub struct EventSpineHandle {
+    store: Arc<CrdtStore>,
+    actor: String,
+}
+
+impl EventSpineHandle {
+    /// Create a handle from an existing `EventSpine`.
+    ///
+    /// The caller should pass the same `Arc<CrdtStore>` that backs the spine.
+    pub fn from_arc_store(store: Arc<CrdtStore>, actor: impl Into<String>) -> Self {
+        Self {
+            store,
+            actor: actor.into(),
+        }
+    }
+
+    /// Emit an inbound message event. Returns the CRDT node ID.
+    pub fn emit_inbound_message(
+        &self,
+        chat_id: i64,
+        user: &str,
+        text: &str,
+    ) -> String {
+        let id = Uuid::new_v4().to_string();
+        let node_id = format!("cmd:message:{id}");
+        self.store.put(
+            node_id.clone(),
+            &self.actor,
+            json!({
+                "_type": "agens:command",
+                "event_type": "message",
+                "source": "telegram",
+                "chat_id": chat_id,
+                "user": user,
+                "text": text,
+            }),
+        );
+        debug!(node_id = %node_id, chat_id, user, "event_spine_handle: inbound message recorded");
+        node_id
+    }
+
+    /// Emit a model response event. Returns the CRDT node ID.
+    pub fn emit_model_response(
+        &self,
+        chat_id: i64,
+        channel: &str,
+        content: &str,
+    ) -> String {
+        let id = Uuid::new_v4().to_string();
+        let node_id = format!("cmd:model_response:{id}");
+        self.store.put(
+            node_id.clone(),
+            &self.actor,
+            json!({
+                "_type": "agens:command",
+                "event_type": "model_response",
+                "channel": channel,
+                "chat_id": chat_id,
+                "content": content,
+            }),
+        );
+        debug!(node_id = %node_id, chat_id, "event_spine_handle: model response recorded");
+        node_id
+    }
+
+    /// Emit a delivery success event.
+    pub fn emit_delivery_success(&self, chat_id: i64, channel: &str, message_id: i64, format_used: &str) {
+        let id = Uuid::new_v4().to_string();
+        let node_id = format!("cmd:delivery_success:{id}");
+        self.store.put(
+            node_id,
+            &self.actor,
+            json!({
+                "_type": "agens:command",
+                "_delivery": "success",
+                "channel": channel,
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "format_used": format_used,
+            }),
+        );
+    }
+
+    /// Emit a delivery failure event.
+    pub fn emit_delivery_failure(&self, chat_id: i64, channel: &str, error: &str, will_retry: bool) {
+        let id = Uuid::new_v4().to_string();
+        let node_id = format!("cmd:delivery_failure:{id}");
+        self.store.put(
+            node_id,
+            &self.actor,
+            json!({
+                "_type": "agens:command",
+                "_delivery": "failure",
+                "channel": channel,
+                "chat_id": chat_id,
+                "error": error,
+                "will_retry": will_retry,
+            }),
+        );
+        warn!(chat_id, channel, error, will_retry, "event_spine_handle: delivery failure recorded");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,5 +346,41 @@ mod tests {
         let contract = spine.get_contract("telegram").expect("contract should exist");
         assert_eq!(contract.max_message_len, 4096);
         assert_eq!(contract.preferred_format, "HTML");
+    }
+
+    #[test]
+    fn handle_emits_inbound_message() {
+        let store = CrdtStore::default();
+        let handle = EventSpineHandle::from_arc_store(Arc::new(store), "test");
+        let node_id = handle.emit_inbound_message(12345, "alice", "hello");
+        assert!(node_id.starts_with("cmd:message:"));
+    }
+
+    #[test]
+    fn handle_emits_model_response() {
+        let store = CrdtStore::default();
+        let handle = EventSpineHandle::from_arc_store(Arc::new(store), "test");
+        let node_id = handle.emit_model_response(12345, "telegram", "Hello back!");
+        assert!(node_id.starts_with("cmd:model_response:"));
+    }
+
+    #[test]
+    fn handle_emits_delivery_events() {
+        let store = Arc::new(CrdtStore::default());
+        let handle = EventSpineHandle::from_arc_store(store.clone(), "test");
+        // These should not panic
+        handle.emit_delivery_success(12345, "telegram", 42, "html");
+        handle.emit_delivery_failure(12345, "telegram", "timeout", true);
+    }
+
+    #[test]
+    fn handle_is_clone_and_send() {
+        let store = CrdtStore::default();
+        let handle = EventSpineHandle::from_arc_store(Arc::new(store), "test");
+        let handle2 = handle.clone();
+        // Verify Send + Sync
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<EventSpineHandle>();
+        drop(handle2);
     }
 }
