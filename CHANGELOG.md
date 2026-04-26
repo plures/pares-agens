@@ -1,3 +1,7 @@
+## [1.11.0] — 2026-04-26
+
+- feat: phase 6 — heartbeat system, /cron command, proactive contracts (3dfafa8)
+
 ## [1.10.1] — 2026-04-26
 
 - fix(copilot): parse logprobs.content instead of token_logprobs (#604) (8888bee)
