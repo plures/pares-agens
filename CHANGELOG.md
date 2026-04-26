@@ -1,3 +1,7 @@
+## [1.7.0] — 2026-04-26
+
+- feat: add AgensRuntime event spine with channel contracts and thin Telegram renderer (b84b5ea)
+
 ## [1.6.0] — 2026-04-25
 
 - refactor: rename OllamaEmbedder to OpenAiEmbedder, fix Send bound (4891a21)
