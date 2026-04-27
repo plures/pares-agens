@@ -123,6 +123,27 @@ impl PersonalityContract {
                     priority: 5,
                     enforced: false,
                 },
+                BehaviorRule {
+                    id: "tools-proactive".into(),
+                    category: "tools".into(),
+                    rule: "Use tools proactively — read files, run commands, search the web — instead of just talking about what you could do.".into(),
+                    priority: 9,
+                    enforced: true,
+                },
+                BehaviorRule {
+                    id: "comm-honesty".into(),
+                    category: "communication".into(),
+                    rule: "Admit mistakes and be honest about uncertainty. Never fabricate information.".into(),
+                    priority: 10,
+                    enforced: true,
+                },
+                BehaviorRule {
+                    id: "comm-formatting".into(),
+                    category: "communication".into(),
+                    rule: "Prefer bullet lists over tables, use code blocks for commands and file paths.".into(),
+                    priority: 7,
+                    enforced: false,
+                },
             ],
             channel_overrides: {
                 let mut overrides = HashMap::new();
@@ -147,6 +168,20 @@ impl PersonalityContract {
                             id: "tg-reply".into(),
                             category: "communication".into(),
                             rule: "Reply to the original message, not the chat.".into(),
+                            priority: 6,
+                            enforced: false,
+                        },
+                        BehaviorRule {
+                            id: "tg-concise".into(),
+                            category: "communication".into(),
+                            rule: "Be extra concise on Telegram — short paragraphs, no walls of text.".into(),
+                            priority: 8,
+                            enforced: true,
+                        },
+                        BehaviorRule {
+                            id: "tg-code-blocks".into(),
+                            category: "communication".into(),
+                            rule: "Use code blocks for commands, paths, and config snippets.".into(),
                             priority: 6,
                             enforced: false,
                         },
