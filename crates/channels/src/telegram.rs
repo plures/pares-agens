@@ -1186,9 +1186,33 @@ impl ChannelAdapter for TelegramAdapter {
                                 } else {
                                     "GPT-4.1 + Opus 4.6".to_string()
                                 };
+                                let version = env!("CARGO_PKG_VERSION");
+                                let commit = option_env!("GIT_COMMIT_HASH").unwrap_or("unknown");
+                                let event_spine_status = if event_spine.is_some() { "active" } else { "disabled" };
+                                let uptime = {
+                                    use std::time::SystemTime;
+                                    let secs = SystemTime::now()
+                                        .duration_since(SystemTime::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs();
+                                    let pid_start = std::fs::read_to_string(format!("/proc/{}/stat", std::process::id()))
+                                        .ok()
+                                        .and_then(|s| s.split_whitespace().nth(21).and_then(|t| t.parse::<u64>().ok()))
+                                        .map(|ticks| secs.saturating_sub(ticks / 100))
+                                        .unwrap_or(0);
+                                    let hours = pid_start / 3600;
+                                    let mins = (pid_start % 3600) / 60;
+                                    format!("{hours}h {mins}m")
+                                };
                                 let status = format!(
-                                    "Pares Agens status snapshot\nCommit: {}\nPID: {}\nMemory RSS: {}\nModel: {}\nPluresDB: ~/.pares-agens/memory/",
-                                    option_env!("GIT_COMMIT_HASH").unwrap_or("unknown"), std::process::id(), memory, model_line,
+                                    "Pares Agens v{version} ({commit})\n\
+                                     PID: {} | RSS: {memory} | Uptime: {uptime}\n\
+                                     Model: {model_line}\n\
+                                     Event Spine: {event_spine_status}\n\
+                                     Rendering: HTML + plain text fallback\n\
+                                     Tool Governance: active (30s timeout)\n\
+                                     PluresDB: ~/.pares-agens/memory/",
+                                    std::process::id(),
                                 );
                                 Self::send_reply_with_fallback(&bot, &msg, &status, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
