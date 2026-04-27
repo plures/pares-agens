@@ -52,7 +52,7 @@ const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
 /// The runtime strips this marker before model processing and uses it only to
 /// decide whether to append tool execution details to the Telegram reply.
 pub const TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER: &str = "__PARES_VERBOSE_TOOL_DETAILS__:";
-const TELEGRAM_HELP_COMMANDS: [(&str, &str); 23] = [
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 21] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
     ("/status", "status + health snapshot"),
@@ -77,9 +77,10 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 23] = [
     ("/config log-level <level>", "set runtime log level"),
     ("/reset", "full runtime reset (new session + config reload)"),
     ("/clear", "start a fresh conversation session"),
-    ("/agents", "browse pares-modulus marketplace"),
-    ("/browse", "alias for /agents"),
-    ("/install <id>", "install an agent/plugin"),
+    (
+        "/version",
+        "show version and build info",
+    ),
     ("/logs [n]", "tail recent pares-agens service logs"),
     ("/tools", "show tool governance policies"),
     (
