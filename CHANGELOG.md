@@ -1,3 +1,10 @@
+## [1.13.0] — 2026-04-27
+
+- fix: update /help text — add /version, remove experimental marketplace commands (2c5f3ff)
+- feat: make event spine default (opt-out via --no-event-spine) (c85a69c)
+- fix: build.rs commit hash fallback for nix sandbox (150591d)
+- fix: enrich /status with version, uptime, event spine status, rendering mode (24e2cac)
+
 ## [1.12.1] — 2026-04-26
 
 - fix: add missing fallback_models field to integration tests (CI fix) (664f501)
