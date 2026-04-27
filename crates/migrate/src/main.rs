@@ -510,6 +510,44 @@ impl TelegramPersonalityControl for RuntimePersonalityControl {
         self.state_store.set(PERSONALITY_STATE_KEY, value).await;
         Ok(())
     }
+
+    async fn list_documents(&self) -> String {
+        use pares_agens_core::personality::{get_all_documents, PERSONALITY_DOC_TYPES};
+        let docs = get_all_documents(self.state_store.as_ref()).await;
+        if docs.is_empty() {
+            return "No personality documents stored.".to_string();
+        }
+        let mut lines = vec!["Personality documents:".to_string()];
+        for doc_type in PERSONALITY_DOC_TYPES {
+            if let Some(doc) = docs.iter().find(|d| d.doc_type == *doc_type) {
+                lines.push(format!("• {} — {} chars", doc.doc_type, doc.content.len()));
+            } else {
+                lines.push(format!("• {} — (not set)", doc_type));
+            }
+        }
+        lines.join("\n")
+    }
+
+    async fn get_document(&self, doc_type: &str) -> String {
+        use pares_agens_core::personality::get_document;
+        match get_document(self.state_store.as_ref(), doc_type).await {
+            Some(doc) => format!("## {} (updated: {})\n{}", doc.doc_type, doc.updated_at, doc.content),
+            None => format!("No '{doc_type}' document found."),
+        }
+    }
+
+    async fn set_document(&self, doc_type: &str, content: &str) -> Result<(), String> {
+        use pares_agens_core::personality::{store_document, get_all_documents, format_documents_for_prompt, PERSONALITY_DOC_TYPES};
+        if !PERSONALITY_DOC_TYPES.contains(&doc_type) {
+            return Err(format!("Unknown document type '{}'. Valid types: {:?}", doc_type, PERSONALITY_DOC_TYPES));
+        }
+        store_document(self.state_store.as_ref(), doc_type, content).await;
+        // Update agent cache
+        let docs = get_all_documents(self.state_store.as_ref()).await;
+        let formatted = format_documents_for_prompt(&docs);
+        self.agent.read().await.set_personality_documents(Some(formatted));
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -2604,6 +2642,24 @@ async fn main() {
                         runtime_state_store.set(PERSONALITY_STATE_KEY, value).await;
                         tracing::info!("Seeded default personality contract into PluresDB state");
                     }
+                }
+            }
+
+            // Seed personality documents from ~/.pares-agens/ directory
+            {
+                use pares_agens_core::personality::{seed_from_directory, get_all_documents, format_documents_for_prompt};
+                if let Ok(home) = std::env::var("HOME") {
+                    let config_dir = std::path::PathBuf::from(&home).join(".pares-agens");
+                    if config_dir.exists() {
+                        seed_from_directory(runtime_state_store.as_ref(), &config_dir).await;
+                    }
+                }
+                // Load documents and cache in agent
+                let docs = get_all_documents(runtime_state_store.as_ref()).await;
+                if !docs.is_empty() {
+                    let formatted = format_documents_for_prompt(&docs);
+                    agent_handle.read().await.set_personality_documents(Some(formatted));
+                    tracing::info!(count = docs.len(), "loaded personality documents into agent");
                 }
             }
 

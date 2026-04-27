@@ -7,6 +7,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::StateStore;
+
 /// A single behavioral rule that governs agent behavior.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BehaviorRule {
@@ -250,9 +252,134 @@ impl PersonalityContract {
 /// PluresDB key used to store the personality contract.
 pub const PERSONALITY_STATE_KEY: &str = "personality_contract";
 
+// ---------------------------------------------------------------------------
+// Personality Documents (SOUL.md, IDENTITY.md, USER.md, etc.)
+// ---------------------------------------------------------------------------
+
+/// Prefix for personality document keys in the state store.
+const PERSONALITY_DOC_PREFIX: &str = "personality:doc:";
+
+/// Known personality document types.
+pub const PERSONALITY_DOC_TYPES: &[&str] = &["soul", "identity", "user", "agents", "heartbeat"];
+
+/// A personality document stored in PluresDB (e.g. SOUL.md content).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonalityDocument {
+    /// Document type: "soul", "identity", "user", "agents", "heartbeat".
+    pub doc_type: String,
+    /// Raw markdown content.
+    pub content: String,
+    /// Unix timestamp of last update.
+    pub updated_at: u64,
+}
+
+impl PersonalityDocument {
+    /// State store key for this document type.
+    pub fn state_key(doc_type: &str) -> String {
+        format!("{PERSONALITY_DOC_PREFIX}{doc_type}")
+    }
+}
+
+/// Store a personality document in a [`StateStore`].
+pub async fn store_document(store: &dyn StateStore, doc_type: &str, content: &str) {
+    let key = PersonalityDocument::state_key(doc_type);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let doc = PersonalityDocument {
+        doc_type: doc_type.to_string(),
+        content: content.to_string(),
+        updated_at: now,
+    };
+    if let Ok(value) = serde_json::to_value(&doc) {
+        store.set(&key, value).await;
+    }
+}
+
+/// Retrieve a personality document from a [`StateStore`].
+pub async fn get_document(store: &dyn StateStore, doc_type: &str) -> Option<PersonalityDocument> {
+    let key = PersonalityDocument::state_key(doc_type);
+    let value = store.get(&key).await?;
+    serde_json::from_value(value).ok()
+}
+
+/// Retrieve all personality documents from a [`StateStore`].
+pub async fn get_all_documents(store: &dyn StateStore) -> Vec<PersonalityDocument> {
+    let mut docs = Vec::new();
+    for doc_type in PERSONALITY_DOC_TYPES {
+        if let Some(doc) = get_document(store, doc_type).await {
+            docs.push(doc);
+        }
+    }
+    docs
+}
+
+/// Seed personality documents from `.md` files in a directory.
+///
+/// Reads `SOUL.md`, `IDENTITY.md`, `USER.md`, `AGENTS.md`, `HEARTBEAT.md`
+/// and stores them in PluresDB if the file is newer than the existing document
+/// (or no document exists yet).
+pub async fn seed_from_directory(store: &dyn StateStore, dir: &std::path::Path) {
+    let mappings: &[(&str, &str)] = &[
+        ("SOUL.md", "soul"),
+        ("IDENTITY.md", "identity"),
+        ("USER.md", "user"),
+        ("AGENTS.md", "agents"),
+        ("HEARTBEAT.md", "heartbeat"),
+        ("SYSTEM-PROMPT.md", "soul"), // legacy fallback
+    ];
+    for (filename, doc_type) in mappings {
+        let path = dir.join(filename);
+        if !path.exists() {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) if !c.trim().is_empty() => c,
+            _ => continue,
+        };
+        let file_modified = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let should_seed = match get_document(store, doc_type).await {
+            None => true,
+            Some(existing) => file_modified > existing.updated_at,
+        };
+        if should_seed {
+            store_document(store, doc_type, &content).await;
+            tracing::info!(doc_type, filename, "seeded personality document from file");
+        }
+    }
+}
+
+/// Format personality documents for system prompt injection.
+///
+/// Orders: identity → soul → user → agents → heartbeat.
+pub fn format_documents_for_prompt(docs: &[PersonalityDocument]) -> String {
+    let order: &[(&str, &str)] = &[
+        ("identity", "## Identity"),
+        ("soul", "## Soul"),
+        ("user", "## About the User"),
+        ("agents", "## Agent Guidelines"),
+        ("heartbeat", "## Active Tasks"),
+    ];
+    let mut sections = Vec::new();
+    for (doc_type, header) in order {
+        if let Some(doc) = docs.iter().find(|d| d.doc_type == *doc_type) {
+            sections.push(format!("{header}\n{}", doc.content));
+        }
+    }
+    sections.join("\n\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::InMemoryStateStore;
 
     #[test]
     fn default_contract_has_core_rules() {
@@ -282,5 +409,63 @@ mod tests {
         let mut c = PersonalityContract::default_contract(None);
         assert!(c.remove_rule("core-helpful"));
         assert!(!c.remove_rule("nonexistent"));
+    }
+
+    #[tokio::test]
+    async fn store_and_retrieve_document() {
+        let store = InMemoryStateStore::new();
+        store_document(&store, "soul", "Be direct and helpful.").await;
+        let doc = get_document(&store, "soul").await.unwrap();
+        assert_eq!(doc.doc_type, "soul");
+        assert_eq!(doc.content, "Be direct and helpful.");
+        assert!(doc.updated_at > 0);
+    }
+
+    #[tokio::test]
+    async fn get_document_returns_none_when_missing() {
+        let store = InMemoryStateStore::new();
+        assert!(get_document(&store, "soul").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_all_documents_returns_stored_only() {
+        let store = InMemoryStateStore::new();
+        store_document(&store, "soul", "Soul content").await;
+        store_document(&store, "identity", "Identity content").await;
+        let docs = get_all_documents(&store).await;
+        assert_eq!(docs.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn seed_from_directory_creates_documents() {
+        let store = InMemoryStateStore::new();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("SOUL.md"), "My soul").unwrap();
+        std::fs::write(dir.path().join("USER.md"), "My user").unwrap();
+        seed_from_directory(&store, dir.path()).await;
+        assert!(get_document(&store, "soul").await.is_some());
+        assert!(get_document(&store, "user").await.is_some());
+        assert!(get_document(&store, "identity").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn seed_skips_empty_files() {
+        let store = InMemoryStateStore::new();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("SOUL.md"), "   ").unwrap();
+        seed_from_directory(&store, dir.path()).await;
+        assert!(get_document(&store, "soul").await.is_none());
+    }
+
+    #[test]
+    fn format_documents_orders_correctly() {
+        let docs = vec![
+            PersonalityDocument { doc_type: "soul".into(), content: "Soul text".into(), updated_at: 1 },
+            PersonalityDocument { doc_type: "identity".into(), content: "Id text".into(), updated_at: 1 },
+        ];
+        let formatted = format_documents_for_prompt(&docs);
+        let id_pos = formatted.find("## Identity").unwrap();
+        let soul_pos = formatted.find("## Soul").unwrap();
+        assert!(id_pos < soul_pos, "identity should come before soul");
     }
 }

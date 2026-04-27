@@ -154,6 +154,9 @@ pub struct Agent {
     delegation_broker: Option<DelegationBroker>,
     /// Per-channel conversation branch/session state.
     branch_state: Mutex<HashMap<String, ChannelBranches>>,
+    /// Cached formatted personality documents (SOUL.md, IDENTITY.md, etc.).
+    /// Populated on startup from PluresDB and updated via `/personality doc` commands.
+    personality_documents_cache: Mutex<Option<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -192,6 +195,7 @@ impl Agent {
             audit_store: None,
             delegation_broker: None,
             branch_state: Mutex::new(HashMap::new()),
+            personality_documents_cache: Mutex::new(None),
         }
     }
 
@@ -222,6 +226,7 @@ impl Agent {
             audit_store: None,
             delegation_broker: None,
             branch_state: Mutex::new(HashMap::new()),
+            personality_documents_cache: Mutex::new(None),
         }
     }
 
@@ -248,6 +253,16 @@ impl Agent {
     pub fn set_channel(&self, channel: &str) {
         if let Ok(mut ch) = self.current_channel.lock() {
             *ch = Some(channel.to_string());
+        }
+    }
+
+    /// Update the cached personality documents text.
+    ///
+    /// Called on startup after loading documents from PluresDB and after
+    /// `/personality doc` mutations.
+    pub fn set_personality_documents(&self, formatted: Option<String>) {
+        if let Ok(mut cache) = self.personality_documents_cache.lock() {
+            *cache = formatted;
         }
     }
 
@@ -651,11 +666,14 @@ impl Agent {
         // If a personality contract is set, use the dynamic prompt builder.
         if let Some(personality) = &self.personality {
             let channel = self.current_channel.lock().ok().and_then(|ch| ch.clone());
+            let docs_cache = self.personality_documents_cache.lock().ok()
+                .and_then(|g| g.clone());
             let ctx = crate::prompt_builder::AgentContext {
                 channel: channel.as_deref(),
                 learned_context,
                 conversation_summary: None,
                 deep,
+                personality_documents: docs_cache.as_deref(),
             };
             return crate::prompt_builder::build_system_prompt(personality, &ctx);
         }

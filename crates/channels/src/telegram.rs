@@ -552,6 +552,12 @@ pub trait TelegramPersonalityControl: Send + Sync {
     async fn add_rule(&self, rule_text: &str) -> Result<String, String>;
     /// Remove a behavioral rule by ID.
     async fn remove_rule(&self, id: &str) -> Result<(), String>;
+    /// List all personality documents with sizes.
+    async fn list_documents(&self) -> String;
+    /// Get a specific personality document's content.
+    async fn get_document(&self, doc_type: &str) -> String;
+    /// Set a personality document's content.
+    async fn set_document(&self, doc_type: &str, content: &str) -> Result<(), String>;
 }
 
 /// Runtime configuration snapshot shown by `/config`.
@@ -1606,7 +1612,29 @@ impl ChannelAdapter for TelegramAdapter {
                                             _ => "Usage: /personality rule add <text> | rule remove <id>".to_string(),
                                         }
                                     }
-                                    _ => "Usage: /personality [show | set tone <t> | rule add <text> | rule remove <id>]".to_string(),
+                                    Some("docs") => {
+                                        control.list_documents().await
+                                    }
+                                    Some("doc") => {
+                                        if let Some(doc_type) = args.get(1).copied() {
+                                            if args.get(2).copied() == Some("set") {
+                                                let content: String = args[3..].join(" ");
+                                                if content.is_empty() {
+                                                    "Usage: /personality doc <type> set <text>".to_string()
+                                                } else {
+                                                    match control.set_document(doc_type, &content).await {
+                                                        Ok(()) => format!("Document '{doc_type}' updated."),
+                                                        Err(e) => format!("Failed: {e}"),
+                                                    }
+                                                }
+                                            } else {
+                                                control.get_document(doc_type).await
+                                            }
+                                        } else {
+                                            "Usage: /personality doc <type> [set <text>]".to_string()
+                                        }
+                                    }
+                                    _ => "Usage: /personality [show | set tone <t> | rule add <text> | rule remove <id> | docs | doc <type> [set <text>]]".to_string(),
                                 };
                                 Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;

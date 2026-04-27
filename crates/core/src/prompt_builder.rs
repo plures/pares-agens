@@ -16,6 +16,8 @@ pub struct AgentContext<'a> {
     pub conversation_summary: Option<&'a str>,
     /// Whether this is a deep/escalated reasoning call.
     pub deep: bool,
+    /// Personality documents (SOUL.md, IDENTITY.md, etc.) loaded from PluresDB.
+    pub personality_documents: Option<&'a str>,
 }
 
 /// Build a complete system prompt from a personality contract and context.
@@ -33,6 +35,14 @@ pub fn build_system_prompt(personality: &PersonalityContract, context: &AgentCon
     // Deep preamble
     if context.deep {
         prompt.push_str("Think deeply about this. Analyze thoroughly.\n\n");
+    }
+
+    // Personality documents (SOUL.md, IDENTITY.md, etc.) — injected first
+    if let Some(docs) = context.personality_documents {
+        if !docs.trim().is_empty() {
+            prompt.push_str(docs.trim());
+            prompt.push_str("\n\n");
+        }
     }
 
     // Identity
@@ -119,6 +129,7 @@ mod tests {
             learned_context: "User prefers concise answers.",
             conversation_summary: None,
             deep: false,
+            personality_documents: None,
         };
         let prompt = build_system_prompt(&contract, &ctx);
         assert!(prompt.contains("Pares Agens"));
@@ -135,6 +146,7 @@ mod tests {
             learned_context: "",
             conversation_summary: None,
             deep: true,
+            personality_documents: None,
         };
         let prompt = build_system_prompt(&contract, &ctx);
         assert!(prompt.starts_with("Think deeply"));
