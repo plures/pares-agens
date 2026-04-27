@@ -1219,6 +1219,14 @@ impl ChannelAdapter for TelegramAdapter {
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
+                            "version" => {
+                                let version = env!("CARGO_PKG_VERSION");
+                                let commit = option_env!("GIT_COMMIT_HASH").unwrap_or("unknown");
+                                let text = format!("v{version} ({commit})");
+                                Self::send_reply_with_fallback(&bot, &msg, &text, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
                             "verbose" => {
                                 let args: Vec<&str> = cmd_parts.collect();
                                 let chat_key = msg.chat.id.0;
