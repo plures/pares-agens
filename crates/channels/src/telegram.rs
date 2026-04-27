@@ -44,8 +44,10 @@ const PARES_MODULUS_INDEX_URL: &str =
     "https://raw.githubusercontent.com/plures/pares-modulus/main/index.json";
 const DEFAULT_MARKETPLACE_INSTALL_DIR: &str = "/skills";
 const MAX_INDEX_LISTING_ITEMS: usize = 10;
-const DEFAULT_NIX_FLAKE_DIR: &str = ".";
+const DEFAULT_NIX_FLAKE_DIR: &str = "/home/kbristol/projects/nixos-config";
 const DEFAULT_NIX_HOST: &str = "praxisbot";
+/// Directory containing the pares-agens source for rebuilding the binary.
+const DEFAULT_PARES_AGENS_DIR: &str = "/home/kbristol/projects/pares-agens";
 const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
 /// Internal prefix added by the Telegram adapter when `/verbose` is enabled.
 ///
@@ -246,11 +248,23 @@ fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-fn build_nixos_update_command(flake_dir: &str, host: &str) -> String {
+fn build_nixos_update_command(_flake_dir: &str, _host: &str) -> String {
     let flake_dir = shell_single_quote(flake_dir);
     let host = shell_single_quote(host);
+    let agens_dir = shell_single_quote(
+        &std::env::var("PARES_AGENS_DIR").unwrap_or_else(|_| DEFAULT_PARES_AGENS_DIR.into()),
+    );
     format!(
-        "set -eu; cd {flake_dir}; lock_before=$(sha256sum flake.lock 2>/dev/null | cut -d' ' -f1 || true); sudo nix flake update pares-agens; lock_after=$(sha256sum flake.lock 2>/dev/null | cut -d' ' -f1 || true); if [ \"$lock_before\" != \"$lock_after\" ]; then sudo nixos-rebuild switch --flake .#{host}; echo \"Self-update applied\"; else echo \"No new pares-agens commits on main\"; fi"
+        "set -eu; \
+         echo 'Step 1: Pulling latest pares-agens source...'; \
+         cd {agens_dir} && git pull --ff-only; \
+         echo 'Step 2: Building pares-agens binary...'; \
+         nix develop --option substituters 'https://cache.nixos.org' -c cargo build --release -p pares-agens; \
+         echo 'Step 3: Installing binary...'; \
+         cp target/release/pares-agens ~/.local/bin/pares-agens; \
+         echo 'Step 4: Restarting service...'; \
+         sudo systemctl restart pares-agens; \
+         echo 'Self-update complete. New binary installed and service restarted.'"
     )
 }
 
