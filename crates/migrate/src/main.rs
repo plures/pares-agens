@@ -2084,14 +2084,13 @@ enum Commands {
         #[arg(long, env = "PARES_BITNET_MODEL_PATH", value_name = "PATH")]
         bitnet_model_path: Option<PathBuf>,
 
-        /// Enable the AgensRuntime event spine for message delivery.
+        /// Disable the AgensRuntime event spine for message delivery.
         ///
-        /// When set, inbound messages are also emitted through the event spine
-        /// and channel contracts are seeded into PluresDB.  The old Telegram
-        /// adapter remains the primary path; this flag enables the new path
-        /// alongside it.
-        #[arg(long, env = "PARES_USE_EVENT_SPINE")]
-        use_event_spine: bool,
+        /// The event spine is enabled by default.  Inbound messages are
+        /// emitted through the event spine and channel contracts are seeded
+        /// into PluresDB.  Pass this flag to disable it.
+        #[arg(long, env = "PARES_NO_EVENT_SPINE")]
+        no_event_spine: bool,
     },
 
     /// Run the agent with an interactive terminal UI.
@@ -2185,7 +2184,7 @@ async fn main() {
             sync_topic_key,
             sync_shared_key,
             bitnet_model_path,
-            use_event_spine,
+            no_event_spine,
         } => {
             tracing::info!(commit = env!("GIT_COMMIT_HASH"), "Starting Pares Agens daemon");
             let started_at = Instant::now();
@@ -2583,7 +2582,7 @@ async fn main() {
             tracing::info!("Telegram adapter starting — bot is live");
 
             // Initialize the event spine if enabled
-            if use_event_spine {
+            if !no_event_spine {
                 let crdt = store.crdt_store();
                 let spine = pares_agens_core::event_spine::EventSpine::new(crdt, "pares-agens");
                 spine.seed_contracts();
