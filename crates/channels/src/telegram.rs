@@ -44,10 +44,12 @@ const PARES_MODULUS_INDEX_URL: &str =
     "https://raw.githubusercontent.com/plures/pares-modulus/main/index.json";
 const DEFAULT_MARKETPLACE_INSTALL_DIR: &str = "/skills";
 const MAX_INDEX_LISTING_ITEMS: usize = 10;
-const DEFAULT_NIX_FLAKE_DIR: &str = "/home/kbristol/projects/nixos-config";
+const DEFAULT_NIX_FLAKE_DIR: &str = "nixos-config";
 const DEFAULT_NIX_HOST: &str = "praxisbot";
 /// Directory containing the pares-agens source for rebuilding the binary.
-const DEFAULT_PARES_AGENS_DIR: &str = "/home/kbristol/projects/pares-agens";
+const DEFAULT_PARES_AGENS_DIR: &str = "pares-agens";
+/// Subdirectory under $HOME/projects for defaults, or override with env vars.
+const PROJECTS_SUBDIR: &str = "projects";
 const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
 /// Internal prefix added by the Telegram adapter when `/verbose` is enabled.
 ///
@@ -249,11 +251,12 @@ fn shell_single_quote(value: &str) -> String {
 }
 
 fn build_nixos_update_command(_flake_dir: &str, _host: &str) -> String {
-    let flake_dir = shell_single_quote(flake_dir);
-    let host = shell_single_quote(host);
-    let agens_dir = shell_single_quote(
-        &std::env::var("PARES_AGENS_DIR").unwrap_or_else(|_| DEFAULT_PARES_AGENS_DIR.into()),
-    );
+    // Resolve agens source dir: env var → $HOME/projects/pares-agens
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/kbristol".into());
+    let agens_dir = std::env::var("PARES_AGENS_DIR")
+        .unwrap_or_else(|_| format!("{home}/{PROJECTS_SUBDIR}/{DEFAULT_PARES_AGENS_DIR}"));
+    let agens_dir = shell_single_quote(&agens_dir);
+    let bin_dir = format!("{home}/.local/bin");
     format!(
         "set -eu; \
          echo 'Step 1: Pulling latest pares-agens source...'; \
@@ -261,7 +264,8 @@ fn build_nixos_update_command(_flake_dir: &str, _host: &str) -> String {
          echo 'Step 2: Building pares-agens binary...'; \
          nix develop --option substituters 'https://cache.nixos.org' -c cargo build --release -p pares-agens; \
          echo 'Step 3: Installing binary...'; \
-         cp target/release/pares-agens ~/.local/bin/pares-agens; \
+         mkdir -p {bin_dir}; \
+         cp target/release/pares-agens {bin_dir}/pares-agens; \
          echo 'Step 4: Restarting service...'; \
          sudo systemctl restart pares-agens; \
          echo 'Self-update complete. New binary installed and service restarted.'"
@@ -1219,6 +1223,7 @@ impl ChannelAdapter for TelegramAdapter {
                                     let mins = (pid_start % 3600) / 60;
                                     format!("{hours}h {mins}m")
                                 };
+                                let home = std::env::var("HOME").unwrap_or_else(|_| "~".into());
                                 let status = format!(
                                     "Pares Agens v{version} ({commit})\n\
                                      PID: {} | RSS: {memory} | Uptime: {uptime}\n\
@@ -1226,7 +1231,7 @@ impl ChannelAdapter for TelegramAdapter {
                                      Event Spine: {event_spine_status}\n\
                                      Rendering: HTML + plain text fallback\n\
                                      Tool Governance: active (30s timeout)\n\
-                                     PluresDB: ~/.pares-agens/memory/",
+                                     PluresDB: {home}/.pares-agens/memory/",
                                     std::process::id(),
                                 );
                                 Self::send_reply_with_fallback(&bot, &msg, &status, None, event_spine.as_ref()).await;
