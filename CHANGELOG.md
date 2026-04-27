@@ -1,3 +1,7 @@
+## [1.12.2] — 2026-04-27
+
+- fix: enrich /status with version, uptime, event spine status, rendering mode (24e2cac)
+
 ## [1.12.1] — 2026-04-26
 
 - fix: add missing fallback_models field to integration tests (CI fix) (664f501)
