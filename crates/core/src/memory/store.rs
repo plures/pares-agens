@@ -248,6 +248,11 @@ impl PluresDbStore {
         &self.store
     }
 
+    /// Return a shared reference-counted handle to the underlying [`CrdtStore`].
+    pub fn crdt_store_arc(&self) -> Arc<CrdtStore> {
+        Arc::clone(&self.store)
+    }
+
     /// Open or create a PluresDB-backed store at `path`.
     ///
     /// # Errors

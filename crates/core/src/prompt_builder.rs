@@ -18,6 +18,8 @@ pub struct AgentContext<'a> {
     pub deep: bool,
     /// Personality documents (SOUL.md, IDENTITY.md, etc.) loaded from PluresDB.
     pub personality_documents: Option<&'a str>,
+    /// Plugin schema context (installed plugins, entities, tools).
+    pub plugin_context: Option<&'a str>,
 }
 
 /// Build a complete system prompt from a personality contract and context.
@@ -94,6 +96,14 @@ pub fn build_system_prompt(personality: &PersonalityContract, context: &AgentCon
         }
     }
 
+    // Plugin schema context
+    if let Some(plugin_ctx) = context.plugin_context {
+        if !plugin_ctx.trim().is_empty() {
+            prompt.push_str(plugin_ctx.trim());
+            prompt.push('\n');
+        }
+    }
+
     prompt
 }
 
@@ -130,6 +140,7 @@ mod tests {
             conversation_summary: None,
             deep: false,
             personality_documents: None,
+            plugin_context: None,
         };
         let prompt = build_system_prompt(&contract, &ctx);
         assert!(prompt.contains("Pares Agens"));
@@ -147,6 +158,7 @@ mod tests {
             conversation_summary: None,
             deep: true,
             personality_documents: None,
+            plugin_context: None,
         };
         let prompt = build_system_prompt(&contract, &ctx);
         assert!(prompt.starts_with("Think deeply"));

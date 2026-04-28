@@ -56,7 +56,7 @@ const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
 /// The runtime strips this marker before model processing and uses it only to
 /// decide whether to append tool execution details to the Telegram reply.
 pub const TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER: &str = "__PARES_VERBOSE_TOOL_DETAILS__:";
-const TELEGRAM_HELP_COMMANDS: [(&str, &str); 21] = [
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 22] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
     ("/status", "status + health snapshot"),
@@ -98,6 +98,10 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 21] = [
     (
         "/cron",
         "manage scheduled tasks (list, add, remove, pause, resume)",
+    ),
+    (
+        "/plugin",
+        "manage plugins (list, install <path>, uninstall <name>, schema <name>)",
     ),
 ];
 const DEFAULT_LOG_TAIL_LINES: usize = 80;
@@ -428,6 +432,10 @@ pub struct TelegramConfig {
     pub scheduler: Option<Arc<Scheduler>>,
     /// Policy for group chat participation.
     pub group_chat_policy: GroupChatPolicy,
+    /// Optional plugin runtime for `/plugin` commands.
+    pub plugin_runtime: Option<Arc<pares_agens_core::plugins::PluginRuntime>>,
+    /// Optional plugin CRUD executor for entity counts.
+    pub plugin_executor: Option<Arc<pares_agens_core::plugins::PluginCrudExecutor>>,
 }
 
 impl TelegramConfig {
@@ -443,6 +451,8 @@ impl TelegramConfig {
             personality_control: None,
             scheduler: None,
             group_chat_policy: GroupChatPolicy::default(),
+            plugin_runtime: None,
+            plugin_executor: None,
         }
     }
 
@@ -502,6 +512,18 @@ impl TelegramConfig {
     #[must_use]
     pub fn with_group_chat_policy(mut self, policy: GroupChatPolicy) -> Self {
         self.group_chat_policy = policy;
+        self
+    }
+
+    /// Attach the plugin runtime and executor for `/plugin` commands.
+    #[must_use]
+    pub fn with_plugin_runtime(
+        mut self,
+        runtime: Arc<pares_agens_core::plugins::PluginRuntime>,
+        executor: Arc<pares_agens_core::plugins::PluginCrudExecutor>,
+    ) -> Self {
+        self.plugin_runtime = Some(runtime);
+        self.plugin_executor = Some(executor);
         self
     }
 }
@@ -1158,6 +1180,8 @@ impl ChannelAdapter for TelegramAdapter {
         let config_control = self.config.config_control.clone();
         let personality_control = self.config.personality_control.clone();
         let scheduler = self.config.scheduler.clone();
+        let plugin_runtime = self.config.plugin_runtime.clone();
+        let plugin_executor = self.config.plugin_executor.clone();
         let event_spine = self.event_spine.clone();
         let verbose_by_chat = Arc::new(TokioMutex::new(HashMap::<i64, bool>::new()));
         let installer = std::sync::Arc::new(TokioMutex::new(
@@ -1176,6 +1200,8 @@ impl ChannelAdapter for TelegramAdapter {
             let config_control = config_control.clone();
             let personality_control = personality_control.clone();
             let scheduler = scheduler.clone();
+            let plugin_runtime = plugin_runtime.clone();
+            let plugin_executor = plugin_executor.clone();
             let verbose_by_chat = verbose_by_chat.clone();
             let event_spine = event_spine.clone();
             let bot_username = bot_username.clone();
@@ -1717,6 +1743,100 @@ impl ChannelAdapter for TelegramAdapter {
                                         }
                                     }
                                     Some(_) => "Usage: /cron [list | add '<schedule>' '<command>' | remove <id> | pause <id> | resume <id>]".to_string(),
+                                };
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            "plugin" => {
+                                let args: Vec<&str> = cmd_parts.collect();
+                                let reply = if let (Some(rt), Some(ex)) = (&plugin_runtime, &plugin_executor) {
+                                    match args.first().copied() {
+                                        Some("list") | None => {
+                                            let plugins = rt.list().await;
+                                            if plugins.is_empty() {
+                                                "No plugins installed.".to_string()
+                                            } else {
+                                                let mut out = String::from("Installed plugins:\n");
+                                                for p in &plugins {
+                                                    out.push_str(&format!("• {} v{}", p.name, p.version));
+                                                    if !p.schema.entities.is_empty() {
+                                                        let counts: Vec<String> = p.schema.entities.iter().map(|e| {
+                                                            let c = ex.count(&p.name, &e.name);
+                                                            format!("{}: {c}", e.display_name)
+                                                        }).collect();
+                                                        out.push_str(&format!(" ({})", counts.join(", ")));
+                                                    }
+                                                    out.push('\n');
+                                                }
+                                                out
+                                            }
+                                        }
+                                        Some("install") => {
+                                            if let Some(path) = args.get(1) {
+                                                match tokio::fs::read_to_string(path).await {
+                                                    Ok(content) => {
+                                                        match rt.install_from_toml(&content).await {
+                                                            Ok(name) => {
+                                                                // Persist manifest
+                                                                if let Some(manifest) = rt.get(&name).await {
+                                                                    if let Ok(value) = serde_json::to_value(&manifest) {
+                                                                        let _ = ex.persist_manifest(&name, &value);
+                                                                    }
+                                                                }
+                                                                format!("✓ Plugin '{name}' installed.")
+                                                            }
+                                                            Err(e) => format!("Install failed: {e}"),
+                                                        }
+                                                    }
+                                                    Err(e) => format!("Failed to read file: {e}"),
+                                                }
+                                            } else {
+                                                "Usage: /plugin install <path>".to_string()
+                                            }
+                                        }
+                                        Some("uninstall") => {
+                                            if let Some(name) = args.get(1) {
+                                                match rt.uninstall(name, false).await {
+                                                    Ok(()) => {
+                                                        let _ = ex.remove_manifest(name);
+                                                        format!("✓ Plugin '{name}' uninstalled.")
+                                                    }
+                                                    Err(e) => format!("Uninstall failed: {e}"),
+                                                }
+                                            } else {
+                                                "Usage: /plugin uninstall <name>".to_string()
+                                            }
+                                        }
+                                        Some("schema") => {
+                                            if let Some(name) = args.get(1) {
+                                                if let Some(manifest) = rt.get(name).await {
+                                                    let mut out = format!("Schema for {} v{}:\n", manifest.name, manifest.version);
+                                                    for entity in &manifest.schema.entities {
+                                                        out.push_str(&format!("\n{} {}:\n", entity.icon.as_deref().unwrap_or("📦"), entity.display_name));
+                                                        for field in &entity.fields {
+                                                            let req = if field.required { " (required)" } else { "" };
+                                                            out.push_str(&format!("  • {} — {:?}{}\n", field.name, field.field_type, req));
+                                                        }
+                                                    }
+                                                    if !manifest.schema.relationships.is_empty() {
+                                                        out.push_str("\nRelationships:\n");
+                                                        for rel in &manifest.schema.relationships {
+                                                            out.push_str(&format!("  {} → {} ({})", rel.from_entity, rel.to_entity, rel.cardinality));
+                                                        }
+                                                    }
+                                                    out
+                                                } else {
+                                                    format!("Plugin '{name}' not found.")
+                                                }
+                                            } else {
+                                                "Usage: /plugin schema <name>".to_string()
+                                            }
+                                        }
+                                        Some(sub) => format!("Unknown: /plugin {sub}. Use list, install, uninstall, or schema."),
+                                    }
+                                } else {
+                                    "Plugin framework not initialized.".to_string()
                                 };
                                 Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;

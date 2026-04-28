@@ -9,7 +9,9 @@ pub mod manifest;
 pub mod runtime;
 pub mod crud;
 pub mod error;
+pub mod executor;
 
 pub use manifest::*;
 pub use runtime::PluginRuntime;
 pub use error::PluginError;
+pub use executor::PluginCrudExecutor;

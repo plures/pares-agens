@@ -45,6 +45,7 @@ use pares_agens_core::model::{
     ChatMessage as CoreChatMessage, ChatOptions, ModelClient, ToolDefinition, ToolDispatcher,
 };
 use pares_agens_core::procedure::{Procedure, ProcedureRegistry};
+use pares_agens_core::plugins::{PluginCrudExecutor, PluginRuntime};
 use pares_agens_core::tool_governance::{GovernanceVerdict, ToolGovernor};
 use pares_agens_core::Event;
 use pares_agens_core::{PluresDbStateStore, StateStore};
@@ -669,12 +670,17 @@ struct ProcedureToolDispatcher {
     registry: Arc<ProcedureRegistry>,
     trace_store: ToolTraceStore,
     governor: Arc<ToolGovernor>,
+    plugin_runtime: Option<Arc<PluginRuntime>>,
 }
 
 #[async_trait]
 impl ToolDispatcher for ProcedureToolDispatcher {
     async fn available_tools(&self) -> Vec<ToolDefinition> {
-        tool_definitions()
+        let mut tools = tool_definitions();
+        if let Some(ref runtime) = self.plugin_runtime {
+            tools.extend(runtime.tool_definitions().await);
+        }
+        tools
     }
 
     async fn call_tool(&self, name: &str, arguments: serde_json::Value) -> String {
@@ -1463,6 +1469,198 @@ async fn call_pares_manus(
                 .get("result")
                 .cloned()
                 .ok_or_else(|| "pares-manus response missing 'result'".to_string());
+        }
+    }
+}
+
+// ── Plugin CRUD Procedures ──────────────────────────────────────────────────
+
+struct PluginCrudProcedure {
+    tool_name: &'static str,
+    executor: Arc<PluginCrudExecutor>,
+    runtime: Arc<PluginRuntime>,
+}
+
+impl PluginCrudProcedure {
+    fn new(
+        tool_name: &'static str,
+        executor: Arc<PluginCrudExecutor>,
+        runtime: Arc<PluginRuntime>,
+    ) -> Self {
+        Self {
+            tool_name,
+            executor,
+            runtime,
+        }
+    }
+}
+
+#[async_trait]
+impl Procedure for PluginCrudProcedure {
+    fn name(&self) -> &str {
+        self.tool_name
+    }
+
+    fn handles(&self) -> &str {
+        self.tool_name
+    }
+
+    async fn execute(&self, event: &Event) -> Vec<Event> {
+        match event {
+            Event::Message { id, content, .. } => {
+                let result = match parse_tool_args(content) {
+                    Ok(args) => self.dispatch_crud(self.tool_name, args).await,
+                    Err(e) => Err(e),
+                };
+
+                vec![Event::ToolResult {
+                    tool_call_id: id.clone(),
+                    tool_name: self.tool_name.into(),
+                    content: result.clone().unwrap_or_else(|e| e),
+                    is_error: result.is_err(),
+                }]
+            }
+            _ => vec![],
+        }
+    }
+}
+
+impl PluginCrudProcedure {
+    async fn dispatch_crud(
+        &self,
+        tool_name: &str,
+        args: serde_json::Value,
+    ) -> Result<String, String> {
+        match tool_name {
+            "plugin_create" => {
+                let entity_type_full = args
+                    .get("entity_type")
+                    .and_then(|v| v.as_str())
+                    .ok_or("missing 'entity_type'")?;
+                let (plugin_name, entity_type) = entity_type_full
+                    .split_once('/')
+                    .ok_or("entity_type must be 'plugin/entity' format")?;
+                let fields = args
+                    .get("fields")
+                    .cloned()
+                    .unwrap_or(serde_json::json!({}));
+                let id = self
+                    .executor
+                    .create(entity_type, plugin_name, fields)
+                    .map_err(|e| e.to_string())?;
+                Ok(serde_json::json!({"id": id, "entity_type": entity_type_full}).to_string())
+            }
+            "plugin_list" => {
+                let entity_type_full = args
+                    .get("entity_type")
+                    .and_then(|v| v.as_str())
+                    .ok_or("missing 'entity_type'")?;
+                let (plugin_name, entity_type) = entity_type_full
+                    .split_once('/')
+                    .ok_or("entity_type must be 'plugin/entity' format")?;
+                let filters = args.get("filters");
+                let limit = args
+                    .get("limit")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(50) as usize;
+                let items = self
+                    .executor
+                    .list(entity_type, plugin_name, filters, limit)
+                    .map_err(|e| e.to_string())?;
+                Ok(serde_json::to_string(&items).unwrap_or_else(|_| "[]".into()))
+            }
+            "plugin_update" => {
+                let entity_id = args
+                    .get("entity_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or("missing 'entity_id'")?;
+                let fields = args
+                    .get("fields")
+                    .cloned()
+                    .unwrap_or(serde_json::json!({}));
+                self.executor
+                    .update(entity_id, fields)
+                    .map_err(|e| e.to_string())?;
+                Ok("updated".into())
+            }
+            "plugin_delete" => {
+                let entity_id = args
+                    .get("entity_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or("missing 'entity_id'")?;
+                self.executor
+                    .delete(entity_id)
+                    .map_err(|e| e.to_string())?;
+                Ok("deleted".into())
+            }
+            "plugin_move" => {
+                let entity_id = args
+                    .get("entity_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or("missing 'entity_id'")?;
+                let new_parent_id = args
+                    .get("new_parent_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or("missing 'new_parent_id'")?;
+                // Infer relationship from entity type or use a default
+                let relationship = args
+                    .get("relationship")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("parent");
+                self.executor
+                    .move_entity(entity_id, new_parent_id, relationship)
+                    .map_err(|e| e.to_string())?;
+                Ok("moved".into())
+            }
+            "plugin_search" => {
+                let query = args
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .ok_or("missing 'query'")?;
+                let limit = args
+                    .get("limit")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(10) as usize;
+                // Extract plugin name from entity_types if available, otherwise search all
+                let entity_types = args
+                    .get("entity_types")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect::<Vec<_>>()
+                    });
+                // Get all installed plugin names
+                let plugins = self.runtime.list().await;
+                let mut all_results = Vec::new();
+                for plugin in &plugins {
+                    let types_for_plugin = entity_types.as_ref().map(|types| {
+                        types
+                            .iter()
+                            .filter_map(|t| {
+                                t.split_once('/')
+                                    .filter(|(p, _)| *p == plugin.name)
+                                    .map(|(_, e)| e.to_string())
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                    let results = self
+                        .executor
+                        .search(
+                            query,
+                            &plugin.name,
+                            types_for_plugin.as_deref(),
+                            limit.saturating_sub(all_results.len()),
+                        )
+                        .map_err(|e| e.to_string())?;
+                    all_results.extend(results);
+                    if all_results.len() >= limit {
+                        break;
+                    }
+                }
+                Ok(serde_json::to_string(&all_results).unwrap_or_else(|_| "[]".into()))
+            }
+            _ => Err(format!("unknown plugin tool: {tool_name}")),
         }
     }
 }
@@ -2567,6 +2765,44 @@ async fn main() {
                 Arc::clone(&manus_ws_url),
             )));
             procedure_registry.register(Box::new(RunCommandProcedure));
+
+            // Initialize plugin framework
+            let plugin_runtime = Arc::new(PluginRuntime::new());
+            let plugin_executor = Arc::new(PluginCrudExecutor::new(
+                store.crdt_store_arc(),
+            ));
+
+            // Load persisted plugins from PluresDB
+            {
+                let manifests = plugin_executor.load_persisted_manifests();
+                for manifest_json in manifests {
+                    if let Ok(manifest) = serde_json::from_value::<pares_agens_core::plugins::PluginManifest>(manifest_json) {
+                        let name = manifest.name.clone();
+                        if let Err(e) = plugin_runtime.install(manifest).await {
+                            tracing::warn!(plugin = %name, error = %e, "failed to restore persisted plugin");
+                        } else {
+                            tracing::info!(plugin = %name, "restored persisted plugin");
+                        }
+                    }
+                }
+            }
+
+            // Register plugin CRUD procedures
+            for tool_name in &[
+                "plugin_create",
+                "plugin_list",
+                "plugin_update",
+                "plugin_delete",
+                "plugin_move",
+                "plugin_search",
+            ] {
+                procedure_registry.register(Box::new(PluginCrudProcedure::new(
+                    tool_name,
+                    Arc::clone(&plugin_executor),
+                    Arc::clone(&plugin_runtime),
+                )));
+            }
+
             let procedure_registry = Arc::new(procedure_registry);
 
             let tool_trace_store = ToolTraceStore::default();
@@ -2575,6 +2811,7 @@ async fn main() {
                 registry: Arc::clone(&procedure_registry),
                 trace_store: tool_trace_store.clone(),
                 governor: Arc::clone(&governor),
+                plugin_runtime: Some(Arc::clone(&plugin_runtime)),
             });
 
             let mut registry = AgentRegistry::new();
@@ -2600,6 +2837,16 @@ async fn main() {
             };
             let agent_handle = Arc::new(RwLock::new(agent));
 
+            // Inject plugin schema context into agent's system prompt
+            {
+                let schema_ctx = plugin_runtime.schema_context().await;
+                if !schema_ctx.is_empty() {
+                    let agent = agent_handle.read().await;
+                    agent.set_plugin_context(Some(schema_ctx));
+                    tracing::info!("Plugin schema context injected into system prompt");
+                }
+            }
+
             // Set up Telegram adapter
             let telegram_token_for_shutdown = telegram_token.clone();
             let mut config = TelegramConfig::new(telegram_token)
@@ -2615,6 +2862,10 @@ async fn main() {
                 state_store: Arc::clone(&runtime_state_store),
                 agent: Arc::clone(&agent_handle),
             }));
+            config = config.with_plugin_runtime(
+                Arc::clone(&plugin_runtime),
+                Arc::clone(&plugin_executor),
+            );
             let adapter = TelegramAdapter::new(config);
 
             tracing::info!("Telegram adapter starting — bot is live");
@@ -2857,6 +3108,7 @@ async fn main() {
                 registry: Arc::clone(&procedure_registry),
                 trace_store: ToolTraceStore::default(),
                 governor: Arc::clone(&governor),
+                plugin_runtime: None,
             });
 
             let cerebellum = Cerebellum::new(CerebellumConfig::default());

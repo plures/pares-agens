@@ -157,6 +157,8 @@ pub struct Agent {
     /// Cached formatted personality documents (SOUL.md, IDENTITY.md, etc.).
     /// Populated on startup from PluresDB and updated via `/personality doc` commands.
     personality_documents_cache: Mutex<Option<String>>,
+    /// Cached plugin schema context for system prompt injection.
+    plugin_context: Mutex<Option<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -196,6 +198,7 @@ impl Agent {
             delegation_broker: None,
             branch_state: Mutex::new(HashMap::new()),
             personality_documents_cache: Mutex::new(None),
+            plugin_context: Mutex::new(None),
         }
     }
 
@@ -227,6 +230,7 @@ impl Agent {
             delegation_broker: None,
             branch_state: Mutex::new(HashMap::new()),
             personality_documents_cache: Mutex::new(None),
+            plugin_context: Mutex::new(None),
         }
     }
 
@@ -263,6 +267,13 @@ impl Agent {
     pub fn set_personality_documents(&self, formatted: Option<String>) {
         if let Ok(mut cache) = self.personality_documents_cache.lock() {
             *cache = formatted;
+        }
+    }
+
+    /// Set the plugin schema context for system prompt injection.
+    pub fn set_plugin_context(&self, context: Option<String>) {
+        if let Ok(mut cache) = self.plugin_context.lock() {
+            *cache = context;
         }
     }
 
@@ -668,12 +679,15 @@ impl Agent {
             let channel = self.current_channel.lock().ok().and_then(|ch| ch.clone());
             let docs_cache = self.personality_documents_cache.lock().ok()
                 .and_then(|g| g.clone());
+            let plugin_cache = self.plugin_context.lock().ok()
+                .and_then(|g| g.clone());
             let ctx = crate::prompt_builder::AgentContext {
                 channel: channel.as_deref(),
                 learned_context,
                 conversation_summary: None,
                 deep,
                 personality_documents: docs_cache.as_deref(),
+                plugin_context: plugin_cache.as_deref(),
             };
             return crate::prompt_builder::build_system_prompt(personality, &ctx);
         }
