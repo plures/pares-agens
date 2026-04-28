@@ -1,7 +1,0 @@
-{
-  "identifier": "default",
-  "description": "Default capability set for the main window.",
-  "platforms": ["linux", "macOS", "windows"],
-  "windows": ["main"],
-  "permissions": ["core:default"]
-}

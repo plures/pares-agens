@@ -32,6 +32,8 @@
 
 #![warn(missing_docs)]
 
+mod lora_types;
+use crate::lora_types::LoRAAdapter;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -405,7 +407,7 @@ impl PrivacyFilter {
     /// Returns [`PrivacyError::InvalidConfig`] when the adapter path is empty.
     pub fn red_team_test(
         &self,
-        adapter: &pares_trainer::LoRAAdapter,
+        adapter: &LoRAAdapter,
     ) -> Result<RedTeamResults, PrivacyError> {
         if adapter.adapter_path.is_empty() {
             return Err(PrivacyError::InvalidConfig(
@@ -1288,7 +1290,7 @@ mod tests {
     #[test]
     fn red_team_runs_probes() {
         let filter = PrivacyFilter::new();
-        let adapter = pares_trainer::LoRAAdapter {
+        let adapter = LoRAAdapter {
             adapter_path: "test-adapter".to_string(),
             lora_rank: 16,
             epochs_trained: 1,
@@ -1301,7 +1303,7 @@ mod tests {
     #[test]
     fn red_team_clean_adapter_passes() {
         let filter = PrivacyFilter::new();
-        let adapter = pares_trainer::LoRAAdapter {
+        let adapter = LoRAAdapter {
             adapter_path: "clean-adapter".to_string(),
             lora_rank: 8,
             epochs_trained: 2,
@@ -1316,7 +1318,7 @@ mod tests {
     #[test]
     fn red_team_rejects_empty_adapter_path() {
         let filter = PrivacyFilter::new();
-        let adapter = pares_trainer::LoRAAdapter {
+        let adapter = LoRAAdapter {
             adapter_path: String::new(),
             lora_rank: 16,
             epochs_trained: 1,

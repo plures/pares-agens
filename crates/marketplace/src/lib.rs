@@ -25,8 +25,10 @@ pub mod update;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-// Re-export SkillCategory from pares-trainer so callers don't need a direct dep.
-pub use pares_trainer::skill_detection::SkillCategory;
+pub mod lora_types;
+pub mod skill_category;
+pub use lora_types::LoRAAdapter;
+pub use skill_category::SkillCategory;
 
 // ── Error type ───────────────────────────────────────────────────────────────
 

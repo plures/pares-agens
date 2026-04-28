@@ -1,13 +1,13 @@
 [package]
-name = "pares-agens"
-description = "CLI for Pares Agens — includes the OpenClaw migration tool"
+name = "pares-agens-cli"
+description = "CLI binary for Pares Agens"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "pares-agens"
+name = "pares-agens-cli"
 path = "src/main.rs"
 
 [lib]
@@ -29,7 +29,6 @@ reqwest.workspace = true
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 pares-agens-core = { path = "../core", features = ["embeddings"] }
-pares-agens-bitnet = { path = "../bitnet", features = ["model-client"] }
 pares-agens-channels = { path = "../channels" }
 pares-models = { path = "../models" }
 pares-agens-agenda = { path = "../agenda" }

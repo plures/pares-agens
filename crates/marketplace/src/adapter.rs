@@ -14,7 +14,7 @@
 //! with authenticated Polar.sh API calls.
 
 use crate::MarketplaceError;
-use pares_trainer::LoRAAdapter;
+use crate::lora_types::LoRAAdapter;
 use serde::{Deserialize, Serialize};
 
 // ── Adapter metadata ──────────────────────────────────────────────────────────
@@ -271,7 +271,7 @@ impl Marketplace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pares_trainer::LoRAAdapter;
+    use crate::lora_types::LoRAAdapter;
 
     fn sample_adapter() -> LoRAAdapter {
         LoRAAdapter {
