@@ -90,3 +90,5 @@ pub mod renderers;
 pub mod tool_governance;
 /// Heartbeat system — periodic proactive check-ins.
 pub mod heartbeat;
+/// Plugin framework — application platform for schema-driven apps.
+pub mod plugins;

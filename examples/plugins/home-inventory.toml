@@ -1,0 +1,116 @@
+[plugin]
+name = "home-inventory"
+version = "1.0.0"
+description = "Track items across multiple homes and rooms"
+author = "plures"
+
+[[schema.entities]]
+name = "home"
+display_name = "Home"
+icon = "🏠"
+
+[[schema.entities.fields]]
+name = "name"
+field_type = "String"
+required = true
+description = "Name of the home (e.g., 'Seattle House')"
+
+[[schema.entities.fields]]
+name = "address"
+field_type = "String"
+required = false
+
+[[schema.entities.fields]]
+name = "home_type"
+field_type = { Enum = ["primary", "vacation", "rental", "storage", "other"] }
+required = false
+
+[[schema.entities]]
+name = "room"
+display_name = "Room"
+icon = "🚪"
+
+[[schema.entities.fields]]
+name = "name"
+field_type = "String"
+required = true
+
+[[schema.entities.fields]]
+name = "floor"
+field_type = "Number"
+required = false
+
+[[schema.entities]]
+name = "inventory_item"
+display_name = "Inventory Item"
+icon = "📦"
+
+[[schema.entities.fields]]
+name = "name"
+field_type = "String"
+required = true
+
+[[schema.entities.fields]]
+name = "description"
+field_type = "String"
+required = false
+
+[[schema.entities.fields]]
+name = "category"
+field_type = { Enum = ["electronics", "furniture", "clothing", "tools", "kitchen", "books", "decor", "sports", "other"] }
+required = false
+
+[[schema.entities.fields]]
+name = "value"
+field_type = "Currency"
+required = false
+description = "Estimated value in USD"
+
+[[schema.entities.fields]]
+name = "purchase_date"
+field_type = "Date"
+required = false
+
+[[schema.entities.fields]]
+name = "serial_number"
+field_type = "String"
+required = false
+
+[[schema.entities.fields]]
+name = "photo"
+field_type = "Image"
+required = false
+
+[[schema.entities.fields]]
+name = "condition"
+field_type = { Enum = ["new", "excellent", "good", "fair", "poor"] }
+required = false
+
+[[schema.relationships]]
+name = "item_in_room"
+from_entity = "inventory_item"
+to_entity = "room"
+cardinality = "many_to_one"
+
+[[schema.relationships]]
+name = "room_in_home"
+from_entity = "room"
+to_entity = "home"
+cardinality = "many_to_one"
+
+[[logic.constraints]]
+name = "item_must_have_location"
+description = "Every item must belong to a room"
+check = "entity.room_id != null"
+error_message = "Item must be assigned to a room"
+
+[[logic.rules]]
+name = "auto_timestamp_transfers"
+description = "When an item moves rooms, log the transfer date"
+condition = "entity.room_id changed"
+action = "set entity.last_transferred = now()"
+
+[permissions]
+pluresdb_scopes = ["read", "write"]
+tool_access = []
+network = false
