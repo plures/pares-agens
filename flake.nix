@@ -47,7 +47,7 @@ tar.extractall(os.environ['out'] + '/lib')
           allowBuiltinFetchGit = true;
         };
 
-        cargoBuildFlags = [ "-p" "pares-agens" ];
+        cargoBuildFlags = [ "-p" "pares-agens-cli" ];
 
         nativeBuildInputs = with pkgs; [ pkg-config cmake ];
         buildInputs = with pkgs; [ openssl stdenv.cc.cc.lib glib pango cairo gdk-pixbuf atk gtk3 graphene webkitgtk_4_1 libsoup_3 ];

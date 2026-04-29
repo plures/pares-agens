@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "pares-agens-cli"
+name = "pares-agens"
 path = "src/main.rs"
 
 [lib]
