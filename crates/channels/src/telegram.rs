@@ -1335,7 +1335,7 @@ impl ChannelAdapter for TelegramAdapter {
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
-                            "model" => {
+                            "model" | "models" => {
                                 let Some(control) = &model_control else {
                                     Self::send_reply_with_fallback(
                                         &bot,
