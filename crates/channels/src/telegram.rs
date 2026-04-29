@@ -1349,7 +1349,21 @@ impl ChannelAdapter for TelegramAdapter {
                                 let reply = match Self::parse_model_command(cmd_parts.collect()) {
                                     Ok(ModelCommand::Show) => {
                                         let (primary, deep) = control.current_models().await;
-                                        format!("Current models\nPrimary: {primary}\nDeep: {deep}")
+                                        format!(
+                                            "Current models:\n\
+                                             • Primary: {primary}\n\
+                                             • Deep: {deep}\n\
+                                             \n\
+                                             Available (Copilot):\n\
+                                             • gpt-4.1 — fast, tool-capable\n\
+                                             • gpt-5.2 — deep reasoning\n\
+                                             • claude-sonnet-4.5 — balanced\n\
+                                             • claude-opus-4.6 — strongest\n\
+                                             • o3 — reasoning specialist\n\
+                                             \n\
+                                             Switch: /model <name>\n\
+                                             Switch deep: /model deep <name>"
+                                        )
                                     }
                                     Ok(ModelCommand::SetPrimary(model)) => {
                                         match control.set_primary_model(&model).await {
