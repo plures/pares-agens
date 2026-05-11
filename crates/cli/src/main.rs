@@ -605,6 +605,8 @@ impl ModelClient for RouterModelClient {
                     })
                     .collect(),
             );
+            // OpenAI-style function calling defaults to auto selection when tools exist.
+            request.tool_choice = Some(serde_json::json!("auto"));
         }
         if let Some(temp) = options.temperature {
             request.temperature = Some(temp as f32);
