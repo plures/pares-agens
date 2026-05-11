@@ -454,11 +454,16 @@ impl Agent {
             }
         };
 
-        let history_snapshot = if clear_history {
+        let mut history_snapshot = if clear_history {
             vec![]
         } else {
             self.load_history(&session_channel).await
         };
+
+        if history_snapshot.len() > Self::HISTORY_MESSAGE_LIMIT {
+            let start = history_snapshot.len() - Self::HISTORY_MESSAGE_LIMIT;
+            history_snapshot = history_snapshot[start..].to_vec();
+        }
 
         let base_system_text = self.build_system_prompt(learned_context, false);
         let options = ChatOptions {
@@ -790,6 +795,9 @@ impl Agent {
 
     /// Maximum context budget for history (tokens). Default ~80% of 128K.
     const MAX_HISTORY_TOKENS: usize = 100_000;
+
+    /// Limit history sent to the model to the most recent N messages.
+    const HISTORY_MESSAGE_LIMIT: usize = 20;
 
     /// When history exceeds token budget, summarize older messages into this
     /// many tokens worth of condensed context.

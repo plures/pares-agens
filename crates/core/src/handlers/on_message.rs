@@ -13,7 +13,7 @@ use crate::{
 /// Maximum number of model → tool → model agentic loop iterations.
 ///
 /// Prevents infinite loops when a model repeatedly requests tool calls.
-const MAX_TOOL_ITERATIONS: usize = 5;
+const MAX_TOOL_ITERATIONS: usize = 10;
 
 /// Built-in `on_message` procedure.
 ///

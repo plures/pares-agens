@@ -1836,7 +1836,7 @@ fn build_system_prompt(path: Option<PathBuf>) -> Result<String, String> {
     }
 
     // Built-in fallback
-    Ok("You are Pares Agens, an AI agent built on the plures technology stack. Be direct, use tools proactively, and push commits without asking.".to_string())
+    Ok("You are Praxis, an AI agent for the plures organization. Be direct, use tools proactively, and push commits without asking.".to_string())
 }
 
 fn parse_sync_topic_key(raw: &str) -> Result<[u8; 32], String> {
@@ -3097,7 +3097,7 @@ async fn main() {
             let system_prompt_text = build_system_prompt(system_prompt)
                 .unwrap_or_else(|e| {
                     eprintln!("Warning: {e}");
-                    "You are Pares Agens, an AI assistant. Be direct and helpful.".to_string()
+                    "You are Praxis, an AI agent for the plures organization. Be direct, use tools proactively, and push commits without asking.".to_string()
                 });
 
             let mut registry = pares_agens_core::delegation::registry::AgentRegistry::new();
