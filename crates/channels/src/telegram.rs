@@ -266,7 +266,7 @@ fn build_nixos_update_command(_flake_dir: &str, _host: &str) -> String {
          echo 'Step 1: Pulling latest pares-agens source...'; \
          cd {agens_dir} && git pull --ff-only; \
          echo 'Step 2: Building pares-agens binary...'; \
-         nix develop --option substituters 'https://cache.nixos.org' -c cargo build --release -p pares-agens; \
+         nix develop --option substituters 'https://cache.nixos.org' -c cargo build --release -p pares-agens-cli; \
          echo 'Step 3: Installing binary...'; \
          mkdir -p {bin_dir}; \
          cp target/release/pares-agens {bin_dir}/pares-agens; \
