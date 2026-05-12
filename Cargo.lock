@@ -3698,7 +3698,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-client"
-version = "1.5.0"
+version = "1.12.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4392,8 +4392,58 @@ dependencies = [
 ]
 
 [[package]]
-name = "pares-agens"
-version = "1.5.0"
+name = "pares-agens-agenda"
+version = "1.12.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "pluresdb 2.9.10",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pares-agens-audit"
+version = "1.12.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "pluresdb 2.9.10",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pares-agens-channels"
+version = "1.12.1"
+dependencies = [
+ "async-trait",
+ "pares-agens-agenda",
+ "pares-agens-core",
+ "pares-agens-marketplace",
+ "pluresdb 2.9.10",
+ "reqwest 0.12.28",
+ "serde_json",
+ "teloxide",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pares-agens-cli"
+version = "1.12.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4401,7 +4451,6 @@ dependencies = [
  "crossterm",
  "futures-util",
  "pares-agens-agenda",
- "pares-agens-bitnet",
  "pares-agens-channels",
  "pares-agens-core",
  "pares-agens-tui",
@@ -4420,98 +4469,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "pares-agens-agenda"
-version = "1.5.0"
-dependencies = [
- "async-trait",
- "chrono",
- "pluresdb 2.9.10",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "pares-agens-arca"
-version = "1.5.0"
-dependencies = [
- "aes-gcm",
- "argon2",
- "chrono",
- "rand 0.8.6",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "zeroize",
-]
-
-[[package]]
-name = "pares-agens-audit"
-version = "1.5.0"
-dependencies = [
- "async-trait",
- "chrono",
- "pluresdb 2.9.10",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "pares-agens-autoresearch"
-version = "1.5.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "pares-agens-bitnet"
-version = "1.5.0"
-dependencies = [
- "async-trait",
- "pares-agens-bitnet-sys",
- "pares-agens-core",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "pares-agens-bitnet-sys"
-version = "1.5.0"
-
-[[package]]
-name = "pares-agens-channels"
-version = "1.5.0"
-dependencies = [
- "async-trait",
- "pares-agens-core",
- "pares-agens-marketplace",
- "reqwest 0.12.28",
- "serde_json",
- "teloxide",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "pares-agens-core"
-version = "1.5.0"
+version = "1.12.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -4531,80 +4490,16 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "toml 0.8.2",
  "tracing",
  "uuid",
  "vault-core",
 ]
 
 [[package]]
-name = "pares-agens-desktop"
-version = "0.5.0"
-dependencies = [
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
-]
-
-[[package]]
-name = "pares-agens-dmem"
-version = "1.5.0"
-dependencies = [
- "async-trait",
- "chrono",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "pares-agens-faber"
-version = "1.5.0"
-dependencies = [
- "async-trait",
- "chrono",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "pares-agens-gpu"
-version = "1.5.0"
-dependencies = [
- "async-trait",
- "serde",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "pares-agens-inference"
-version = "1.5.0"
-dependencies = [
- "async-trait",
- "futures-util",
- "pares-agens-bitnet",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "pares-agens-marketplace"
-version = "1.5.0"
+version = "1.12.1"
 dependencies = [
- "pares-trainer",
  "serde",
  "serde_json",
  "sha2",
@@ -4612,17 +4507,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "pares-agens-optimizer"
-version = "1.5.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "pares-agens-praxis"
-version = "1.5.0"
+version = "1.12.1"
 dependencies = [
  "chrono",
  "pest",
@@ -4635,9 +4521,8 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-privacy"
-version = "1.5.0"
+version = "1.12.1"
 dependencies = [
- "pares-trainer",
  "regex",
  "serde",
  "serde_json",
@@ -4646,19 +4531,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "pares-agens-service"
-version = "1.5.0"
-dependencies = [
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "windows-service",
-]
-
-[[package]]
 name = "pares-agens-sync"
-version = "1.5.0"
+version = "1.12.1"
 dependencies = [
  "chrono",
  "serde",
@@ -4674,8 +4548,8 @@ dependencies = [
  "async-trait",
  "futures-util",
  "mcp-client",
- "pares-agens",
  "pares-agens-channels",
+ "pares-agens-cli",
  "pares-agens-core",
  "pares-models",
  "reqwest 0.12.28",
@@ -4694,7 +4568,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-tui"
-version = "1.5.0"
+version = "1.12.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4710,7 +4584,7 @@ dependencies = [
 
 [[package]]
 name = "pares-models"
-version = "1.5.0"
+version = "1.12.1"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -4722,16 +4596,6 @@ dependencies = [
  "tokio",
  "tracing",
  "wiremock",
-]
-
-[[package]]
-name = "pares-trainer"
-version = "1.5.0"
-dependencies = [
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -8961,17 +8825,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7781fa89eaf60850ac3d2da7af8e5242a5ea78d1a11c49bf2910bb5a73853eb5"
 dependencies = [
  "windows-link 0.2.1",
-]
-
-[[package]]
-name = "windows-service"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d24d6bcc7f734a4091ecf8d7a64c5f7d7066f45585c1861eba06449909609c8a"
-dependencies = [
- "bitflags 2.11.1",
- "widestring",
- "windows-sys 0.52.0",
 ]
 
 [[package]]

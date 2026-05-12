@@ -223,6 +223,18 @@ impl HeartbeatRunner {
 
         // Increment daily count
         self.save_daily_count(count + 1, &today).await;
+
+        // Emit heartbeat cue for PluresLM task procedures.
+        // The agent's message handler fires pluresLM on_cue:heartbeat when it
+        // receives this event, triggering task-heartbeat-eval and any other
+        // procedures subscribed to the heartbeat cue.
+        if let Some(spine) = &self.event_spine {
+            spine.emit_inbound_message(
+                0, // system chat
+                "heartbeat",
+                "[cue:heartbeat] task evaluation tick",
+            );
+        }
     }
 
     async fn load_daily_count(&self) -> (u32, String) {
