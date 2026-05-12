@@ -629,6 +629,11 @@ impl TelegramAdapter {
         Self { config, event_spine: Some(spine) }
     }
 
+    /// Get a reference to the event spine handle, if configured.
+    pub fn event_spine(&self) -> Option<&EventSpineHandle> {
+        self.event_spine.as_ref()
+    }
+
     fn parse_model_command(args: Vec<&str>) -> Result<ModelCommand, &'static str> {
         match args.as_slice() {
             [] => Ok(ModelCommand::Show),

@@ -2854,22 +2854,28 @@ async fn main() {
                 Arc::clone(&plugin_runtime),
                 Arc::clone(&plugin_executor),
             );
-            let adapter = TelegramAdapter::new(config);
-
-            tracing::info!("Telegram adapter starting — bot is live");
-
-            // Initialize the event spine if enabled
-            if !no_event_spine {
+            // Initialize the event spine and wire it into the adapter
+            let event_spine_handle = if !no_event_spine {
                 let crdt = store.crdt_store();
                 let spine = pares_agens_core::event_spine::EventSpine::new(crdt, "pares-agens");
                 spine.seed_contracts();
                 spine.register_core_procedures();
-                tracing::info!("AgensRuntime event spine initialized with core procedures");
-                // The spine is stack-local for now — future work will make it
-                // accessible from the adapter via Arc.  The important thing is
-                // that contracts are seeded and procedures are registered in
-                // PluresDB so the data is durable.
-            }
+                let handle = pares_agens_core::event_spine::EventSpineHandle::from_arc_store(
+                    store.crdt_store_arc(),
+                    "pares-agens",
+                );
+                tracing::info!("AgensRuntime event spine initialized and wired to adapter");
+                Some(handle)
+            } else {
+                tracing::warn!("Event spine disabled — task tracking and heartbeat cues will not function");
+                None
+            };
+
+            let adapter = if let Some(handle) = event_spine_handle {
+                TelegramAdapter::with_event_spine(config, handle)
+            } else {
+                TelegramAdapter::new(config)
+            };
 
             // Seed personality contract into PluresDB state if not present
             {
@@ -2938,6 +2944,24 @@ async fn main() {
 
             let memory_monitor = spawn_memory_monitor();
             let watchdog = spawn_systemd_watchdog();
+
+            // Spawn heartbeat runner
+            {
+                use pares_agens_core::heartbeat::HeartbeatRunner;
+                let hb_state = Arc::clone(&runtime_state_store);
+                let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+                let mut runner = HeartbeatRunner::new(hb_state);
+                if let Some(handle) = adapter.event_spine() {
+                    runner = runner.with_event_spine(handle.clone());
+                }
+                runner.load_config().await;
+                tokio::spawn(async move {
+                    runner.run(shutdown_rx).await;
+                });
+                tracing::info!("Heartbeat runner started");
+                // shutdown_tx will be dropped on function exit, signaling shutdown
+                let _heartbeat_shutdown = shutdown_tx;
+            }
 
             let adapter_result =
                 run_adapter_with_recovery(&adapter, Arc::clone(&agent_handle), tool_trace_store)
