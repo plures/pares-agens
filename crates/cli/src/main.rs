@@ -2316,14 +2316,6 @@ enum Commands {
         /// Shared SEA key (base64url-encoded SeaKeyPair JSON) required to decrypt sync payloads.
         #[arg(long, env = "PARES_SYNC_SHARED_KEY")]
         sync_shared_key: Option<String>,
-
-        /// Disable the AgensRuntime event spine for message delivery.
-        ///
-        /// The event spine is enabled by default.  Inbound messages are
-        /// emitted through the event spine and channel contracts are seeded
-        /// into PluresDB.  Pass this flag to disable it.
-        #[arg(long, env = "PARES_NO_EVENT_SPINE")]
-        no_event_spine: bool,
     },
 
     /// Run the agent with an interactive terminal UI.
@@ -2413,7 +2405,6 @@ async fn main() {
             manus_ws_url,
             sync_topic_key,
             sync_shared_key,
-            no_event_spine,
         } => {
             tracing::info!(commit = env!("GIT_COMMIT_HASH"), "Starting Pares Agens daemon");
             let started_at = Instant::now();
@@ -2854,8 +2845,10 @@ async fn main() {
                 Arc::clone(&plugin_runtime),
                 Arc::clone(&plugin_executor),
             );
-            // Initialize the event spine and wire it into the adapter
-            let event_spine_handle = if !no_event_spine {
+            // Initialize the event spine — always on, not optional.
+            // The spine is the nervous system: heartbeats, task procedures,
+            // channel contracts, and event tracking all depend on it.
+            let event_spine_handle = {
                 let crdt = store.crdt_store();
                 let spine = pares_agens_core::event_spine::EventSpine::new(crdt, "pares-agens");
                 spine.seed_contracts();
@@ -2864,18 +2857,11 @@ async fn main() {
                     store.crdt_store_arc(),
                     "pares-agens",
                 );
-                tracing::info!("AgensRuntime event spine initialized and wired to adapter");
-                Some(handle)
-            } else {
-                tracing::warn!("Event spine disabled — task tracking and heartbeat cues will not function");
-                None
+                tracing::info!("Event spine initialized — contracts seeded, core procedures registered");
+                handle
             };
 
-            let adapter = if let Some(handle) = event_spine_handle {
-                TelegramAdapter::with_event_spine(config, handle)
-            } else {
-                TelegramAdapter::new(config)
-            };
+            let adapter = TelegramAdapter::with_event_spine(config, event_spine_handle.clone());
 
             // Seed personality contract into PluresDB state if not present
             {
@@ -2951,9 +2937,7 @@ async fn main() {
                 let hb_state = Arc::clone(&runtime_state_store);
                 let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
                 let mut runner = HeartbeatRunner::new(hb_state);
-                if let Some(handle) = adapter.event_spine() {
-                    runner = runner.with_event_spine(handle.clone());
-                }
+                runner = runner.with_event_spine(event_spine_handle.clone());
                 runner.load_config().await;
                 tokio::spawn(async move {
                     runner.run(shutdown_rx).await;
