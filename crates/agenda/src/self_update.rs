@@ -26,35 +26,35 @@ pub fn resolve_agens_dir() -> String {
         .unwrap_or_else(|_| format!("{home}/{PROJECTS_SUBDIR}/{DEFAULT_PARES_AGENS_DIR}"))
 }
 
-/// Build a resilient self-update shell command.
+/// Build a self-update shell command using NixOS rebuild.
 ///
-/// **Bootstrap-safe design:** The binary invokes an external script
-/// (`scripts/self-update.sh`) rather than embedding the update procedure.
-/// This means pulling new source automatically updates the update procedure
-/// itself — solving the bootstrap problem where a broken embedded command
-/// can never fix itself.
+/// This is the correct approach for NixOS-managed hosts:
+/// 1. `nix flake update pares-agens` — fetch latest source via flake input
+/// 2. `nixos-rebuild switch` — build in a pure sandbox, install, restart service
 ///
-/// The flow:
-/// 1. `git fetch + reset --hard` to get latest source (including the script)
-/// 2. Run the now-updated `scripts/self-update.sh`
+/// NixOS handles everything that manual approaches get wrong:
+/// - No dirty tree problems (Nix builds from a clean source snapshot)
+/// - No wrong package names (the derivation knows what to build)
+/// - No bootstrap problem (the update command is minimal and stable)
+/// - Service restart is automatic (systemd unit is part of the NixOS config)
 ///
-/// The script handles: dirty trees, lock conflicts, workspace verification,
-/// correct package names, binary installation, and service restart.
-///
-/// The `_flake_dir` and `_host` parameters are retained for backward
-/// compatibility with callers but are not used by the current implementation.
-pub fn build_update_command(_flake_dir: &str, _host: &str) -> String {
-    let agens_dir = shell_single_quote(&resolve_agens_dir());
-    // Step 1 is a minimal bootstrap: fetch + reset to get the latest script.
-    // Step 2 delegates everything to the external script which is now up-to-date.
-    // This two-phase approach means the embedded command is tiny and stable —
-    // all the real logic lives in the script that just got pulled.
+/// The external `scripts/self-update.sh` remains as a fallback for non-NixOS
+/// hosts that build from source directly.
+pub fn build_update_command(flake_dir: &str, host: &str) -> String {
+    let flake_dir = shell_single_quote(flake_dir);
+    let host = shell_single_quote(host);
     format!(
         "set -eu; \
-         cd {agens_dir}; \
-         git checkout -- . 2>/dev/null || true; \
-         git fetch origin main && git reset --hard origin/main; \
-         exec bash scripts/self-update.sh"
+         cd {flake_dir}; \
+         lock_before=$(sha256sum flake.lock 2>/dev/null | cut -d' ' -f1 || true); \
+         sudo nix flake update pares-agens; \
+         lock_after=$(sha256sum flake.lock 2>/dev/null | cut -d' ' -f1 || true); \
+         if [ \"$lock_before\" != \"$lock_after\" ]; then \
+           sudo nixos-rebuild switch --flake .#{host}; \
+           echo 'Self-update applied'; \
+         else \
+           echo 'No new pares-agens commits on main'; \
+         fi"
     )
 }
 
@@ -96,37 +96,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn update_command_resets_dirty_tree() {
+    fn update_command_uses_nix_flake_update() {
         let cmd = build_update_command("/etc/nixos", "praxisbot");
-        assert!(cmd.contains("git checkout -- ."), "must reset dirty tree");
+        assert!(cmd.contains("sudo nix flake update pares-agens"), "must update flake input");
     }
 
     #[test]
-    fn update_command_uses_hard_reset() {
+    fn update_command_runs_nixos_rebuild() {
         let cmd = build_update_command("/etc/nixos", "praxisbot");
-        assert!(cmd.contains("git fetch origin main"), "must fetch latest");
-        assert!(cmd.contains("git reset --hard origin/main"), "must hard-reset");
-        assert!(!cmd.contains("git pull"), "must not use fragile git pull");
+        assert!(cmd.contains("sudo nixos-rebuild switch --flake .#'praxisbot'"), "must rebuild NixOS config");
     }
 
     #[test]
-    fn update_command_delegates_to_external_script() {
+    fn update_command_skips_rebuild_when_no_changes() {
         let cmd = build_update_command("/etc/nixos", "praxisbot");
-        assert!(cmd.contains("exec bash scripts/self-update.sh"), "must invoke external script");
-        // The embedded command must be minimal — no cargo build, no package names.
-        // All that logic lives in the script which gets pulled fresh.
-        assert!(!cmd.contains("cargo build"), "must not embed build command");
-        assert!(!cmd.contains("pares-agens-cli"), "must not embed wrong package name");
+        assert!(cmd.contains("No new pares-agens commits on main"), "must skip when flake.lock unchanged");
     }
 
     #[test]
-    fn update_command_is_bootstrap_safe() {
-        // The key property: the embedded command only does fetch+reset+exec.
-        // Even if the script itself is broken, pulling replaces it before exec runs.
+    fn update_command_does_not_embed_cargo_or_git() {
+        // NixOS handles the build. The update command must not contain
+        // fragile git/cargo operations that break on dirty trees.
         let cmd = build_update_command("/etc/nixos", "praxisbot");
-        let steps: Vec<&str> = cmd.split(';').map(|s| s.trim()).collect();
-        // Should be: set -eu, cd, git checkout, git fetch && reset, exec bash
-        assert!(steps.len() <= 6, "embedded command must be minimal (got {} steps)", steps.len());
+        assert!(!cmd.contains("cargo build"), "must not embed cargo build");
+        assert!(!cmd.contains("git pull"), "must not embed git pull");
+        assert!(!cmd.contains("git fetch"), "must not embed git fetch");
     }
 
     #[test]
