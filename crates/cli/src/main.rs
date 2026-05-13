@@ -1865,11 +1865,6 @@ const TELEGRAM_RECONNECT_MAX_DELAY_SECS: u64 = 30;
 const MEMORY_MONITOR_INTERVAL_SECS: u64 = 60;
 const DEFAULT_NIX_FLAKE_DIR: &str = ".";
 const DEFAULT_NIX_HOST: &str = "praxisbot";
-const DEFAULT_SELF_UPDATE_INTERVAL_SECS: u64 = 3600;
-/// Directory containing the pares-agens source for rebuilding the binary.
-const DEFAULT_PARES_AGENS_DIR: &str = "pares-agens";
-/// Subdirectory under $HOME for project sources.
-const PROJECTS_SUBDIR: &str = "projects";
 const MANUS_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MANUS_RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -1933,33 +1928,10 @@ fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-fn build_nixos_update_command(_flake_dir: &str, _host: &str) -> String {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/kbristol".into());
-    let agens_dir = std::env::var("PARES_AGENS_DIR")
-        .unwrap_or_else(|_| format!("{home}/{PROJECTS_SUBDIR}/{DEFAULT_PARES_AGENS_DIR}"));
-    let agens_dir = shell_single_quote(&agens_dir);
-    let bin_dir = format!("{home}/.local/bin");
-    // Resilient self-update: clean dirty tree, hard-reset to origin/main,
-    // verify workspace, build with correct package name, install, restart.
-    format!(
-        "set -eu; \
-         echo 'Step 1: Preparing source tree...'; \
-         cd {agens_dir}; \
-         git checkout -- Cargo.lock 2>/dev/null || true; \
-         git clean -fd 2>/dev/null || true; \
-         echo 'Step 2: Pulling latest pares-agens source...'; \
-         git fetch origin main && git reset --hard origin/main; \
-         echo 'Step 3: Verifying workspace...'; \
-         cargo metadata --no-deps --format-version 1 2>/dev/null | grep -q '\"pares-agens\"' || {{ echo 'ERROR: pares-agens package not found in workspace'; exit 1; }}; \
-         echo 'Step 4: Building pares-agens binary...'; \
-         cargo build --release -p pares-agens 2>&1; \
-         echo 'Step 5: Installing binary...'; \
-         mkdir -p {bin_dir}; \
-         cp target/release/pares-agens {bin_dir}/pares-agens; \
-         echo 'Step 6: Restarting service...'; \
-         sudo systemctl restart pares-agens; \
-         echo 'Self-update complete. New binary installed and service restarted.'"
-    )
+/// Delegate to the canonical self-update command builder in `pares_agens_agenda`.
+/// See ADR-0010: no duplicated operational logic across crates.
+fn build_nixos_update_command(flake_dir: &str, host: &str) -> String {
+    pares_agens_agenda::self_update::build_update_command(flake_dir, host)
 }
 
 fn build_self_update_task(
@@ -1967,30 +1939,11 @@ fn build_self_update_task(
     host: &str,
     interval_secs: u64,
 ) -> pares_agens_agenda::scheduler::Task {
-    pares_agens_agenda::scheduler::Task {
-        id: "self-update.nixos-rebuild".to_string(),
-        name: "Self-update via NixOS rebuild".to_string(),
-        schedule: pares_agens_agenda::scheduler::Schedule::Interval {
-            every_secs: interval_secs,
-        },
-        command: build_nixos_update_command(flake_dir, host),
-        enabled: true,
-        last_run: None,
-        last_result: None,
-    }
+    pares_agens_agenda::self_update::build_self_update_task(flake_dir, host, interval_secs)
 }
 
 fn self_update_task_from_env() -> pares_agens_agenda::scheduler::Task {
-    let flake_dir =
-        std::env::var("PARES_NIX_FLAKE_DIR").unwrap_or_else(|_| DEFAULT_NIX_FLAKE_DIR.into());
-    let host = std::env::var("PARES_NIX_HOST").unwrap_or_else(|_| DEFAULT_NIX_HOST.into());
-    let interval = std::env::var("PARES_SELF_UPDATE_INTERVAL_SECS")
-        .ok()
-        .and_then(|raw| raw.parse::<u64>().ok())
-        .filter(|secs| *secs > 0)
-        .unwrap_or(DEFAULT_SELF_UPDATE_INTERVAL_SECS);
-
-    build_self_update_task(&flake_dir, &host, interval)
+    pares_agens_agenda::self_update::self_update_task_from_env()
 }
 
 fn parse_vm_rss_kib(contents: &str) -> Option<u64> {
@@ -3366,15 +3319,9 @@ mod tests {
     }
 
     #[test]
-    fn build_nixos_update_command_includes_required_commands() {
+    fn build_nixos_update_command_delegates_to_agenda() {
         let command = build_nixos_update_command("/etc/nixos", "praxisbot");
-        assert!(command.contains("git checkout -- Cargo.lock"), "must reset dirty files");
-        assert!(command.contains("git fetch origin main"), "must fetch latest");
-        assert!(command.contains("git reset --hard origin/main"), "must hard-reset to origin");
-        assert!(command.contains("cargo metadata"), "must verify workspace");
-        assert!(command.contains("cargo build --release -p pares-agens"), "must build correct package");
-        assert!(command.contains("systemctl restart pares-agens"), "must restart service");
-        assert!(!command.contains("pares-agens-cli"), "must not use wrong package name");
+        assert!(command.contains("cargo build --release -p pares-agens"), "must delegate to shared impl");
     }
 
     #[test]
@@ -3382,13 +3329,13 @@ mod tests {
         let task = build_self_update_task(
             DEFAULT_NIX_FLAKE_DIR,
             DEFAULT_NIX_HOST,
-            DEFAULT_SELF_UPDATE_INTERVAL_SECS,
+            pares_agens_agenda::self_update::DEFAULT_SELF_UPDATE_INTERVAL_SECS,
         );
-        assert_eq!(task.id, "self-update.nixos-rebuild");
+        assert_eq!(task.id, "self-update.rebuild");
         assert!(task.enabled);
         match task.schedule {
             pares_agens_agenda::scheduler::Schedule::Interval { every_secs } => {
-                assert_eq!(every_secs, DEFAULT_SELF_UPDATE_INTERVAL_SECS);
+                assert_eq!(every_secs, pares_agens_agenda::self_update::DEFAULT_SELF_UPDATE_INTERVAL_SECS);
             }
             _ => panic!("expected interval schedule"),
         }

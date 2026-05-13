@@ -46,10 +46,6 @@ const DEFAULT_MARKETPLACE_INSTALL_DIR: &str = "/skills";
 const MAX_INDEX_LISTING_ITEMS: usize = 10;
 const DEFAULT_NIX_FLAKE_DIR: &str = "nixos-config";
 const DEFAULT_NIX_HOST: &str = "praxisbot";
-/// Directory containing the pares-agens source for rebuilding the binary.
-const DEFAULT_PARES_AGENS_DIR: &str = "pares-agens";
-/// Subdirectory under $HOME/projects for defaults, or override with env vars.
-const PROJECTS_SUBDIR: &str = "projects";
 const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
 /// Internal prefix added by the Telegram adapter when `/verbose` is enabled.
 ///
@@ -254,41 +250,10 @@ fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-fn build_nixos_update_command(_flake_dir: &str, _host: &str) -> String {
-    // Resolve agens source dir: env var → $HOME/projects/pares-agens
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/kbristol".into());
-    let agens_dir = std::env::var("PARES_AGENS_DIR")
-        .unwrap_or_else(|_| format!("{home}/{PROJECTS_SUBDIR}/{DEFAULT_PARES_AGENS_DIR}"));
-    let agens_dir = shell_single_quote(&agens_dir);
-    let bin_dir = format!("{home}/.local/bin");
-    // The update command must be resilient to real-world conditions:
-    // - Dirty working tree (Cargo.lock changes from previous builds)
-    // - Failed partial pulls
-    // - Network transients
-    // - Wrong package name resolution
-    //
-    // We reset tracked files before pulling (Cargo.lock is the usual culprit),
-    // verify the package exists in the workspace before building, and use the
-    // correct crate name (pares-agens, not pares-agens-cli).
-    format!(
-        "set -eu; \
-         echo 'Step 1: Preparing source tree...'; \
-         cd {agens_dir}; \
-         git checkout -- Cargo.lock 2>/dev/null || true; \
-         git clean -fd 2>/dev/null || true; \
-         echo 'Step 2: Pulling latest pares-agens source...'; \
-         git fetch origin main && git reset --hard origin/main; \
-         echo 'Step 3: Verifying workspace...'; \
-         cargo metadata --no-deps --format-version 1 2>/dev/null | grep -q '\"pares-agens\"' || {{ echo 'ERROR: pares-agens package not found in workspace'; exit 1; }}; \
-         echo 'Step 4: Building pares-agens binary...'; \
-         cargo build --release -p pares-agens 2>&1; \
-         echo 'Step 5: Installing binary...'; \
-         mkdir -p {bin_dir}; \
-         cp target/release/pares-agens {bin_dir}/pares-agens; \
-         echo 'Step 6: Restarting service...'; \
-         sudo systemctl restart pares-agens; \
-         echo 'Self-update complete. New binary installed and service restarted.'"
-    )
+/// Delegate to the canonical self-update command builder in `pares_agens_agenda`.
+/// See ADR-0010: no duplicated operational logic across crates.
+fn build_nixos_update_command(flake_dir: &str, host: &str) -> String {
+    pares_agens_agenda::self_update::build_update_command(flake_dir, host)
 }
 
 fn truncate_telegram_message(content: String) -> String {
@@ -2353,15 +2318,11 @@ mod tests {
     }
 
     #[test]
-    fn build_nixos_update_command_contains_required_steps() {
+    fn build_nixos_update_command_delegates_to_agenda() {
+        // The function is a thin delegate to pares_agens_agenda::self_update.
+        // Full behavioral tests live in the agenda crate (ADR-0010).
         let command = build_nixos_update_command("/etc/nixos", "praxisbot");
-        assert!(command.contains("git checkout -- Cargo.lock"), "must reset dirty files");
-        assert!(command.contains("git fetch origin main"), "must fetch latest");
-        assert!(command.contains("git reset --hard origin/main"), "must hard-reset to origin");
-        assert!(command.contains("cargo metadata"), "must verify workspace");
-        assert!(command.contains("cargo build --release -p pares-agens"), "must build correct package");
-        assert!(command.contains("systemctl restart pares-agens"), "must restart service");
-        assert!(!command.contains("pares-agens-cli"), "must not use wrong package name");
+        assert!(command.contains("cargo build --release -p pares-agens"), "must delegate to shared impl");
     }
 
     #[test]

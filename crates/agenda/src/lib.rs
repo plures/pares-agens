@@ -40,3 +40,4 @@ pub enum AgendaError {
     Json(#[from] serde_json::Error),
 }
 pub mod scheduler;
+pub mod self_update;
