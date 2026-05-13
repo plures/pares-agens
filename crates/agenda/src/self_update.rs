@@ -28,46 +28,33 @@ pub fn resolve_agens_dir() -> String {
 
 /// Build a resilient self-update shell command.
 ///
-/// The command handles real-world conditions that would break a naive
-/// `git pull && cargo build`:
+/// **Bootstrap-safe design:** The binary invokes an external script
+/// (`scripts/self-update.sh`) rather than embedding the update procedure.
+/// This means pulling new source automatically updates the update procedure
+/// itself — solving the bootstrap problem where a broken embedded command
+/// can never fix itself.
 ///
-/// 1. **Dirty working tree** — `Cargo.lock` (and other files) may have local
-///    modifications from previous builds. We reset tracked files and clean
-///    untracked files before pulling.
+/// The flow:
+/// 1. `git fetch + reset --hard` to get latest source (including the script)
+/// 2. Run the now-updated `scripts/self-update.sh`
 ///
-/// 2. **Diverged history** — `git pull --ff-only` fails when the local branch
-///    has diverged. We use `git fetch + reset --hard` instead.
-///
-/// 3. **Wrong package name** — The workspace has many crates. We verify the
-///    target package exists via `cargo metadata` before building.
-///
-/// 4. **Correct package name** — The binary crate is `pares-agens` (in
-///    `crates/migrate/`), not `pares-agens-cli` or any other variant.
+/// The script handles: dirty trees, lock conflicts, workspace verification,
+/// correct package names, binary installation, and service restart.
 ///
 /// The `_flake_dir` and `_host` parameters are retained for backward
 /// compatibility with callers but are not used by the current implementation.
 pub fn build_update_command(_flake_dir: &str, _host: &str) -> String {
     let agens_dir = shell_single_quote(&resolve_agens_dir());
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/kbristol".into());
-    let bin_dir = format!("{home}/.local/bin");
+    // Step 1 is a minimal bootstrap: fetch + reset to get the latest script.
+    // Step 2 delegates everything to the external script which is now up-to-date.
+    // This two-phase approach means the embedded command is tiny and stable —
+    // all the real logic lives in the script that just got pulled.
     format!(
         "set -eu; \
-         echo 'Step 1: Preparing source tree...'; \
          cd {agens_dir}; \
-         git checkout -- Cargo.lock 2>/dev/null || true; \
-         git clean -fd 2>/dev/null || true; \
-         echo 'Step 2: Pulling latest pares-agens source...'; \
+         git checkout -- . 2>/dev/null || true; \
          git fetch origin main && git reset --hard origin/main; \
-         echo 'Step 3: Verifying workspace...'; \
-         cargo metadata --no-deps --format-version 1 2>/dev/null | grep -q '\"pares-agens\"' || {{ echo 'ERROR: pares-agens package not found in workspace'; exit 1; }}; \
-         echo 'Step 4: Building pares-agens binary...'; \
-         cargo build --release -p pares-agens 2>&1; \
-         echo 'Step 5: Installing binary...'; \
-         mkdir -p {bin_dir}; \
-         cp target/release/pares-agens {bin_dir}/pares-agens; \
-         echo 'Step 6: Restarting service...'; \
-         sudo systemctl restart pares-agens; \
-         echo 'Self-update complete. New binary installed and service restarted.'"
+         exec bash scripts/self-update.sh"
     )
 }
 
@@ -111,8 +98,7 @@ mod tests {
     #[test]
     fn update_command_resets_dirty_tree() {
         let cmd = build_update_command("/etc/nixos", "praxisbot");
-        assert!(cmd.contains("git checkout -- Cargo.lock"), "must reset Cargo.lock");
-        assert!(cmd.contains("git clean -fd"), "must clean untracked files");
+        assert!(cmd.contains("git checkout -- ."), "must reset dirty tree");
     }
 
     #[test]
@@ -124,22 +110,23 @@ mod tests {
     }
 
     #[test]
-    fn update_command_verifies_workspace() {
+    fn update_command_delegates_to_external_script() {
         let cmd = build_update_command("/etc/nixos", "praxisbot");
-        assert!(cmd.contains("cargo metadata"), "must verify workspace before build");
+        assert!(cmd.contains("exec bash scripts/self-update.sh"), "must invoke external script");
+        // The embedded command must be minimal — no cargo build, no package names.
+        // All that logic lives in the script which gets pulled fresh.
+        assert!(!cmd.contains("cargo build"), "must not embed build command");
+        assert!(!cmd.contains("pares-agens-cli"), "must not embed wrong package name");
     }
 
     #[test]
-    fn update_command_uses_correct_package_name() {
+    fn update_command_is_bootstrap_safe() {
+        // The key property: the embedded command only does fetch+reset+exec.
+        // Even if the script itself is broken, pulling replaces it before exec runs.
         let cmd = build_update_command("/etc/nixos", "praxisbot");
-        assert!(cmd.contains("cargo build --release -p pares-agens"), "must use correct name");
-        assert!(!cmd.contains("pares-agens-cli"), "must not use wrong name");
-    }
-
-    #[test]
-    fn update_command_restarts_service() {
-        let cmd = build_update_command("/etc/nixos", "praxisbot");
-        assert!(cmd.contains("systemctl restart pares-agens"));
+        let steps: Vec<&str> = cmd.split(';').map(|s| s.trim()).collect();
+        // Should be: set -eu, cd, git checkout, git fetch && reset, exec bash
+        assert!(steps.len() <= 6, "embedded command must be minimal (got {} steps)", steps.len());
     }
 
     #[test]
