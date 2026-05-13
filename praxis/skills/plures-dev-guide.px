@@ -1,0 +1,659 @@
+# plures-dev-guide.px — Auto-generated from plures/development-guide
+#
+# This file is produced by scripts/generate-px-constraints.mjs
+# Do not edit manually — edit the source .md files and re-run the generator.
+#
+# Load this into pares-agens/radix to make the agent an expert at
+# plures org development practices, standards, and lessons learned.
+#
+# For a different org: replace the .md source files and re-generate.
+
+# ══════════════════════════════════════════════════════════════════════
+# PRACTICES (from practices/)
+# ══════════════════════════════════════════════════════════════════════
+
+constraint practice.hyperswarm-patterns:
+  severity: warning
+  source: "practices/HYPERSWARM-PATTERNS.md"
+  message: "Follow guidance from: Hyperswarm Integration Patterns"
+
+constraint practice.merge-conflict-prevention:
+  severity: warning
+  source: "practices/MERGE-CONFLICT-PREVENTION.md"
+  message: "Follow guidance from: Merge Conflict Prevention & Resolution Guide"
+
+constraint practice.automation-first-1:
+  severity: warning
+  source: "practices/automation-first.md"
+  message: "Fresh environment → one command → success. No manual steps, no \"now open this file and change line 42.\""
+
+constraint practice.automation-first-2:
+  severity: error
+  source: "practices/automation-first.md"
+  message: "Automation must not amplify problems. A workflow that creates issues faster than humans can triage them is harmful. Build cascade detection and escalation thresholds into every loop. See [lessons learned: praxis-business cascade](../lessons-learned/2026-03-praxis-business-cascade.md)."
+
+constraint practice.automation-first-3:
+  severity: warning
+  source: "practices/automation-first.md"
+  message: "Idempotent by default. Every automation is safe to run twice. Check state before acting."
+
+constraint practice.automation-first-4:
+  severity: warning
+  source: "practices/automation-first.md"
+  message: "Fail loudly with actionable messages. Silent failures are worse than crashes."
+
+constraint practice.automation-first-5:
+  severity: warning
+  source: "practices/automation-first.md"
+  message: "Edge cases are expected cases. Network timeouts, rate limits, missing permissions — handle them explicitly."
+
+constraint practice.automation-first-6:
+  severity: warning
+  source: "practices/automation-first.md"
+  message: "Event-driven beats polling beats cron (in that order). Cron is a last resort, not a default."
+
+constraint practice.copilot-delegation-1:
+  severity: warning
+  source: "practices/copilot-delegation.md"
+  message: "Issues are goals, not tickets. One issue may decompose into multiple work units (PRs, config changes, procedure updates). There is no required 1:1 issue-to-PR mapping."
+
+constraint practice.copilot-delegation-2:
+  severity: warning
+  source: "practices/copilot-delegation.md"
+  message: "Pipeline state lives in PluresDB. Every transition is recorded in `work_units`, `goals`, and `activity_log` — not in ad-hoc comments or spreadsheets."
+
+constraint practice.copilot-delegation-3:
+  severity: warning
+  source: "practices/copilot-delegation.md"
+  message: "The coordinator communicates via structured PR comments. Copilot receives fix requests and revision requests through the PR comment thread, with relevant PluresLM context prepended."
+
+constraint practice.copilot-delegation-4:
+  severity: warning
+  source: "practices/copilot-delegation.md"
+  message: "Retry thresholds gate escalation. CI fix attempts ≤ 3, review revision attempts ≤ 2. Exceeding these surfaces a human escalation — the coordinator does not loop indefinitely."
+
+constraint practice.copilot-delegation-5:
+  severity: warning
+  source: "practices/copilot-delegation.md"
+  message: "Queue priority is explicit. Goals are prioritized by integer `priority` field (1 = highest). Strategy changes re-score the entire queue."
+
+constraint practice.dogfooding:
+  severity: warning
+  source: "practices/dogfooding.md"
+  message: "Follow guidance from: Dogfooding"
+
+constraint practice.ledger-driven-ops:
+  severity: warning
+  source: "practices/ledger-driven-ops.md"
+  message: "Follow guidance from: Ledger-Driven Ops"
+
+constraint practice.local-first-development:
+  severity: warning
+  source: "practices/local-first-development.md"
+  message: "Follow guidance from: Local-First Development"
+
+constraint practice.merge-sweeps:
+  severity: warning
+  source: "practices/merge-sweeps.md"
+  message: "Follow guidance from: Merge Sweeps"
+
+constraint practice.org-anomaly-detection-1:
+  severity: warning
+  source: "practices/org-anomaly-detection.md"
+  message: "Rate of change beats absolute thresholds. A sudden spike from 0.02 to 0.18 CI failure rate is more significant than a stable 0.20. Detect velocity changes, not just threshold crossings."
+
+constraint practice.org-anomaly-detection-2:
+  severity: warning
+  source: "practices/org-anomaly-detection.md"
+  message: "Correlate before alerting. A single anomaly may be noise. The same metric degrading across three or more repositories in 30 minutes is an org-wide signal."
+
+constraint practice.org-anomaly-detection-3:
+  severity: warning
+  source: "practices/org-anomaly-detection.md"
+  message: "Causal hypotheses, not just alerts. Every anomaly notification includes the most probable cause (shared dependency change, recent PR merge, known failure pattern) — not just the metric value."
+
+constraint practice.org-anomaly-detection-4:
+  severity: warning
+  source: "practices/org-anomaly-detection.md"
+  message: "Auto-remediate only low-risk actions. The monitor can open coordinator tasks and trigger known-safe fixes. High-impact actions always require human approval via Praxis gate."
+
+constraint practice.org-anomaly-detection-5:
+  severity: warning
+  source: "practices/org-anomaly-detection.md"
+  message: "False positives are learning data. When a human marks a detection as a false positive, the pattern library updates its sensitivity for that signature."
+
+constraint practice.org-anomaly-detection-6:
+  severity: warning
+  source: "practices/org-anomaly-detection.md"
+  message: "All detections are logged. Nothing happens silently. Every anomaly is written to `health_anomalies` with status, causal hypothesis, and resolution."
+
+constraint practice.praxis-logic-1:
+  severity: warning
+  source: "practices/praxis-logic.md"
+  message: "Facts, events, and rules over finite state machines. FSMs become unwieldy when state transitions depend on multiple conditions, business rules change independently of state flow, or you need to explain \"why did this happen?\""
+
+constraint practice.praxis-logic-2:
+  severity: error
+  source: "practices/praxis-logic.md"
+  message: "Every conclusion must be traceable. No rule fires in isolation. Each decision links back to the facts and events that triggered it."
+
+constraint practice.praxis-logic-3:
+  severity: warning
+  source: "practices/praxis-logic.md"
+  message: "Rules are pure. A rule's `impl` receives state and events and returns a result. No I/O, no side effects, no mutations."
+
+constraint practice.praxis-logic-4:
+  severity: warning
+  source: "practices/praxis-logic.md"
+  message: "Hypotheses are first-class. When evidence is incomplete, the system proposes hypotheses (`praxis_kind: \"hypothesis\"`) and records confidence. Hypotheses decay if not confirmed."
+
+constraint practice.praxis-logic-5:
+  severity: warning
+  source: "practices/praxis-logic.md"
+  message: "The loop improves with use. Each accepted or rejected guidance becomes a feedback signal. Over time, conflict rates fall and objective alignment scores rise."
+
+constraint practice.reactive-architecture-1:
+  severity: warning
+  source: "practices/reactive-architecture.md"
+  message: "Procedures over code. Agent behavior is defined as PluresDB procedures, not imperative TypeScript or Rust functions. You extend behavior by adding or updating a procedure — not by forking a repo."
+
+constraint practice.reactive-architecture-2:
+  severity: warning
+  source: "practices/reactive-architecture.md"
+  message: "Events over state polling. React to events when they happen. Do not check \"what is the current state?\" on a schedule."
+
+constraint practice.reactive-architecture-3:
+  severity: warning
+  source: "practices/reactive-architecture.md"
+  message: "State is always consistent. Because procedures are triggered by the very event that changes state, there is no window where state is stale."
+
+constraint practice.reactive-architecture-4:
+  severity: warning
+  source: "practices/reactive-architecture.md"
+  message: "Cron for sweeps only. Cron (timer-based execution) is acceptable for periodic health checks and aggregation sweeps. It is not acceptable as the primary trigger for lifecycle transitions."
+
+constraint practice.reactive-architecture-5:
+  severity: warning
+  source: "practices/reactive-architecture.md"
+  message: "Everything is auditable. Every event that triggers a procedure is recorded. Every procedure output is recorded in `activity_log` and `pipeline_events`. Nothing happens silently."
+
+constraint practice.reactive-architecture-6:
+  severity: warning
+  source: "practices/reactive-architecture.md"
+  message: "Pipelines are graphs, not linear YAML. Flows trigger on conditions over state and events, including joins. A pipeline step can wait for multiple upstream conditions simultaneously."
+
+constraint practice.repo-routing-validation:
+  severity: warning
+  source: "practices/repo-routing-validation.md"
+  message: "Follow guidance from: Repository Routing Validation"
+
+constraint practice.stale-pr-process:
+  severity: warning
+  source: "practices/stale-pr-process.md"
+  message: "Follow guidance from: Stale PR Process"
+
+constraint practice.systemic-triage-protocol:
+  severity: warning
+  source: "practices/systemic-triage-protocol.md"
+  message: "Follow guidance from: Systemic Triage Protocol"
+
+# ══════════════════════════════════════════════════════════════════════
+# LESSONS (from lessons-learned/)
+# ══════════════════════════════════════════════════════════════════════
+
+constraint lesson.2026-02-copilot-sub-prs:
+  severity: error
+  source: "lessons-learned/2026-02-copilot-sub-prs.md"
+  message: "Follow guidance from: Copilot Creating Chains of Failing Sub-PRs"
+
+constraint lesson.2026-02-gun-removal:
+  severity: error
+  source: "lessons-learned/2026-02-gun-removal.md"
+  message: "Follow guidance from: Removing GUN in Favor of PluresDB"
+
+constraint lesson.2026-02-plugin-slot-conflict:
+  severity: error
+  source: "lessons-learned/2026-02-plugin-slot-conflict.md"
+  message: "Follow guidance from: OpenClaw Plugin kind="memory" Conflicts with Built-in Slot"
+
+constraint lesson.2026-02-pluresdb-embedded:
+  severity: error
+  source: "lessons-learned/2026-02-pluresdb-embedded.md"
+  message: "Follow guidance from: PluresDB npm Package Requires Server for Embedded Use"
+
+constraint lesson.2026-03-copilot-tainted-issues-1:
+  severity: error
+  source: "lessons-learned/2026-03-copilot-tainted-issues.md"
+  message: "Check the issue for any Copilot error comments (environment/firewall errors appear as callout blocks in the issue body or as comments from the Copilot bot)."
+
+constraint lesson.2026-03-copilot-tainted-issues-2:
+  severity: error
+  source: "lessons-learned/2026-03-copilot-tainted-issues.md"
+  message: "Resolve the underlying environment issue (e.g., add the blocked URL to the Copilot agent allowlist in repo Copilot coding agent settings)."
+
+constraint lesson.2026-03-copilot-tainted-issues-3:
+  severity: error
+  source: "lessons-learned/2026-03-copilot-tainted-issues.md"
+  message: "Close the tainted issue and open a new one with identical content."
+
+constraint lesson.2026-03-copilot-tainted-issues-4:
+  severity: error
+  source: "lessons-learned/2026-03-copilot-tainted-issues.md"
+  message: "A silent Copilot is not an idle Copilot. If the queue-advance workflow assigns an issue and no PR appears after 30+ minutes, the issue may be tainted — not just delayed."
+
+constraint lesson.2026-03-copilot-tainted-issues-5:
+  severity: error
+  source: "lessons-learned/2026-03-copilot-tainted-issues.md"
+  message: "Check for error callouts before re-pinging. Copilot embeds firewall/environment error details as warning callouts in the issue body. Read them before troubleshooting the queue logic."
+
+constraint lesson.2026-03-copilot-tainted-issues-6:
+  severity: error
+  source: "lessons-learned/2026-03-copilot-tainted-issues.md"
+  message: "Close and recreate, don't re-open or re-assign. Re-assigning a tainted issue to Copilot will not trigger a new attempt. The issue must be closed and a new issue created."
+
+constraint lesson.2026-03-copilot-tainted-issues-7:
+  severity: error
+  source: "lessons-learned/2026-03-copilot-tainted-issues.md"
+  message: "External URL access must be configured before deployment. Any issue that requires `npm install`, package downloads, or external API access needs those URLs in the Copilot agent allowlist (configured in repo Settings → Copilot → Coding agent → Allowed URLs)."
+
+constraint lesson.2026-03-copilot-tainted-issues-8:
+  severity: error
+  source: "lessons-learned/2026-03-copilot-tainted-issues.md"
+  message: "The 30-minute stall detection in `copilot-pr-lifecycle.yml` will re-ping tainted issues indefinitely. Add a max-ping counter or close-and-recreate step to the stall handler."
+
+constraint lesson.2026-03-copilot-tainted-issues-9:
+  severity: error
+  source: "lessons-learned/2026-03-copilot-tainted-issues.md"
+  message: "Added tainted-issue detection note to `practices/copilot-delegation.md`"
+
+constraint lesson.2026-03-copilot-tainted-issues-10:
+  severity: error
+  source: "lessons-learned/2026-03-copilot-tainted-issues.md"
+  message: "Added close-and-recreate procedure to issue management runbook"
+
+constraint lesson.2026-03-copilot-tainted-issues-11:
+  severity: error
+  source: "lessons-learned/2026-03-copilot-tainted-issues.md"
+  message: "Updated stall detection in `copilot-pr-lifecycle.yml` to cap re-pings at 4 before alerting for human review (`queue-check:N` label)"
+
+constraint lesson.2026-03-double-vlan-tagging-1:
+  severity: error
+  source: "lessons-learned/2026-03-double-vlan-tagging.md"
+  message: "Identified the NIC-level VLAN configuration on the Hyper-V host's physical NIC (visible in NIC adapter advanced properties and NIC teaming configuration)."
+
+constraint lesson.2026-03-double-vlan-tagging-2:
+  severity: error
+  source: "lessons-learned/2026-03-double-vlan-tagging.md"
+  message: "Removed the VLAN ID from the physical NIC / NIC team. The vSwitch external port was set to \"no VLAN\" (untagged / access mode at the host NIC level)."
+
+constraint lesson.2026-03-double-vlan-tagging-3:
+  severity: error
+  source: "lessons-learned/2026-03-double-vlan-tagging.md"
+  message: "VLAN tagging is now exclusively managed by the Azure Local logical network configuration — a single layer of tagging applied by the SDN stack."
+
+constraint lesson.2026-03-double-vlan-tagging-4:
+  severity: error
+  source: "lessons-learned/2026-03-double-vlan-tagging.md"
+  message: "Connectivity restored immediately after the NIC VLAN setting was cleared."
+
+constraint lesson.2026-03-double-vlan-tagging-5:
+  severity: error
+  source: "lessons-learned/2026-03-double-vlan-tagging.md"
+  message: "Only one layer owns VLAN tagging. When using SDN logical networks (Azure Local, Hyper-V SDN, NSX-T, etc.), disable VLAN configuration at the physical NIC and vSwitch port level. Let the SDN layer be the sole source of VLAN tags."
+
+constraint lesson.2026-03-double-vlan-tagging-6:
+  severity: error
+  source: "lessons-learned/2026-03-double-vlan-tagging.md"
+  message: "Double-tagging is silent. Frames leave the host looking healthy; the problem only manifests at the physical switch where double-tagged frames are dropped without error. Packet captures on the host show correctly tagged frames — captures on the physical switch are necessary to diagnose the issue."
+
+constraint lesson.2026-03-double-vlan-tagging-7:
+  severity: error
+  source: "lessons-learned/2026-03-double-vlan-tagging.md"
+  message: "Check NIC advanced properties, not just vSwitch settings. NIC driver-level VLAN settings (visible in Device Manager → NIC → Advanced properties) are independent of Hyper-V vSwitch configuration and easy to overlook."
+
+constraint lesson.2026-03-double-vlan-tagging-8:
+  severity: error
+  source: "lessons-learned/2026-03-double-vlan-tagging.md"
+  message: "Document the VLAN ownership model before deployment. Before deploying Azure Local, explicitly document: which layer applies VLAN tags (physical NIC, vSwitch, or SDN logical network), and verify that only one layer has a non-zero VLAN ID configured."
+
+constraint lesson.2026-03-double-vlan-tagging-9:
+  severity: error
+  source: "lessons-learned/2026-03-double-vlan-tagging.md"
+  message: "ARP visible but no reply is a hallmark of double-tagging. If you can see outbound ARP frames from a VM on the physical switch but receive no reply, double-tagging or VLAN mismatch is the first thing to check — not firewall rules or routing."
+
+constraint lesson.2026-03-double-vlan-tagging-10:
+  severity: error
+  source: "lessons-learned/2026-03-double-vlan-tagging.md"
+  message: "Updated Azure Local deployment runbook with VLAN ownership checklist"
+
+constraint lesson.2026-03-double-vlan-tagging-11:
+  severity: error
+  source: "lessons-learned/2026-03-double-vlan-tagging.md"
+  message: "Added \"NIC VLAN = 0 (untagged)\" as a required pre-deployment verification step for Hyper-V hosts joining an Azure Local cluster"
+
+constraint lesson.2026-03-double-vlan-tagging-12:
+  severity: error
+  source: "lessons-learned/2026-03-double-vlan-tagging.md"
+  message: "Added to infrastructure troubleshooting guide: double-tagging symptom pattern and diagnosis steps"
+
+constraint lesson.2026-03-praxis-business-cascade-1:
+  severity: error
+  source: "lessons-learned/2026-03-praxis-business-cascade.md"
+  message: "Automation must not create systemic failure issues without identifying the upstream cause. A symptom tracker that creates issues faster than humans can triage them is harmful."
+
+constraint lesson.2026-03-praxis-business-cascade-2:
+  severity: error
+  source: "lessons-learned/2026-03-praxis-business-cascade.md"
+  message: "Three or more related blocked issues is a cascade, not a backlog. The correct response is a single meta-issue for coordination, not more individual issues."
+
+constraint lesson.2026-03-praxis-business-cascade-3:
+  severity: error
+  source: "lessons-learned/2026-03-praxis-business-cascade.md"
+  message: "Large cascades (> 5 issues) require human eyes. Automation should gate itself and wait for human triage rather than continuing to add to the pile."
+
+constraint lesson.2026-03-praxis-business-cascade-4:
+  severity: error
+  source: "lessons-learned/2026-03-praxis-business-cascade.md"
+  message: "Search before creating. Any workflow that creates issues must first search for existing issues with the same fingerprint or cause."
+
+constraint lesson.2026-03-reactive-over-cron-1:
+  severity: error
+  source: "lessons-learned/2026-03-reactive-over-cron.md"
+  message: "Removed 21 cron-based workflow schedules, replacing them with event-driven triggers (`pull_request`, `check_suite`, `issues`, `repository_dispatch`)."
+
+constraint lesson.2026-03-reactive-over-cron-2:
+  severity: error
+  source: "lessons-learned/2026-03-reactive-over-cron.md"
+  message: "Retained one cron sweep in `copilot-pr-lifecycle.yml` as an explicit stall-detection safety net, documented as intentional."
+
+constraint lesson.2026-03-reactive-over-cron-3:
+  severity: error
+  source: "lessons-learned/2026-03-reactive-over-cron.md"
+  message: "Added workflow trigger inventory to the org anomaly detection sweep (`practices/org-anomaly-detection.md`)."
+
+constraint lesson.2026-03-reactive-over-cron-4:
+  severity: error
+  source: "lessons-learned/2026-03-reactive-over-cron.md"
+  message: "Added workflow failure alerting: failed cron runs now create a GitHub issue with the `automation-failure` label."
+
+constraint lesson.2026-03-reactive-over-cron-5:
+  severity: error
+  source: "lessons-learned/2026-03-reactive-over-cron.md"
+  message: "Cron fails silently. A failed cron workflow does not retry, does not alert by default, and leaves no trace in the normal developer workflow. Use it only when you can tolerate missed runs."
+
+constraint lesson.2026-03-reactive-over-cron-6:
+  severity: error
+  source: "lessons-learned/2026-03-reactive-over-cron.md"
+  message: "Cron creates stale state. Any cron-driven action operates on state that may have changed since the last run. Event-driven actions operate on state at the moment the event occurs. Prefer event-driven for all lifecycle transitions."
+
+constraint lesson.2026-03-reactive-over-cron-7:
+  severity: error
+  source: "lessons-learned/2026-03-reactive-over-cron.md"
+  message: "Cron schedules accumulate. Without an audit process, every new automation adds a schedule and old ones are never removed. Maintain a workflow inventory and review cron usage quarterly."
+
+constraint lesson.2026-03-reactive-over-cron-8:
+  severity: error
+  source: "lessons-learned/2026-03-reactive-over-cron.md"
+  message: "One sweep cron is acceptable; many are a smell. If a repo has more than one cron-triggered workflow, it almost certainly has redundant automation. Consolidate to a single sweep with explicit documented purpose."
+
+constraint lesson.2026-03-reactive-over-cron-9:
+  severity: error
+  source: "lessons-learned/2026-03-reactive-over-cron.md"
+  message: "Org-wide trigger audits are necessary. Each repo's workflow triggers are invisible to other repos. Regular org-wide audits are the only way to catch trigger proliferation before it becomes a volume or correctness problem."
+
+constraint lesson.2026-03-reactive-over-cron-10:
+  severity: error
+  source: "lessons-learned/2026-03-reactive-over-cron.md"
+  message: "Removed 21 cron schedules org-wide; documented surviving sweep in `copilot-pr-lifecycle.yml`"
+
+constraint lesson.2026-03-reactive-over-cron-11:
+  severity: error
+  source: "lessons-learned/2026-03-reactive-over-cron.md"
+  message: "Added cron audit step to quarterly org health review"
+
+constraint lesson.2026-03-reactive-over-cron-12:
+  severity: error
+  source: "lessons-learned/2026-03-reactive-over-cron.md"
+  message: "Added `cron: acceptable` / `cron: legacy` annotation convention for surviving schedules"
+
+constraint lesson.2026-03-reactive-over-cron-13:
+  severity: error
+  source: "lessons-learned/2026-03-reactive-over-cron.md"
+  message: "Updated [Reactive Architecture](../practices/reactive-architecture.md) with explicit guidance on when cron is acceptable"
+
+constraint lesson.2026-03-rogue-automation-actor-1:
+  severity: error
+  source: "lessons-learned/2026-03-rogue-automation-actor.md"
+  message: "Disabled `check_suite` as a relay trigger; only user-initiated `pull_request` and `pull_request_review` events are forwarded."
+
+constraint lesson.2026-03-rogue-automation-actor-2:
+  severity: error
+  source: "lessons-learned/2026-03-rogue-automation-actor.md"
+  message: "Added `PLURES_PROJECTS` secret preflight check so the relay silently no-ops in repos where the secret is absent."
+
+constraint lesson.2026-03-rogue-automation-actor-3:
+  severity: error
+  source: "lessons-learned/2026-03-rogue-automation-actor.md"
+  message: "Documented the relay rollout process: pilot on one repo, observe volume for 48 hours, then expand."
+
+constraint lesson.2026-03-rogue-automation-actor-4:
+  severity: error
+  source: "lessons-learned/2026-03-rogue-automation-actor.md"
+  message: "Added Actions usage alerting to catch abnormal workflow run volume before it reaches critical levels."
+
+constraint lesson.2026-03-rogue-automation-actor-5:
+  severity: error
+  source: "lessons-learned/2026-03-rogue-automation-actor.md"
+  message: "Pilot before org-wide rollout. Any workflow that touches all repos must be tested on a single non-critical repo and monitored for 48 hours before expanding."
+
+constraint lesson.2026-03-rogue-automation-actor-6:
+  severity: error
+  source: "lessons-learned/2026-03-rogue-automation-actor.md"
+  message: "`check_suite` is not a free trigger. It fires on every CI job in every repo. Use it only when the downstream action is idempotent and lightweight, and never as a fan-out relay trigger."
+
+constraint lesson.2026-03-rogue-automation-actor-7:
+  severity: error
+  source: "lessons-learned/2026-03-rogue-automation-actor.md"
+  message: "Automation that generates automation must have a volume ceiling. Any workflow that dispatches downstream events needs a rate limit or circuit breaker. If you can't bound the maximum event rate analytically, add one empirically."
+
+constraint lesson.2026-03-rogue-automation-actor-8:
+  severity: error
+  source: "lessons-learned/2026-03-rogue-automation-actor.md"
+  message: "Monitor Actions minute consumption as an early warning signal. Unexpected spikes in workflow runs are the canary for runaway automation."
+
+constraint lesson.2026-03-rogue-automation-actor-9:
+  severity: error
+  source: "lessons-learned/2026-03-rogue-automation-actor.md"
+  message: "Updated `pr-lane-event-relay.yml` to remove `check_suite` trigger and add secret preflight guard"
+
+constraint lesson.2026-03-rogue-automation-actor-10:
+  severity: error
+  source: "lessons-learned/2026-03-rogue-automation-actor.md"
+  message: "Added org-wide Actions usage alert to anomaly detection sweep"
+
+constraint lesson.2026-03-rogue-automation-actor-11:
+  severity: error
+  source: "lessons-learned/2026-03-rogue-automation-actor.md"
+  message: "Documented relay rollout checklist in `practices/automation-first.md`"
+
+constraint lesson.2026-03-single-assignment-authority-1:
+  severity: error
+  source: "lessons-learned/2026-03-single-assignment-authority.md"
+  message: "`tech-doc-writer.yml` no longer assigns Copilot directly. It creates the documentation issue unassigned and adds the `documentation` label. The `queue-advance` job in `copilot-pr-lifecycle.yml` is the sole path by which Copilot is assigned (Priority 1: doc debt)."
+
+constraint lesson.2026-03-single-assignment-authority-2:
+  severity: error
+  source: "lessons-learned/2026-03-single-assignment-authority.md"
+  message: "Single assignment authority principle: only one workflow — `copilot-pr-lifecycle.yml` — may assign the Copilot SWE agent. All other workflows create issues (unassigned) and rely on queue-advance for assignment."
+
+constraint lesson.2026-03-single-assignment-authority-3:
+  severity: error
+  source: "lessons-learned/2026-03-single-assignment-authority.md"
+  message: "Added the `copilotBusy` guard to check both issue assignees *and* open PR authors before assigning."
+
+constraint lesson.2026-03-single-assignment-authority-4:
+  severity: error
+  source: "lessons-learned/2026-03-single-assignment-authority.md"
+  message: "One workflow owns assignment. Copilot SWE agent assignment must flow through a single queue manager. Any workflow that creates issues must leave them unassigned and let the queue manager handle assignment."
+
+constraint lesson.2026-03-single-assignment-authority-5:
+  severity: error
+  source: "lessons-learned/2026-03-single-assignment-authority.md"
+  message: "Read-check-write is never atomic. Any queue logic that reads state, checks a condition, and writes based on that check is vulnerable to race conditions when concurrent workflow runs share the same resource. Design around idempotency rather than assuming exclusivity."
+
+constraint lesson.2026-03-single-assignment-authority-6:
+  severity: error
+  source: "lessons-learned/2026-03-single-assignment-authority.md"
+  message: "Concurrent triggers compound the risk. Workflows that trigger on high-frequency events (`check_suite`, `schedule`) are likely to run concurrently. Treat them as concurrent by default."
+
+constraint lesson.2026-03-single-assignment-authority-7:
+  severity: error
+  source: "lessons-learned/2026-03-single-assignment-authority.md"
+  message: "Limbo assignments are silent failures. An issue that is assigned but never started does not produce an error — it simply stalls. Add assignment age monitoring to surface limbo states."
+
+constraint lesson.2026-03-single-assignment-authority-8:
+  severity: error
+  source: "lessons-learned/2026-03-single-assignment-authority.md"
+  message: "Removed Copilot assignment from `tech-doc-writer.yml`; it now creates issues unassigned"
+
+constraint lesson.2026-03-single-assignment-authority-9:
+  severity: error
+  source: "lessons-learned/2026-03-single-assignment-authority.md"
+  message: "Documented single assignment authority in `standards/pr-workflow.md`"
+
+constraint lesson.2026-03-single-assignment-authority-10:
+  severity: error
+  source: "lessons-learned/2026-03-single-assignment-authority.md"
+  message: "Added `copilotBusy` guard (checks both assigned issues and open Copilot PRs) to `copilot-pr-lifecycle.yml`"
+
+# ══════════════════════════════════════════════════════════════════════
+# STANDARDS (from standards/)
+# ══════════════════════════════════════════════════════════════════════
+
+constraint standard.adr:
+  severity: warning
+  source: "standards/adr.md"
+  message: "Follow guidance from: Architecture Decision Records (ADR)"
+
+constraint standard.api-design:
+  severity: warning
+  source: "standards/api-design.md"
+  message: "Follow guidance from: API Design Guidelines"
+
+constraint standard.ci-cd:
+  severity: warning
+  source: "standards/ci-cd.md"
+  message: "Follow guidance from: CI/CD Standards"
+
+constraint standard.code-style:
+  severity: warning
+  source: "standards/code-style.md"
+  message: "Follow guidance from: Code Style"
+
+constraint standard.commit-conventions:
+  severity: warning
+  source: "standards/commit-conventions.md"
+  message: "Follow guidance from: Commit Conventions"
+
+constraint standard.issue-management:
+  severity: warning
+  source: "standards/issue-management.md"
+  message: "Follow guidance from: Issue Management"
+
+constraint standard.monorepo:
+  severity: warning
+  source: "standards/monorepo.md"
+  message: "Follow guidance from: Monorepo Patterns"
+
+constraint standard.performance:
+  severity: warning
+  source: "standards/performance.md"
+  message: "Follow guidance from: Performance Benchmarking Standards"
+
+constraint standard.pr-workflow:
+  severity: warning
+  source: "standards/pr-workflow.md"
+  message: "Follow guidance from: PR Workflow"
+
+constraint standard.praxis-gates:
+  severity: warning
+  source: "standards/praxis-gates.md"
+  message: "Follow guidance from: Praxis Gates Standards"
+
+constraint standard.praxis-modules:
+  severity: warning
+  source: "standards/praxis-modules.md"
+  message: "Follow guidance from: Praxis Modules Standards"
+
+constraint standard.praxis-rules:
+  severity: warning
+  source: "standards/praxis-rules.md"
+  message: "Follow guidance from: Praxis Rules Standards"
+
+constraint standard.repo-setup:
+  severity: warning
+  source: "standards/repo-setup.md"
+  message: "Follow guidance from: Repo Setup Standards"
+
+constraint standard.security:
+  severity: warning
+  source: "standards/security.md"
+  message: "Follow guidance from: Security Standards"
+
+# ══════════════════════════════════════════════════════════════════════
+# ADRS (from docs/adr/)
+# ══════════════════════════════════════════════════════════════════════
+
+constraint adr.0009-readme-quality-standard:
+  severity: warning
+  source: "docs/adr/0009-readme-quality-standard.md"
+  message: "Follow guidance from: 0009. README Quality Standard"
+
+constraint adr.0010-test-exists-standard:
+  severity: warning
+  source: "docs/adr/0010-test-exists-standard.md"
+  message: "Follow guidance from: 0010. Test Exists Standard"
+
+constraint adr.0011-test-coverage-standard:
+  severity: warning
+  source: "docs/adr/0011-test-coverage-standard.md"
+  message: "Follow guidance from: 0011. Test Coverage Standard"
+
+constraint adr.0012-api-documented-standard:
+  severity: warning
+  source: "docs/adr/0012-api-documented-standard.md"
+  message: "Follow guidance from: 0012. API Documentation Standard"
+
+constraint adr.0013-no-known-vulns-standard:
+  severity: warning
+  source: "docs/adr/0013-no-known-vulns-standard.md"
+  message: "Follow guidance from: 0013. No-Known-Vulns Standard"
+
+constraint adr.0014-readme-quality-v2-standard:
+  severity: warning
+  source: "docs/adr/0014-readme-quality-v2-standard.md"
+  message: "Follow guidance from: 0014. README Quality Standard — CI Badge"
+
+constraint adr.0015-version-published-standard:
+  severity: warning
+  source: "docs/adr/0015-version-published-standard.md"
+  message: "Follow guidance from: 0015. Version-Published Standard"
+
+constraint adr.0016-lint-clean-standard:
+  severity: warning
+  source: "docs/adr/0016-lint-clean-standard.md"
+  message: "Follow guidance from: 0016. Lint-Clean Standard"
+
+constraint adr.0017-readme-quality-v3-standard:
+  severity: warning
+  source: "docs/adr/0017-readme-quality-v3-standard.md"
+  message: "Follow guidance from: 0017. README Quality Standard — Dev Tooling and CI Tests"
+
+constraint adr.0018-type-safety-standard:
+  severity: warning
+  source: "docs/adr/0018-type-safety-standard.md"
+  message: "Follow guidance from: 0018. Type-Safety Standard"
+
+# ═══════════════════════════════════════════════════════════════════════
+# Total: 126 constraints generated from practices, lessons-learned, standards, docs/adr
+# ═══════════════════════════════════════════════════════════════════════
