@@ -98,3 +98,17 @@ constraint milestone_has_due_date:
   require: milestone.has_due_date == true
   severity: info
   message: "Milestones should have due dates for tracking"
+
+# === Code Quality (ADR-0010) ===
+
+constraint no_duplicated_operational_logic:
+  when: event.type == "pr_audit" or event.type == "commit_audit"
+  require: duplication.cross_crate_function_copies == 0
+  severity: error
+  message: "Operational logic must not be duplicated across crates (ADR-0010). Extract to a shared module."
+
+constraint shared_logic_has_single_owner:
+  when: event.type == "pr_audit"
+  require: NOT (pr.adds_function_in_multiple_crates == true and pr.function_names_overlap == true)
+  severity: error
+  message: "Functions added to multiple crates with the same name violate ADR-0010. One crate owns the logic, others delegate."
