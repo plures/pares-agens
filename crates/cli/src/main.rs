@@ -1866,6 +1866,10 @@ const MEMORY_MONITOR_INTERVAL_SECS: u64 = 60;
 const DEFAULT_NIX_FLAKE_DIR: &str = ".";
 const DEFAULT_NIX_HOST: &str = "praxisbot";
 const DEFAULT_SELF_UPDATE_INTERVAL_SECS: u64 = 3600;
+/// Directory containing the pares-agens source for rebuilding the binary.
+const DEFAULT_PARES_AGENS_DIR: &str = "pares-agens";
+/// Subdirectory under $HOME for project sources.
+const PROJECTS_SUBDIR: &str = "projects";
 const MANUS_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MANUS_RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -1929,11 +1933,32 @@ fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-fn build_nixos_update_command(flake_dir: &str, host: &str) -> String {
-    let flake_dir = shell_single_quote(flake_dir);
-    let host = shell_single_quote(host);
+fn build_nixos_update_command(_flake_dir: &str, _host: &str) -> String {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/kbristol".into());
+    let agens_dir = std::env::var("PARES_AGENS_DIR")
+        .unwrap_or_else(|_| format!("{home}/{PROJECTS_SUBDIR}/{DEFAULT_PARES_AGENS_DIR}"));
+    let agens_dir = shell_single_quote(&agens_dir);
+    let bin_dir = format!("{home}/.local/bin");
+    // Resilient self-update: clean dirty tree, hard-reset to origin/main,
+    // verify workspace, build with correct package name, install, restart.
     format!(
-        "set -eu; cd {flake_dir}; lock_before=$(sha256sum flake.lock 2>/dev/null | cut -d' ' -f1 || true); sudo nix flake update pares-agens; lock_after=$(sha256sum flake.lock 2>/dev/null | cut -d' ' -f1 || true); if [ \"$lock_before\" != \"$lock_after\" ]; then sudo nixos-rebuild switch --flake .#{host}; echo \"Self-update applied\"; else echo \"No new pares-agens commits on main\"; fi"
+        "set -eu; \
+         echo 'Step 1: Preparing source tree...'; \
+         cd {agens_dir}; \
+         git checkout -- Cargo.lock 2>/dev/null || true; \
+         git clean -fd 2>/dev/null || true; \
+         echo 'Step 2: Pulling latest pares-agens source...'; \
+         git fetch origin main && git reset --hard origin/main; \
+         echo 'Step 3: Verifying workspace...'; \
+         cargo metadata --no-deps --format-version 1 2>/dev/null | grep -q '\"pares-agens\"' || {{ echo 'ERROR: pares-agens package not found in workspace'; exit 1; }}; \
+         echo 'Step 4: Building pares-agens binary...'; \
+         cargo build --release -p pares-agens 2>&1; \
+         echo 'Step 5: Installing binary...'; \
+         mkdir -p {bin_dir}; \
+         cp target/release/pares-agens {bin_dir}/pares-agens; \
+         echo 'Step 6: Restarting service...'; \
+         sudo systemctl restart pares-agens; \
+         echo 'Self-update complete. New binary installed and service restarted.'"
     )
 }
 
@@ -3343,9 +3368,13 @@ mod tests {
     #[test]
     fn build_nixos_update_command_includes_required_commands() {
         let command = build_nixos_update_command("/etc/nixos", "praxisbot");
-        assert!(command.contains("sudo nix flake update pares-agens"));
-        assert!(command.contains("sudo nixos-rebuild switch --flake .#'praxisbot'"));
-        assert!(command.contains("No new pares-agens commits on main"));
+        assert!(command.contains("git checkout -- Cargo.lock"), "must reset dirty files");
+        assert!(command.contains("git fetch origin main"), "must fetch latest");
+        assert!(command.contains("git reset --hard origin/main"), "must hard-reset to origin");
+        assert!(command.contains("cargo metadata"), "must verify workspace");
+        assert!(command.contains("cargo build --release -p pares-agens"), "must build correct package");
+        assert!(command.contains("systemctl restart pares-agens"), "must restart service");
+        assert!(!command.contains("pares-agens-cli"), "must not use wrong package name");
     }
 
     #[test]

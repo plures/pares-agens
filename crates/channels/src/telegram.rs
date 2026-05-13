@@ -261,16 +261,31 @@ fn build_nixos_update_command(_flake_dir: &str, _host: &str) -> String {
         .unwrap_or_else(|_| format!("{home}/{PROJECTS_SUBDIR}/{DEFAULT_PARES_AGENS_DIR}"));
     let agens_dir = shell_single_quote(&agens_dir);
     let bin_dir = format!("{home}/.local/bin");
+    // The update command must be resilient to real-world conditions:
+    // - Dirty working tree (Cargo.lock changes from previous builds)
+    // - Failed partial pulls
+    // - Network transients
+    // - Wrong package name resolution
+    //
+    // We reset tracked files before pulling (Cargo.lock is the usual culprit),
+    // verify the package exists in the workspace before building, and use the
+    // correct crate name (pares-agens, not pares-agens-cli).
     format!(
         "set -eu; \
-         echo 'Step 1: Pulling latest pares-agens source...'; \
-         cd {agens_dir} && git pull --ff-only; \
-         echo 'Step 2: Building pares-agens binary...'; \
-         nix develop --option substituters 'https://cache.nixos.org' -c cargo build --release -p pares-agens-cli; \
-         echo 'Step 3: Installing binary...'; \
+         echo 'Step 1: Preparing source tree...'; \
+         cd {agens_dir}; \
+         git checkout -- Cargo.lock 2>/dev/null || true; \
+         git clean -fd 2>/dev/null || true; \
+         echo 'Step 2: Pulling latest pares-agens source...'; \
+         git fetch origin main && git reset --hard origin/main; \
+         echo 'Step 3: Verifying workspace...'; \
+         cargo metadata --no-deps --format-version 1 2>/dev/null | grep -q '\"pares-agens\"' || {{ echo 'ERROR: pares-agens package not found in workspace'; exit 1; }}; \
+         echo 'Step 4: Building pares-agens binary...'; \
+         cargo build --release -p pares-agens 2>&1; \
+         echo 'Step 5: Installing binary...'; \
          mkdir -p {bin_dir}; \
          cp target/release/pares-agens {bin_dir}/pares-agens; \
-         echo 'Step 4: Restarting service...'; \
+         echo 'Step 6: Restarting service...'; \
          sudo systemctl restart pares-agens; \
          echo 'Self-update complete. New binary installed and service restarted.'"
     )
@@ -2340,9 +2355,13 @@ mod tests {
     #[test]
     fn build_nixos_update_command_contains_required_steps() {
         let command = build_nixos_update_command("/etc/nixos", "praxisbot");
-        assert!(command.contains("sudo nix flake update pares-agens"));
-        assert!(command.contains("sudo nixos-rebuild switch --flake .#'praxisbot'"));
-        assert!(command.contains("No new pares-agens commits on main"));
+        assert!(command.contains("git checkout -- Cargo.lock"), "must reset dirty files");
+        assert!(command.contains("git fetch origin main"), "must fetch latest");
+        assert!(command.contains("git reset --hard origin/main"), "must hard-reset to origin");
+        assert!(command.contains("cargo metadata"), "must verify workspace");
+        assert!(command.contains("cargo build --release -p pares-agens"), "must build correct package");
+        assert!(command.contains("systemctl restart pares-agens"), "must restart service");
+        assert!(!command.contains("pares-agens-cli"), "must not use wrong package name");
     }
 
     #[test]
