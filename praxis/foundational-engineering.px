@@ -1,0 +1,146 @@
+# foundational-engineering.px — Foundational Software Engineering Principles
+#
+# These are not opinions or preferences. They are tested, universal principles
+# of functional software development, codified as enforceable constraints.
+#
+# When the LLM (or a human) identifies a violation of one of these principles
+# during review, the response is:
+#   1. Fix the immediate violation
+#   2. Create a targeted ADR documenting the specific case
+#   3. Add a .px constraint or CI check that enforces it procedurally
+#
+# Each constraint here maps to a foundational tenet. Targeted ADRs reference
+# these foundations and add specificity for particular codebases.
+#
+# This file is shared across pares-agens and pares-radix.
+
+# ═══════════════════════════════════════════════════════════════════════
+# SINGLE SOURCE OF TRUTH
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint single_source_of_truth:
+  when: event.type == "pr_audit" or event.type == "commit_audit"
+  require: NOT (change.duplicates_logic_across_modules == true)
+  severity: error
+  message: "Every piece of knowledge must have a single, unambiguous, authoritative representation. If you're fixing the same bug in two places, extract first, then fix once."
+  references: ["ADR-0010"]
+
+constraint consumers_delegate_not_duplicate:
+  when: event.type == "pr_audit"
+  require: NOT (change.reimplements_existing_function == true)
+  severity: error
+  message: "Consumers of shared logic must delegate to the canonical implementation. A wrapper may adapt the interface but must not re-implement behavior."
+  references: ["ADR-0010"]
+
+# ═══════════════════════════════════════════════════════════════════════
+# SEPARATION OF CONCERNS
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint clear_module_boundaries:
+  when: event.type == "pr_audit"
+  require: NOT (change.mixes_infrastructure_and_business_logic == true)
+  severity: warning
+  message: "Infrastructure concerns (I/O, networking, persistence) must be separated from business logic. If a function does both, split it."
+
+constraint interface_over_implementation:
+  when: event.type == "pr_audit"
+  require: NOT (change.depends_on_concrete_type_where_trait_exists == true)
+  severity: warning
+  message: "Depend on traits/interfaces, not concrete implementations. This enables testing, substitution, and evolution without cascading changes."
+
+# ═══════════════════════════════════════════════════════════════════════
+# SMALL, PURE, COMPOSABLE FUNCTIONS
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint favor_pure_functions:
+  when: event.type == "pr_audit"
+  require: NOT (change.adds_side_effects_to_pure_function == true)
+  severity: warning
+  message: "Favor pure functions (output depends only on input, no side effects). Side effects should be pushed to the edges, not mixed into core logic."
+
+constraint function_does_one_thing:
+  when: event.type == "pr_audit"
+  require: NOT (change.function_has_multiple_responsibilities == true)
+  severity: warning
+  message: "Each function should do one thing. If a function name requires 'and' to describe, it should be two functions."
+
+# ═══════════════════════════════════════════════════════════════════════
+# MAKE INVALID STATES UNREPRESENTABLE
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint use_types_for_correctness:
+  when: event.type == "pr_audit"
+  require: NOT (change.uses_string_where_enum_exists == true)
+  severity: warning
+  message: "Use the type system to make invalid states unrepresentable. Prefer enums over strings, newtypes over raw primitives, and Option/Result over sentinel values."
+
+constraint errors_are_values:
+  when: event.type == "pr_audit"
+  require: NOT (change.uses_panic_for_recoverable_error == true)
+  severity: error
+  message: "Recoverable errors must be values (Result/Option), not panics. Panics are for invariant violations, not expected failure modes."
+
+# ═══════════════════════════════════════════════════════════════════════
+# DON'T EMBED WHAT CHANGES
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint externalize_volatile_logic:
+  when: event.type == "pr_audit"
+  require: NOT (change.embeds_volatile_logic_in_binary == true)
+  severity: error
+  message: "Logic that changes independently of the binary (scripts, config, update procedures) must not be compiled in. Use external files, config, or delegate to scripts on disk."
+  references: ["self-update bootstrap problem"]
+
+constraint configuration_over_hardcoding:
+  when: event.type == "pr_audit"
+  require: NOT (change.hardcodes_environment_specific_value == true)
+  severity: warning
+  message: "Environment-specific values (paths, URLs, hostnames, credentials) belong in configuration, not code. Use env vars, config files, or NixOS module options."
+
+# ═══════════════════════════════════════════════════════════════════════
+# LEVERAGE THE PLATFORM
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint use_platform_capabilities:
+  when: event.type == "pr_audit"
+  require: NOT (change.reimplements_platform_feature == true)
+  severity: warning
+  message: "Don't reimplement what the platform provides. NixOS handles builds, service lifecycle, and config management. Cargo handles dependency resolution. systemd handles restarts. Use them."
+
+constraint declarative_over_imperative:
+  when: event.type == "pr_audit"
+  require: NOT (change.uses_imperative_where_declarative_exists == true)
+  severity: warning
+  message: "Prefer declarative definitions (Nix expressions, Cargo.toml, .px constraints) over imperative scripts when the platform supports it."
+
+# ═══════════════════════════════════════════════════════════════════════
+# FAIL FAST, FAIL CLEAR
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint fail_with_context:
+  when: event.type == "pr_audit"
+  require: NOT (change.error_message_lacks_actionable_context == true)
+  severity: warning
+  message: "Error messages must tell the user what went wrong, why, and what to do about it. 'Error: exit code 101' is not an error message."
+
+constraint validate_inputs_at_boundaries:
+  when: event.type == "pr_audit"
+  require: NOT (change.validates_deep_instead_of_at_boundary == true)
+  severity: warning
+  message: "Validate inputs at system boundaries (CLI args, API requests, config loading), not deep in business logic. Once data crosses the boundary, it should be trusted."
+
+# ═══════════════════════════════════════════════════════════════════════
+# CORTEX-TO-CEREBELLUM LEARNING LOOP
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint new_violation_class_requires_adr:
+  when: event.type == "bug_fix"
+  require: NOT (fix.addresses_new_violation_class == true and fix.has_corresponding_adr == false)
+  severity: error
+  message: "When a bug fix reveals a new class of violation (not covered by existing ADRs), create an ADR and a corresponding .px constraint or CI check before closing the fix. The LLM's recognition is expensive — commit it to a cheap procedural mechanism."
+
+constraint adr_requires_enforcement:
+  when: event.type == "adr_created"
+  require: adr.has_corresponding_constraint == true or adr.has_corresponding_ci_check == true
+  severity: error
+  message: "Every ADR must have a corresponding enforcement mechanism (.px constraint, CI check, or linter rule). An ADR without enforcement is a suggestion, not a decision."
