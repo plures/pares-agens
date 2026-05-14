@@ -43,17 +43,22 @@ pub fn resolve_agens_dir() -> String {
 pub fn build_update_command(flake_dir: &str, host: &str) -> String {
     let flake_dir = shell_single_quote(flake_dir);
     let host = shell_single_quote(host);
+    // The flake input name varies by nixos-config (pares-radix, pares-agens, etc.).
+    // Discover it dynamically from flake.nix rather than hardcoding.
     format!(
         "set -eu; \
          cd {flake_dir}; \
+         FLAKE_INPUT=$(grep -oP 'pares-(?:radix|agens)(?=\\.url)' flake.nix | head -1); \
+         if [ -z \"$FLAKE_INPUT\" ]; then echo 'ERROR: No pares-radix or pares-agens input found in flake.nix'; exit 1; fi; \
+         echo \"Updating flake input: $FLAKE_INPUT\"; \
          lock_before=$(sha256sum flake.lock 2>/dev/null | cut -d' ' -f1 || true); \
-         sudo nix flake update pares-agens; \
+         sudo nix flake update \"$FLAKE_INPUT\"; \
          lock_after=$(sha256sum flake.lock 2>/dev/null | cut -d' ' -f1 || true); \
          if [ \"$lock_before\" != \"$lock_after\" ]; then \
            sudo nixos-rebuild switch --flake .#{host}; \
            echo 'Self-update applied'; \
          else \
-           echo 'No new pares-agens commits on main'; \
+           echo 'No new commits on main'; \
          fi"
     )
 }
@@ -96,9 +101,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn update_command_uses_nix_flake_update() {
+    fn update_command_discovers_flake_input() {
         let cmd = build_update_command("/etc/nixos", "praxisbot");
-        assert!(cmd.contains("sudo nix flake update pares-agens"), "must update flake input");
+        assert!(cmd.contains("grep -oP"), "must discover flake input dynamically");
+        assert!(cmd.contains("pares-(?:radix|agens)"), "must match either pares-radix or pares-agens");
+        assert!(!cmd.contains("nix flake update pares-agens;"), "must not hardcode input name");
     }
 
     #[test]
@@ -110,13 +117,11 @@ mod tests {
     #[test]
     fn update_command_skips_rebuild_when_no_changes() {
         let cmd = build_update_command("/etc/nixos", "praxisbot");
-        assert!(cmd.contains("No new pares-agens commits on main"), "must skip when flake.lock unchanged");
+        assert!(cmd.contains("No new commits on main"), "must skip when flake.lock unchanged");
     }
 
     #[test]
     fn update_command_does_not_embed_cargo_or_git() {
-        // NixOS handles the build. The update command must not contain
-        // fragile git/cargo operations that break on dirty trees.
         let cmd = build_update_command("/etc/nixos", "praxisbot");
         assert!(!cmd.contains("cargo build"), "must not embed cargo build");
         assert!(!cmd.contains("git pull"), "must not embed git pull");
