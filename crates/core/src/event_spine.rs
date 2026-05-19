@@ -209,6 +209,32 @@ impl<'a> EventSpine<'a> {
     pub fn runtime(&self) -> &AgensRuntime<'a> {
         &self.runtime
     }
+
+    /// Emit a tool execution event recording a tool call and its result.
+    ///
+    /// Returns the CRDT node ID of the stored event.
+    pub fn emit_tool_execution(
+        &self,
+        chat_id: i64,
+        tool_name: &str,
+        tool_call_id: &str,
+        arguments: &serde_json::Value,
+        result: &str,
+    ) -> String {
+        let id = Uuid::new_v4().to_string();
+        let event = AgensEvent::Message {
+            id,
+            payload: json!({
+                "_type": "tool_execution",
+                "chat_id": chat_id,
+                "tool_name": tool_name,
+                "tool_call_id": tool_call_id,
+                "arguments": arguments,
+                "result": result,
+            }),
+        };
+        self.runtime.emit_event(&event)
+    }
 }
 
 /// A `Send + Sync + 'static` handle to the event spine.
@@ -298,6 +324,36 @@ impl EventSpineHandle {
                 "format_used": format_used,
             }),
         );
+    }
+
+    /// Emit a tool execution event recording a tool call and its result.
+    ///
+    /// Returns the CRDT node ID of the stored event.
+    pub fn emit_tool_execution(
+        &self,
+        chat_id: i64,
+        tool_name: &str,
+        tool_call_id: &str,
+        arguments: &serde_json::Value,
+        result: &str,
+    ) -> String {
+        let id = Uuid::new_v4().to_string();
+        let node_id = format!("cmd:tool_execution:{id}");
+        self.store.put(
+            node_id.clone(),
+            &self.actor,
+            json!({
+                "_type": "agens:command",
+                "event_type": "tool_execution",
+                "chat_id": chat_id,
+                "tool_name": tool_name,
+                "tool_call_id": tool_call_id,
+                "arguments": arguments,
+                "result": result,
+            }),
+        );
+        debug!(node_id = %node_id, chat_id, tool_name, "event_spine_handle: tool execution recorded");
+        node_id
     }
 
     /// Emit a delivery failure event.
