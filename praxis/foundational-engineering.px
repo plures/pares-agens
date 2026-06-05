@@ -1,5 +1,11 @@
 # foundational-engineering.px — Foundational Software Engineering Principles
 #
+# NOTE: These constraints are POLICY DOCUMENTATION, not compiled enforcement.
+# They guide AI agents reading this repo. The Condition evaluator cannot parse
+# freeform domain expressions (e.g. change.duplicates_logic_across_modules).
+# Enforcement happens through the agent's system prompt and .px procedure
+# guards, not through runtime constraint evaluation.
+#
 # These are not opinions or preferences. They are tested, universal principles
 # of functional software development, codified as enforceable constraints.
 #
@@ -23,14 +29,12 @@ constraint single_source_of_truth:
   require: NOT (change.duplicates_logic_across_modules == true)
   severity: error
   message: "Every piece of knowledge must have a single, unambiguous, authoritative representation. If you're fixing the same bug in two places, extract first, then fix once."
-  references: ["ADR-0010"]
 
 constraint consumers_delegate_not_duplicate:
   when: event.type == "pr_audit"
   require: NOT (change.reimplements_existing_function == true)
   severity: error
   message: "Consumers of shared logic must delegate to the canonical implementation. A wrapper may adapt the interface but must not re-implement behavior."
-  references: ["ADR-0010"]
 
 # ═══════════════════════════════════════════════════════════════════════
 # SEPARATION OF CONCERNS
@@ -89,7 +93,6 @@ constraint externalize_volatile_logic:
   require: NOT (change.embeds_volatile_logic_in_binary == true)
   severity: error
   message: "Logic that changes independently of the binary (scripts, config, update procedures) must not be compiled in. Use external files, config, or delegate to scripts on disk."
-  references: ["self-update bootstrap problem"]
 
 constraint configuration_over_hardcoding:
   when: event.type == "pr_audit"

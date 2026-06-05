@@ -22,6 +22,11 @@ constraint practice.merge-conflict-prevention:
   source: "practices/MERGE-CONFLICT-PREVENTION.md"
   message: "Follow guidance from: Merge Conflict Prevention & Resolution Guide"
 
+constraint practice.work-prioritization:
+  severity: warning
+  source: "practices/WORK-PRIORITIZATION.md"
+  message: "Follow guidance from: Work Prioritization Framework"
+
 constraint practice.automation-first-1:
   severity: warning
   source: "practices/automation-first.md"
@@ -601,6 +606,95 @@ constraint standard.security:
   message: "Follow guidance from: Security Standards"
 
 # ══════════════════════════════════════════════════════════════════════
+# DESIGNS (from design/)
+# ══════════════════════════════════════════════════════════════════════
+
+constraint design.autonomous-pipeline-architecture:
+  severity: warning
+  source: "design/AUTONOMOUS-PIPELINE-ARCHITECTURE.md"
+  message: "Follow guidance from: Autonomous Pipeline Architecture"
+
+constraint design.constraint-source-protocol:
+  severity: warning
+  source: "design/CONSTRAINT-SOURCE-PROTOCOL.md"
+  message: "Follow guidance from: Constraint Source Protocol"
+
+constraint design.development-coordinator:
+  severity: warning
+  source: "design/DEVELOPMENT-COORDINATOR.md"
+  message: "Follow guidance from: DEVELOPMENT-COORDINATOR.md"
+
+constraint design.development-lifecycle:
+  severity: warning
+  source: "design/DEVELOPMENT-LIFECYCLE.md"
+  message: "Follow guidance from: Plures Development Lifecycle"
+
+constraint design.knowledge-governance:
+  severity: warning
+  source: "design/KNOWLEDGE-GOVERNANCE.md"
+  message: "Follow guidance from: Knowledge Governance: The Attorney-Client Model"
+
+constraint design.org-health-monitoring:
+  severity: warning
+  source: "design/ORG-HEALTH-MONITORING.md"
+  message: "Follow guidance from: Org Health Monitoring"
+
+constraint design.pares-agens:
+  severity: warning
+  source: "design/PARES-AGENS.md"
+  message: "Follow guidance from: Pares Agens — Reactive Agent Architecture"
+
+constraint design.pares-arcae-nexus:
+  severity: warning
+  source: "design/PARES-ARCAE-NEXUS.md"
+  message: "Follow guidance from: Pares Arcae Nexus — Decentralized PluresDB Object Registry"
+
+constraint design.plures-foundation:
+  severity: warning
+  source: "design/PLURES-FOUNDATION.md"
+  message: "Follow guidance from: Plures Foundation Architecture"
+
+constraint design.plures-lm-mobile:
+  severity: warning
+  source: "design/PLURES-LM-MOBILE.md"
+  message: "Follow guidance from: Plures LM Mobile — Design Document"
+
+constraint design.pluresdb-native-procedures:
+  severity: warning
+  source: "design/PLURESDB-NATIVE-PROCEDURES.md"
+  message: "Follow guidance from: Design: Native PluresDB Procedures as Memory Processing Engine"
+
+constraint design.praxis-intent-language:
+  severity: warning
+  source: "design/PRAXIS-INTENT-LANGUAGE.md"
+  message: "Follow guidance from: Praxis Intent Language (`.px`) — Design Document"
+
+constraint design.praxis-logic-coprocessor-plureslm:
+  severity: warning
+  source: "design/PRAXIS-LOGIC-COPROCESSOR-PLURESLM.md"
+  message: "Follow guidance from: Praxis Logic Coprocessor via PluresLM (Augments Pares Agens)"
+
+constraint design.praxis-single-source-derivation:
+  severity: warning
+  source: "design/PRAXIS-SINGLE-SOURCE-DERIVATION.md"
+  message: "Follow guidance from: Praxis Single-Source Derivation (SSoD)"
+
+constraint design.radix-orchestration:
+  severity: warning
+  source: "design/RADIX-ORCHESTRATION.md"
+  message: "Follow guidance from: Radix Orchestration via `.px` Procedures"
+
+constraint design.realm-topology-and-ai-governance:
+  severity: warning
+  source: "design/REALM-TOPOLOGY-AND-AI-GOVERNANCE.md"
+  message: "Follow guidance from: Realm Topology, AI Memory Scoping, and Decision Governance"
+
+constraint design.three-agent-cognitive-architecture:
+  severity: warning
+  source: "design/THREE-AGENT-COGNITIVE-ARCHITECTURE.md"
+  message: "Follow guidance from: Design: Three-Agent Cognitive Architecture"
+
+# ══════════════════════════════════════════════════════════════════════
 # ADRS (from docs/adr/)
 # ══════════════════════════════════════════════════════════════════════
 
@@ -655,5 +749,5 @@ constraint adr.0018-type-safety-standard:
   message: "Follow guidance from: 0018. Type-Safety Standard"
 
 # ═══════════════════════════════════════════════════════════════════════
-# Total: 126 constraints generated from practices, lessons-learned, standards, docs/adr
+# Total: 144 constraints generated from practices, lessons-learned, standards, design, docs/adr
 # ═══════════════════════════════════════════════════════════════════════
