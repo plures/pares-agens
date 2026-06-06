@@ -21,6 +21,7 @@ jobs:
       - name: Install and restart
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
+          mkdir -p ~/.local/bin
           cp target/release/pares-agens ~/.local/bin/pares-agens
           sudo systemctl restart pares-agens || echo 'Service restart failed (may not be configured)'
 
