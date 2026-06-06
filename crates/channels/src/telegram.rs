@@ -2322,7 +2322,7 @@ mod tests {
         // The function is a thin delegate to pares_agens_agenda::self_update.
         // Full behavioral tests live in the agenda crate (ADR-0010).
         let command = build_nixos_update_command("/etc/nixos", "praxisbot");
-        assert!(command.contains("cargo build --release -p pares-agens"), "must delegate to shared impl");
+        assert!(command.contains("nixos-rebuild switch"), "must delegate to shared impl");
     }
 
     #[test]
