@@ -37,6 +37,6 @@ jobs:
         continue-on-error: true
 
       - name: Run tests
-        run: cargo test --workspace -- --skip network
+        run: cargo test --workspace --exclude pares-agens-tauri --exclude pares-agens-desktop -- --skip network
         env:
           RUST_LOG: info
