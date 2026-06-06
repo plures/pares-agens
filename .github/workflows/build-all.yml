@@ -37,6 +37,21 @@ jobs:
         continue-on-error: true
 
       - name: Run tests
-        run: cargo test --workspace --exclude pares-agens-tauri --exclude pares-agens-desktop -- --skip network
+        run: |
+          # Exclude tauri (needs GTK/Webkit which isn't available on this runner)
+          cargo test \
+            -p pares-agens-core \
+            -p pares-agens-channels \
+            -p pares-models \
+            -p pares-agens-cli \
+            -p mcp-client \
+            -p pares-agens-privacy \
+            -p pares-agens-marketplace \
+            -p pares-agens-agenda \
+            -p pares-agens-praxis \
+            -p pares-agens-sync \
+            -p pares-agens-audit \
+            -p pares-agens-tui \
+            -- --skip network
         env:
           RUST_LOG: info
