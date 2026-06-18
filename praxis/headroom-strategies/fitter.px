@@ -1,0 +1,128 @@
+# fitter.px — Token budget fitting and context selection
+#
+# Given a token budget and a set of scored+compressed blocks, determines
+# which blocks to include, which to further compress, and which to drop.
+#
+# Algorithm: greedy knapsack by composite score, with severity floors.
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONSTRAINTS
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint output_within_budget:
+  require: pipeline_result.output_tokens <= token_budget.available_for_content
+  severity: error
+  message: "Final output must fit within the available token budget"
+
+constraint critical_always_included:
+  when: scored_block.severity == "critical"
+  require: scored_block.included == true
+  severity: error
+  message: "Critical-severity blocks are always included regardless of budget"
+
+constraint drop_order_respects_score:
+  require: fitter.drop_order_is_ascending_score == true
+  severity: error
+  message: "Blocks must be dropped in ascending score order (lowest first)"
+
+# ═══════════════════════════════════════════════════════════════════════
+# BUDGET CALCULATION
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure calculate_budget:
+  trigger: manual
+  given: "Compute available token budget from model limits and reservations"
+  get_model_context_limit {} -> $limit
+  get_system_reservation {} -> $system_reserved
+  get_response_reservation {} -> $response_reserved
+  compute_available {
+    total: 128000,
+    system: 2048,
+    response: 4096
+  } -> $available
+  write_budget {
+    max_context_tokens: 128000,
+    reserved_for_response: 4096,
+    reserved_for_system: 2048,
+    available_for_content: 121856
+  }
+  emit {type: "headroom.budget_computed", available: 121856}
+
+# ═══════════════════════════════════════════════════════════════════════
+# GREEDY FITTING
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure fit_to_budget:
+  trigger: manual
+  given: "Select blocks to include using greedy knapsack by composite score"
+  get_budget {} -> $budget
+  list_scored_blocks_desc {} -> $blocks
+  partition_critical {blocks: "all"} -> $critical
+  sum_tokens {blocks: "critical_partition"} -> $critical_cost
+  when critical_cost.total > budget.available_for_content:
+    emit {type: "headroom.budget_exceeded_by_critical"}
+    recompress_critical {target_reduction: 1000}
+  end
+  compute_remaining_budget {
+    available: 121856,
+    critical_used: 5000
+  } -> $remaining
+  loop over $blocks as block:
+    when block.severity != "critical":
+      try_include {block_id: "block", remaining_tokens: 116856} -> $result
+      when result.fits == true:
+        include_block {block_id: "block"}
+      end
+      when result.fits == false:
+        try_recompress {block_id: "block", max_tokens: 500} -> $recompressed
+        when recompressed.fits == true:
+          include_block {block_id: "block"}
+        end
+        when recompressed.fits == false:
+          drop_block {block_id: "block"}
+          emit {type: "headroom.block_dropped", block_id: "block"}
+        end
+      end
+    end
+  end
+  emit {type: "headroom.fitting_complete"}
+
+# ═══════════════════════════════════════════════════════════════════════
+# OVERFLOW HANDLING
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure handle_overflow:
+  trigger: manual
+  given: "Budget overflow — progressively compress or drop lowest-scored blocks"
+  compute_overflow {included_tokens: 130000, budget: 121856} -> $overflow
+  list_included_by_score_asc {} -> $candidates
+  loop over $candidates as candidate:
+    when overflow.remaining > 0:
+      when candidate.severity == "negligible":
+        drop_block {block_id: "candidate"}
+      end
+      when candidate.severity == "low":
+        recompress_aggressive {block_id: "candidate"} -> $smaller
+        when smaller.still_over == true:
+          drop_block {block_id: "candidate"}
+        end
+      end
+      when candidate.severity == "medium":
+        recompress_aggressive {block_id: "candidate"}
+      end
+    end
+  end
+  emit {type: "headroom.overflow_resolved"}
+
+# ═══════════════════════════════════════════════════════════════════════
+# INTELLIGENT CONTEXT SELECTION
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure select_for_query:
+  trigger: manual
+  given: "Select context most relevant to the current query/task"
+  get_current_query {} -> $query
+  rescore_blocks_for_query {query: "current"} -> $rescored
+  sort_by_query_relevance {blocks: "rescored"} -> $sorted
+  fit_to_budget {}
+  emit {type: "headroom.query_fitted"}

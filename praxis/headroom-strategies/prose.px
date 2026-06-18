@@ -1,0 +1,106 @@
+# prose.px — Text/prose compression logic
+#
+# Extractive summarization via importance scoring of sentences.
+# No generative rewriting (that requires LLM — a side effect).
+# We select, rank, and truncate.
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONSTRAINTS
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint prose_preserves_first_last:
+  when: block.content_type == "prose" and block.severity != "negligible"
+  require: compressed.has_first_sentence == true and compressed.has_last_sentence == true
+  severity: error
+  message: "Prose compression must preserve first and last sentences"
+
+constraint prose_preserves_entities:
+  when: block.content_type == "prose"
+  require: compressed.named_entity_coverage >= 0.9
+  severity: error
+  message: "Prose compression must preserve 90%+ of named entities"
+
+# ═══════════════════════════════════════════════════════════════════════
+# EXTRACTIVE COMPRESSION
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure compress_prose:
+  trigger: manual
+  given: "Compress prose by selecting the most important sentences"
+  get_scored_block {block_id: "target"} -> $scored
+  split_sentences {block_id: "target"} -> $sentences
+  when scored.severity == "critical":
+    write_compressed {block_id: "target", format: "verbatim", strategy: "pass_through"}
+    emit {type: "headroom.prose_compressed", method: "verbatim"}
+  end
+  when scored.severity == "high":
+    light_prose_compression {block_id: "target"}
+  end
+  when scored.severity == "medium":
+    moderate_prose_compression {block_id: "target"}
+  end
+  when scored.severity == "low":
+    aggressive_prose_compression {block_id: "target"}
+  end
+  when scored.severity == "negligible":
+    one_line_summary {block_id: "target"}
+  end
+
+procedure light_prose_compression:
+  trigger: manual
+  given: "High severity — remove filler, keep all substantive sentences"
+  remove_filler_sentences {block_id: "target"} -> $cleaned
+  remove_redundant_phrases {block_id: "target"} -> $trimmed
+  write_compressed {block_id: "target", format: "cleaned", strategy: "extractive"}
+  emit {type: "headroom.prose_compressed", method: "light"}
+
+procedure moderate_prose_compression:
+  trigger: manual
+  given: "Medium severity — top sentences by importance, preserve structure"
+  score_sentences {block_id: "target"} -> $scored_sentences
+  select_top_sentences {count: 10, preserve_first: true, preserve_last: true} -> $selected
+  extract_named_entities {block_id: "target"} -> $entities
+  ensure_entity_coverage {selected: "top", entities: "all"} -> $final
+  write_compressed {block_id: "target", format: "extracted_sentences", strategy: "extractive"}
+  emit {type: "headroom.prose_compressed", method: "moderate"}
+
+procedure aggressive_prose_compression:
+  trigger: manual
+  given: "Low severity — bare minimum: key facts and entities only"
+  extract_named_entities {block_id: "target"} -> $entities
+  extract_key_facts {block_id: "target", max_facts: 5} -> $facts
+  assemble_bullet_summary {entities: "all", facts: "top_5"} -> $summary
+  write_compressed {block_id: "target", format: "bullet_summary", strategy: "extractive"}
+  emit {type: "headroom.prose_compressed", method: "aggressive"}
+
+procedure one_line_summary:
+  trigger: manual
+  given: "Negligible — single line describing what this content is about"
+  extract_topic {block_id: "target"} -> $topic
+  write_compressed {block_id: "target", format: "one_liner", strategy: "extractive"}
+  emit {type: "headroom.prose_compressed", method: "one_liner"}
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONVERSATION HISTORY COMPRESSION
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure compress_conversation:
+  trigger: manual
+  given: "Compress conversation history — preserve recent, summarize old"
+  split_by_turns {block_id: "target"} -> $turns
+  classify_turn_importance {turns: "all"} -> $classified
+  loop over $classified as turn:
+    when turn.is_recent == true:
+      pass_through_turn {turn_id: "current"}
+    end
+    when turn.is_recent == false and turn.has_decision == true:
+      extract_decision {turn_id: "current"} -> $decision
+      write_decision_summary {turn_id: "current", decision: "extracted"}
+    end
+    when turn.is_recent == false and turn.has_decision == false:
+      one_line_turn_summary {turn_id: "current"}
+    end
+  end
+  reassemble_compressed_history {block_id: "target"} -> $history
+  write_compressed {block_id: "target", format: "compressed_history", strategy: "extractive"}
+  emit {type: "headroom.conversation_compressed"}

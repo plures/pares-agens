@@ -1,0 +1,171 @@
+# pipeline.px — Main orchestration pipeline
+#
+# Top-level entry point. Coordinates all compression phases.
+# Reactive: triggers on writes to headroom:input:*
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONSTRAINTS
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint pipeline_produces_result:
+  require: pipeline_result.output_tokens > 0
+  severity: error
+  message: "Pipeline must produce non-empty compressed output"
+
+constraint pipeline_respects_budget:
+  require: pipeline_result.output_tokens <= token_budget.available_for_content
+  severity: error
+  message: "Pipeline output must fit within the computed token budget"
+
+constraint pipeline_tracks_ratio:
+  require: pipeline_result.compression_ratio >= 0.0 and pipeline_result.compression_ratio <= 1.0
+  severity: error
+  message: "Compression ratio must be between 0.0 (max compression) and 1.0 (no compression)"
+
+constraint compression_latency:
+  require: pipeline_result.latency_ms < 100
+  severity: error
+  message: "Compression pipeline must complete in <100ms — it runs on the hot path"
+
+# ═══════════════════════════════════════════════════════════════════════
+# MAIN PIPELINE
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure compress_context:
+  trigger: on_write {pattern: "headroom:input:*"}
+  given: "Main entry point — compress all input context for an LLM call"
+  emit {type: "headroom.pipeline_started"}
+  # Phase 1: Budget
+  calculate_budget {} -> $budget
+  # Phase 2: Ingest and classify
+  split_into_blocks {input_id: "incoming"} -> $blocks
+  loop over $blocks as block:
+    classify_content {block_id: "block"}
+  end
+  emit {type: "headroom.classification_complete"}
+  # Phase 3: Score
+  score_all_blocks {}
+  emit {type: "headroom.scoring_complete"}
+  # Phase 4: Compress each block by strategy
+  list_plan_entries {} -> $plan
+  loop over $plan as entry:
+    when entry.strategy == "structural":
+      execute_structural_compression {block_id: "entry"}
+    end
+    when entry.strategy == "ast_summary":
+      execute_code_compression {block_id: "entry"}
+    end
+    when entry.strategy == "extractive":
+      execute_prose_compression {block_id: "entry"}
+    end
+    when entry.strategy == "log_dedup":
+      execute_log_compression {block_id: "entry"}
+    end
+    when entry.strategy == "pass_through":
+      skip_compression {block_id: "entry"}
+    end
+    when entry.strategy == "hybrid":
+      execute_hybrid_compression {block_id: "entry"}
+    end
+  end
+  emit {type: "headroom.compression_complete"}
+  # Phase 5: CCR — store originals for retrievability
+  list_compressible_blocks {min_ratio: 0.5} -> $ccr_candidates
+  loop over $ccr_candidates as candidate:
+    store_for_retrieval {block_id: "candidate"}
+  end
+  # Phase 6: Fit to budget
+  fit_to_budget {}
+  emit {type: "headroom.fitting_complete"}
+  # Phase 7: Cache alignment
+  align_cache_prefix {}
+  order_for_cache {}
+  # Phase 8: Inject retrieval hints
+  inject_retrieval_hints {}
+  # Phase 9: Assemble final output
+  assemble_output {} -> $output
+  compute_pipeline_result {} -> $result
+  emit {type: "headroom.pipeline_complete"}
+
+# ═══════════════════════════════════════════════════════════════════════
+# STRATEGY EXECUTORS
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure execute_structural_compression:
+  trigger: manual
+  given: "Execute JSON structural compression for a plan entry"
+  get_block {block_id: "current"} -> $block
+  analyze_json_structure {block_id: "current"} -> $analysis
+  when analysis.is_array_of_objects == true:
+    compress_json_array {block_id: "current"}
+  end
+  when analysis.is_deeply_nested == true:
+    compress_nested_json {block_id: "current"}
+  end
+  when analysis.has_repeated_values == true:
+    dedup_repeated_values {block_id: "current"}
+  end
+
+procedure execute_code_compression:
+  trigger: manual
+  given: "Execute AST-aware code compression for a plan entry"
+  get_block {block_id: "current"} -> $block
+  compress_code {block_id: "current"}
+
+procedure execute_prose_compression:
+  trigger: manual
+  given: "Execute extractive prose compression for a plan entry"
+  get_block {block_id: "current"} -> $block
+  compress_prose {block_id: "current"}
+
+procedure execute_log_compression:
+  trigger: manual
+  given: "Execute log deduplication compression"
+  get_block {block_id: "current"} -> $block
+  detect_patterns {block_id: "current"} -> $patterns
+  deduplicate_patterns {block_id: "current"} -> $deduped
+  write_compressed {block_id: "current", format: "deduped_log", strategy: "log_dedup"}
+  emit {type: "headroom.log_compressed"}
+
+procedure skip_compression:
+  trigger: manual
+  given: "Pass through — content already compact or critical"
+  get_block {block_id: "current"} -> $block
+  write_compressed {block_id: "current", format: "verbatim", strategy: "pass_through"}
+  emit {type: "headroom.skipped", reason: "already_compact"}
+
+procedure execute_hybrid_compression:
+  trigger: manual
+  given: "Hybrid — split mixed content and apply per-section strategies"
+  get_block {block_id: "current"} -> $block
+  split_by_structure {block_id: "current"} -> $sections
+  loop over $sections as section:
+    detect_content_type {block_id: "section"} -> $stype
+    when stype.content_type == "json":
+      execute_structural_compression {block_id: "section"}
+    end
+    when stype.content_type == "code":
+      execute_code_compression {block_id: "section"}
+    end
+    when stype.content_type == "prose":
+      execute_prose_compression {block_id: "section"}
+    end
+  end
+  reassemble_sections {block_id: "current"} -> $reassembled
+  emit {type: "headroom.hybrid_compressed"}
+
+# ═══════════════════════════════════════════════════════════════════════
+# CROSS-AGENT PIPELINE
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure compress_with_shared_memory:
+  trigger: manual
+  given: "Compress context with cross-agent memory dedup"
+  check_shared_memory {input_id: "incoming"} -> $shared_hits
+  when shared_hits.count > 0:
+    reuse_compressed_from_memory {hits: "shared"} -> $reused
+    emit {type: "headroom.memory_reuse"}
+  end
+  compress_remaining_blocks {exclude: "reused"}
+  ingest_new_to_memory {}
+  emit {type: "headroom.shared_pipeline_complete"}

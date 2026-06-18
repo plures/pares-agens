@@ -1,0 +1,105 @@
+# log.px — Log output compression via pattern deduplication
+#
+# Logs are the highest-compression-ratio target. Repeated lines, timestamps,
+# and structured patterns compress 90%+ without losing signal.
+#
+# Strategy: detect patterns → deduplicate → summarize counts → preserve anomalies.
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONSTRAINTS
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint log_preserves_errors:
+  when: block.content_type == "log"
+  require: compressed.error_lines_preserved == true
+  severity: error
+  message: "Log compression must preserve all error/warning/fatal lines verbatim"
+
+constraint log_preserves_first_occurrence:
+  when: block.content_type == "log"
+  require: compressed.first_occurrence_of_each_pattern == true
+  severity: error
+  message: "Log compression must keep the first occurrence of each unique pattern"
+
+constraint log_shows_counts:
+  when: block.content_type == "log" and block.metadata["repeated_patterns"] == "true"
+  require: compressed.pattern_counts_shown == true
+  severity: error
+  message: "Deduplicated log patterns must show occurrence counts"
+
+# ═══════════════════════════════════════════════════════════════════════
+# PATTERN DETECTION
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure detect_log_patterns:
+  trigger: manual
+  given: "Identify repeated patterns in log output for deduplication"
+  split_log_lines {block_id: "target"} -> $lines
+  normalize_timestamps {lines: "all"} -> $normalized
+  normalize_ids {lines: "normalized"} -> $generalized
+  group_by_pattern {lines: "generalized", min_count: 3} -> $patterns
+  emit {type: "headroom.log_patterns_detected", unique: 8, repeated: 45}
+
+# ═══════════════════════════════════════════════════════════════════════
+# DEDUPLICATION
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure compress_log:
+  trigger: manual
+  given: "Compress log output by deduplicating repeated patterns"
+  detect_log_patterns {block_id: "target"}
+  get_patterns {block_id: "target"} -> $patterns
+  classify_log_lines {block_id: "target"} -> $classified
+  # Always preserve error/warning lines
+  extract_error_lines {block_id: "target"} -> $errors
+  # For each pattern: keep first occurrence + count
+  loop over $patterns as pattern:
+    keep_first_occurrence {pattern_id: "current"}
+    count_occurrences {pattern_id: "current"} -> $count
+    write_dedup_summary {pattern_id: "current", count: 15}
+  end
+  # Keep unique (non-patterned) lines
+  extract_unique_lines {block_id: "target"} -> $unique
+  # Assemble compressed log
+  assemble_compressed_log {
+    errors: "all_preserved",
+    patterns: "first_plus_count",
+    unique: "all_preserved"
+  } -> $compressed
+  write_compressed {
+    block_id: "target",
+    format: "deduped_log",
+    strategy: "log_dedup"
+  }
+  emit {type: "headroom.log_compressed", original_lines: 200, output_lines: 25, ratio: 0.12}
+
+# ═══════════════════════════════════════════════════════════════════════
+# STRUCTURED LOG COMPRESSION
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure compress_structured_log:
+  trigger: manual
+  given: "Compress JSON-structured logs (each line is a JSON object)"
+  detect_log_format {block_id: "target"} -> $format
+  when format.is_json_lines == true:
+    extract_common_fields {block_id: "target"} -> $common
+    group_by_level {block_id: "target"} -> $by_level
+    # Errors always preserved verbatim
+    preserve_level {level: "error"}
+    preserve_level {level: "fatal"}
+    # Warnings: deduplicate by message pattern
+    dedup_level {level: "warn", keep: "first_plus_count"}
+    # Info/debug: aggressive — pattern + count only
+    summarize_level {level: "info", format: "count_per_pattern"}
+    summarize_level {level: "debug", format: "total_count_only"}
+    assemble_structured_log_summary {block_id: "target"} -> $summary
+    write_compressed {
+      block_id: "target",
+      format: "structured_log_summary",
+      strategy: "log_dedup"
+    }
+    emit {type: "headroom.structured_log_compressed", ratio: 0.08}
+  end
+  when format.is_json_lines == false:
+    compress_log {block_id: "target"}
+  end

@@ -1,0 +1,102 @@
+# cache.px — Cache alignment for provider KV cache hits
+#
+# Provider LLMs cache the prefix of conversations. If the prefix changes
+# between calls, the cache misses and the provider recomputes everything.
+#
+# CacheAligner stabilizes the prefix by:
+# 1. Identifying the stable system prompt portion
+# 2. Sorting volatile content deterministically
+# 3. Hashing and tracking prefix stability across calls
+#
+# This saves real money — cache hits on Anthropic/OpenAI are 90% cheaper.
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONSTRAINTS
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint prefix_is_deterministic:
+  require: cache_prefix.hash == cache_prefix.expected_hash
+  severity: error
+  message: "Cache prefix must produce the same hash for the same logical content"
+
+constraint prefix_minimum_size:
+  when: cache_alignment.enabled == true
+  require: cache_prefix.stable_bytes >= 512
+  severity: error
+  message: "Cache prefix must be at least 512 bytes to provide meaningful savings"
+
+# ═══════════════════════════════════════════════════════════════════════
+# PREFIX STABILIZATION
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure align_cache_prefix:
+  trigger: manual
+  given: "Stabilize the message prefix for provider KV cache hits"
+  get_system_prompt {} -> $system
+  get_static_context {} -> $static
+  get_previous_prefix_hash {} -> $prev_hash
+  compute_stable_prefix {
+    system_prompt: "current",
+    static_context: "current"
+  } -> $prefix
+  compute_prefix_hash {prefix: "computed"} -> $new_hash
+  when new_hash.value == prev_hash.value:
+    emit {type: "headroom.cache_aligned", status: "stable", hit_likely: true}
+  end
+  when new_hash.value != prev_hash.value:
+    emit {type: "headroom.cache_aligned", status: "changed", hit_likely: false}
+    store_prefix_hash {hash: "new", provider: "current"}
+  end
+  write_aligned_prefix {prefix: "stable"}
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONTENT ORDERING
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure order_for_cache:
+  trigger: manual
+  given: "Order compressed blocks to maximize prefix overlap between calls"
+  get_compressed_blocks {} -> $blocks
+  partition_stable_volatile {blocks: "all"} -> $partitioned
+  sort_stable_by_hash {blocks: "stable_partition"} -> $sorted_stable
+  sort_volatile_by_recency {blocks: "volatile_partition"} -> $sorted_volatile
+  assemble_ordered_context {
+    prefix: "system_prompt",
+    stable: "sorted_stable",
+    volatile: "sorted_volatile"
+  } -> $ordered
+  emit {type: "headroom.ordered_for_cache", stable_count: 5, volatile_count: 8}
+
+# ═══════════════════════════════════════════════════════════════════════
+# PROVIDER-SPECIFIC ALIGNMENT
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure align_for_anthropic:
+  trigger: manual
+  given: "Anthropic-specific: system prompt is separate, cache on first user message"
+  separate_system_prompt {} -> $system
+  stabilize_first_user_block {} -> $first_user
+  emit {type: "headroom.provider_aligned", provider: "anthropic"}
+
+procedure align_for_openai:
+  trigger: manual
+  given: "OpenAI-specific: system prompt in messages array, longer prefix better"
+  maximize_system_prefix {} -> $prefix
+  emit {type: "headroom.provider_aligned", provider: "openai"}
+
+# ═══════════════════════════════════════════════════════════════════════
+# CACHE STATISTICS
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure track_cache_hits:
+  trigger: on_write {pattern: "headroom:response:*"}
+  given: "Track whether the provider used cached prefix (from response headers)"
+  get_response_metadata {response_id: "latest"} -> $meta
+  when meta.cache_hit == true:
+    increment_cache_hits {provider: "current"}
+    emit {type: "headroom.cache_hit", provider: "current", saved_tokens: 5000}
+  end
+  when meta.cache_hit == false:
+    increment_cache_misses {provider: "current"}
+    emit {type: "headroom.cache_miss", provider: "current"}
+  end

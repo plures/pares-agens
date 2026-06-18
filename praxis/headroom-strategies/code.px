@@ -1,0 +1,101 @@
+# code.px — Code/AST compression logic
+#
+# Handles compression of source code. Strategy depends on severity tier.
+# Language detection determines which AST patterns to extract.
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONSTRAINTS
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint code_preserves_signatures:
+  when: block.content_type == "code" and block.severity != "negligible"
+  require: compressed.signature_count >= block.total_signatures
+  severity: error
+  message: "Code compression must preserve all function/method signatures"
+
+constraint code_preserves_errors:
+  when: block.content_type == "code"
+  require: compressed.error_handling_preserved == true
+  severity: error
+  message: "Error handling patterns must be preserved"
+
+constraint code_type_info_retained:
+  when: block.content_type == "code" and block.language == "rust"
+  require: compressed.type_annotations_preserved == true
+  severity: error
+  message: "Rust code compression must retain all type annotations"
+
+# ═══════════════════════════════════════════════════════════════════════
+# MAIN CODE COMPRESSION
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure compress_code:
+  trigger: manual
+  given: "Compress code based on language and severity tier"
+  get_scored_block {block_id: "target"} -> $scored
+  get_language {block_id: "target"} -> $lang
+  when scored.severity == "critical":
+    preserve_verbatim {block_id: "target"}
+  end
+  when scored.severity == "high":
+    compress_bodies_only {block_id: "target"}
+  end
+  when scored.severity == "medium":
+    signatures_and_logic {block_id: "target"}
+  end
+  when scored.severity == "low":
+    signatures_only {block_id: "target"}
+  end
+  when scored.severity == "negligible":
+    existence_stub {block_id: "target"}
+  end
+
+procedure preserve_verbatim:
+  trigger: manual
+  given: "Critical code — pass through without modification"
+  write_compressed {block_id: "target", format: "verbatim", strategy: "pass_through"}
+  emit {type: "headroom.code_compressed", method: "verbatim"}
+
+procedure compress_bodies_only:
+  trigger: manual
+  given: "High severity — keep signatures and compress function bodies"
+  extract_signatures {block_id: "target"} -> $sigs
+  extract_bodies {block_id: "target"} -> $bodies
+  loop over $bodies as body:
+    when body.lines > 10:
+      summarize_body {block_id: "body", max_lines: 5} -> $summary
+    end
+    when body.lines <= 10:
+      pass_through_body {block_id: "body"}
+    end
+  end
+  reassemble_with_compressed_bodies {block_id: "target"} -> $result
+  write_compressed {block_id: "target", format: "signatures_plus_summaries", strategy: "ast_summary"}
+  emit {type: "headroom.code_compressed", method: "body_compress"}
+
+procedure signatures_and_logic:
+  trigger: manual
+  given: "Medium severity — signatures, control flow, and key expressions"
+  extract_signatures {block_id: "target"} -> $sigs
+  extract_control_flow {block_id: "target"} -> $flow
+  extract_error_handling {block_id: "target"} -> $errors
+  assemble_skeleton {signatures: "all", control_flow: "branches_only", error_handling: "all"} -> $skeleton
+  write_compressed {block_id: "target", format: "skeleton", strategy: "ast_summary"}
+  emit {type: "headroom.code_compressed", method: "skeleton"}
+
+procedure signatures_only:
+  trigger: manual
+  given: "Low severity — just function/type signatures, no implementation"
+  extract_signatures {block_id: "target"} -> $sigs
+  extract_type_definitions {block_id: "target"} -> $types
+  extract_imports {block_id: "target"} -> $imports
+  assemble_interface {signatures: "all", types: "all", imports: "used_only"} -> $interface
+  write_compressed {block_id: "target", format: "interface_only", strategy: "ast_summary"}
+  emit {type: "headroom.code_compressed", method: "signatures_only"}
+
+procedure existence_stub:
+  trigger: manual
+  given: "Negligible — just record that this code exists"
+  get_block_metadata {block_id: "target"} -> $meta
+  write_compressed {block_id: "target", format: "stub", strategy: "ast_summary"}
+  emit {type: "headroom.code_compressed", method: "stub"}

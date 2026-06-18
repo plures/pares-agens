@@ -1,0 +1,53 @@
+# config.px — Configuration and tuning parameters for headroom-px
+#
+# All tunables live here. Procedures reference these values.
+# Override via PluresDB writes to headroom:config:*
+
+config headroom:
+  max_context_tokens: 128000
+  reserved_for_response: 4096
+  reserved_for_system: 2048
+  default_strategy: "hybrid"
+
+config compression:
+  min_ratio: 0.3
+  aggressive_threshold: 0.85
+  preserve_threshold: 0.95
+  json_key_dedup_threshold: 5
+  code_signature_only_threshold: 0.4
+  prose_sentence_limit: 10
+  log_pattern_dedup_min: 3
+
+config ccr:
+  enabled: true
+  ttl_seconds: 3600
+  max_stored_originals: 100
+  retrieval_cost_tokens: 50
+
+config cache_alignment:
+  enabled: true
+  min_stable_prefix_bytes: 512
+  provider_prefixes:
+    anthropic: "system_prompt"
+    openai: "system_prompt"
+    github_copilot: "system_prompt"
+
+config scoring:
+  recency_decay_factor: 0.9
+  recency_window_seconds: 300
+  relevance_weight: 0.6
+  recency_weight: 0.3
+  source_weight: 0.1
+  source_priorities:
+    tool_error: 1.0
+    tool_output: 0.7
+    rag_chunk: 0.5
+    conversation: 0.6
+    file_content: 0.4
+    log_output: 0.3
+
+config memory:
+  dedup_similarity_threshold: 0.92
+  max_cross_agent_entries: 500
+  eviction_strategy: "lru_with_score"
+  consolidation_interval_seconds: 3600
