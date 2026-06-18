@@ -37,6 +37,10 @@ subtle = "2"
 pares-agens-privacy = { path = "../privacy" }
 pares-agens-praxis = { path = "../praxis" }
 pluresdb = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3", features = ["embeddings"] }
+pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "195c67b" }
+sha2 = "0.10"
+tiktoken-rs = "0.6"
+unicode-segmentation = "1"
 pluresdb-procedures = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3" }
 pluresdb-sync = { git = "https://github.com/plures/pluresdb", rev = "407917e8b73c3924b7860df7c0eaa941d9338566" }
 pluresdb-sea = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3" }

@@ -167,8 +167,7 @@ pub fn strip_formatting(input: &str) -> String {
     let re_result = strip_html_tags(&s);
     re_result
         .replace("**", "")
-        .replace('*', "")
-        .replace('`', "")
+        .replace(['*', '`'], "")
 }
 
 fn strip_html_tags(input: &str) -> String {

@@ -1,0 +1,102 @@
+# Headroom Context-Compression Policy — pares-agens
+#
+# Source of intent: external headroom integration.px / pipeline.px
+# (threshold, bypass, latency, and net-savings rules), ported in-repo for
+# .px-first compliance.
+#
+# STATUS (Approach A2): This file is the POLICY/SPEC artifact. The runtime
+# compression is implemented natively in Rust in
+# `crates/core/src/headroom_bridge.rs` (HeadroomHook) using the real leaf
+# actors of HeadroomActionHandler. These constraints document and (when run
+# through a px evaluator) enforce the invariants the Rust bridge upholds.
+#
+# Event/context shape (emitted by the bridge for evaluation/audit):
+#   event.type == "headroom_compress"
+#   request.id            : string   — inbound message id (observability key)
+#   request.enabled       : bool     — hook enabled (env/flag derived)
+#   request.min_tokens    : int      — gate floor (default 500)
+#   input.token_count     : int      — chars/4 estimate of original messages
+#   input.message_count   : int
+#   output.token_count    : int      — chars/4 estimate of compressed messages
+#   output.message_count  : int
+#   timing.latency_ms     : int      — wall time of compress_messages()
+#   integrity.fields_preserved : bool — role/tool_call_id/tool_calls intact
+#   integrity.messages_preserved : bool — output count == input count
+
+# === Configuration ===
+
+config headroom:
+  enabled_by_default: true
+  min_tokens: 500
+  max_latency_ms: 100
+  # Disable switches honored by the CLI before the hook is constructed.
+  disable_env: "PARES_AGENS_HEADROOM"      # 0|false|off|no => disabled
+  disable_flag: "--no-headroom"
+
+# === Gating / Bypass ===
+
+# Below the token floor, compression must be a no-op (originals returned).
+constraint bypass_when_small:
+  when: event.type == "headroom_compress" and input.token_count <= request.min_tokens
+  require: output.token_count == input.token_count and output.message_count == input.message_count
+  severity: error
+  message: "Headroom must not alter messages at/below min_tokens (bypass-when-small)."
+
+# When disabled (flag/env), compression must be a transparent clone-through.
+constraint bypass_when_disabled:
+  when: event.type == "headroom_compress" and request.enabled == false
+  require: output.token_count == input.token_count and output.message_count == input.message_count
+  severity: error
+  message: "Headroom must be a pass-through when disabled."
+
+# The gate floor must never be below the documented default.
+constraint min_tokens_floor:
+  when: event.type == "headroom_compress"
+  require: request.min_tokens >= 500
+  severity: warning
+  message: "min_tokens should be >= 500 to avoid compressing trivial contexts."
+
+# === Latency Budget ===
+
+# Compression is on the model hot path; it must stay cheap.
+constraint latency_within_budget:
+  when: event.type == "headroom_compress"
+  require: timing.latency_ms < 100
+  severity: error
+  message: "Headroom compression must complete in <100ms (no embeddings on hot path)."
+
+# === Net Savings ===
+
+# Above the gate, compression must not grow the payload. (The Rust bridge
+# falls back to originals when this would be violated, so the emitted event
+# always satisfies this; the constraint guards regressions.)
+constraint net_positive_savings:
+  when: event.type == "headroom_compress" and request.enabled == true and input.token_count > request.min_tokens
+  require: output.token_count <= input.token_count
+  severity: error
+  message: "Headroom compression must yield net-zero-or-positive token savings."
+
+# === Integrity (lossless framing) ===
+
+# Only `.content` may shrink; every message and all role/tool metadata must
+# survive compression. History sent to the model keeps the same shape.
+constraint preserve_message_count:
+  when: event.type == "headroom_compress"
+  require: integrity.messages_preserved == true
+  severity: error
+  message: "Headroom must preserve message count (no messages dropped)."
+
+constraint preserve_message_fields:
+  when: event.type == "headroom_compress"
+  require: integrity.fields_preserved == true
+  severity: error
+  message: "Headroom must preserve role, tool_call_id, and tool_calls on every message."
+
+# === Observability ===
+
+# Each past-gate compression writes input/output snapshots for audit.
+constraint observability_keys_written:
+  when: event.type == "headroom_compress" and request.enabled == true and input.token_count > request.min_tokens
+  require: request.id != ""
+  severity: warning
+  message: "Headroom should key observability writes (headroom:input/output:<id>) by request id."

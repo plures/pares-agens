@@ -149,6 +149,26 @@ struct RuntimePersonalityControl {
     agent: Arc<RwLock<Arc<Agent>>>,
 }
 
+/// Determine whether headroom compression should be enabled.
+///
+/// Precedence:
+/// 1. `--no-headroom` flag (or `no_headroom == true`) forces OFF.
+/// 2. `PARES_AGENS_HEADROOM` env var: values `0`, `false`, `off`, `no`
+///    (case-insensitive) force OFF.
+/// 3. Otherwise ON (default).
+fn headroom_enabled(no_headroom_flag: bool) -> bool {
+    if no_headroom_flag {
+        return false;
+    }
+    match std::env::var("PARES_AGENS_HEADROOM") {
+        Ok(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        ),
+        Err(_) => true,
+    }
+}
+
 #[derive(Clone)]
 struct RuntimeAgentFactory {
     store: Arc<PluresDbStore>,
@@ -160,6 +180,9 @@ struct RuntimeAgentFactory {
     embed_model: String,
     api_key: Option<String>,
     system_prompt_path: Option<PathBuf>,
+    /// Optional headroom compression hook wired onto every agent this factory
+    /// builds. `None` leaves compression off.
+    headroom: Option<pares_agens_core::HeadroomHook>,
 }
 
 #[derive(Clone, Debug)]
@@ -312,18 +335,22 @@ impl RuntimeAgentFactory {
         );
         let turn_store: Arc<dyn pares_agens_core::memory::store::MemoryStore> = self.store.clone();
 
-        Ok(Arc::new(
-            Agent::with_cerebellum(memory, cerebellum, plures_lm)
-                .with_model(
-                    Arc::clone(&self.model_client),
-                    Arc::clone(&self.tool_dispatcher),
-                    system_prompt,
-                )
-                .with_deep_model(Arc::clone(&self.deep_model_client))
-                .with_delegation(delegation_broker)
-                .with_turn_store(turn_store)
-                .with_personality(personality),
-        ))
+        let mut agent = Agent::with_cerebellum(memory, cerebellum, plures_lm)
+            .with_model(
+                Arc::clone(&self.model_client),
+                Arc::clone(&self.tool_dispatcher),
+                system_prompt,
+            )
+            .with_deep_model(Arc::clone(&self.deep_model_client))
+            .with_delegation(delegation_broker)
+            .with_turn_store(turn_store)
+            .with_personality(personality);
+
+        if let Some(hook) = &self.headroom {
+            agent = agent.with_headroom(hook.clone());
+        }
+
+        Ok(Arc::new(agent))
     }
 }
 
@@ -2294,6 +2321,17 @@ enum Commands {
         /// Shared SEA key (base64url-encoded SeaKeyPair JSON) required to decrypt sync payloads.
         #[arg(long, env = "PARES_SYNC_SHARED_KEY")]
         sync_shared_key: Option<String>,
+
+        /// Disable headroom context-compression of model requests.
+        ///
+        /// Compression is ON by default. It is disabled when this flag is
+        /// present OR when `PARES_AGENS_HEADROOM` is one of `0/false/off/no`.
+        #[arg(long)]
+        no_headroom: bool,
+
+        /// Minimum estimated token count before headroom compression engages.
+        #[arg(long, env = "PARES_AGENS_HEADROOM_MIN_TOKENS", default_value_t = 500)]
+        headroom_min_tokens: usize,
     },
 
     /// Run the agent with an interactive terminal UI.
@@ -2321,6 +2359,17 @@ enum Commands {
         /// Path to a system prompt file.
         #[arg(long, value_name = "PATH")]
         system_prompt: Option<PathBuf>,
+
+        /// Disable headroom context-compression of model requests.
+        ///
+        /// Compression is ON by default. It is disabled when this flag is
+        /// present OR when `PARES_AGENS_HEADROOM` is one of `0/false/off/no`.
+        #[arg(long)]
+        no_headroom: bool,
+
+        /// Minimum estimated token count before headroom compression engages.
+        #[arg(long, env = "PARES_AGENS_HEADROOM_MIN_TOKENS", default_value_t = 500)]
+        headroom_min_tokens: usize,
 
     },
 }
@@ -2383,6 +2432,8 @@ async fn main() {
             manus_ws_url,
             sync_topic_key,
             sync_shared_key,
+            no_headroom,
+            headroom_min_tokens,
         } => {
             tracing::info!(commit = env!("GIT_COMMIT_HASH"), "Starting Pares Agens daemon");
             let started_at = Instant::now();
@@ -2415,7 +2466,10 @@ async fn main() {
 
             let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
             let runtime_state_dir = PathBuf::from(&home).join(".pares-agens/runtime-state");
-            let runtime_state_store: Arc<dyn StateStore> =
+            // Concrete handle first so we can share the underlying CrdtStore
+            // with the headroom compression handler for consistent
+            // observability (both read/write the same store).
+            let runtime_state_concrete: Arc<PluresDbStateStore> =
                 match PluresDbStateStore::open(&runtime_state_dir) {
                     Ok(store) => Arc::new(store),
                     Err(e) => {
@@ -2427,6 +2481,36 @@ async fn main() {
                         Arc::new(PluresDbStateStore::in_memory())
                     }
                 };
+            let runtime_state_store: Arc<dyn StateStore> =
+                Arc::clone(&runtime_state_concrete) as Arc<dyn StateStore>;
+
+            // Build the headroom compression hook (ON by default; gated by
+            // `--no-headroom` / `PARES_AGENS_HEADROOM`). The handler shares the
+            // same CrdtStore as the runtime state store.
+            let headroom_hook = {
+                let handler = Arc::new(pares_agens_core::HeadroomActionHandler::new(
+                    runtime_state_concrete.crdt_store(),
+                ));
+                let enabled = headroom_enabled(no_headroom);
+                let hook = if enabled {
+                    pares_agens_core::HeadroomHook::new(
+                        Arc::clone(&runtime_state_store),
+                        handler,
+                        headroom_min_tokens,
+                    )
+                } else {
+                    pares_agens_core::HeadroomHook::disabled(
+                        Arc::clone(&runtime_state_store),
+                        handler,
+                    )
+                };
+                tracing::info!(
+                    enabled,
+                    min_tokens = headroom_min_tokens,
+                    "headroom compression configured"
+                );
+                hook
+            };
 
             if let Some(saved) = runtime_state_store
                 .get(MODEL_OVERRIDE_STATE_KEY)
@@ -2784,6 +2868,7 @@ async fn main() {
                 embed_model: embed_model.clone(),
                 api_key: api_key.clone(),
                 system_prompt_path: system_prompt_path.clone(),
+                headroom: Some(headroom_hook.clone()),
             });
             let agent = match agent_factory.build_agent() {
                 Ok(agent) => agent,
@@ -2967,6 +3052,8 @@ async fn main() {
             copilot,
             api_key,
             system_prompt,
+            no_headroom,
+            headroom_min_tokens,
         } => {
             use crossterm::{
                 event::{self as ct_event, Event as CtEvent, KeyCode, KeyEventKind},
@@ -3091,6 +3178,42 @@ async fn main() {
             let mut registry = pares_agens_core::delegation::registry::AgentRegistry::new();
             registry.register_builtins();
 
+            // Headroom compression hook for the TUI. Opens a dedicated runtime
+            // state store (same convention as the serve path) so the
+            // compression handler and observability keys share one CrdtStore.
+            let headroom_hook = {
+                let runtime_state_dir =
+                    PathBuf::from(&home).join(".pares-agens/runtime-state");
+                let state_concrete: Arc<PluresDbStateStore> =
+                    match PluresDbStateStore::open(&runtime_state_dir) {
+                        Ok(s) => Arc::new(s),
+                        Err(e) => {
+                            tracing::warn!(
+                                path = %runtime_state_dir.display(),
+                                error = %e,
+                                "failed to open runtime state store for headroom; using in-memory"
+                            );
+                            Arc::new(PluresDbStateStore::in_memory())
+                        }
+                    };
+                let state_dyn: Arc<dyn StateStore> =
+                    Arc::clone(&state_concrete) as Arc<dyn StateStore>;
+                let handler = Arc::new(pares_agens_core::HeadroomActionHandler::new(
+                    state_concrete.crdt_store(),
+                ));
+                let enabled = headroom_enabled(no_headroom);
+                tracing::info!(
+                    enabled,
+                    min_tokens = headroom_min_tokens,
+                    "headroom compression configured (tui)"
+                );
+                if enabled {
+                    pares_agens_core::HeadroomHook::new(state_dyn, handler, headroom_min_tokens)
+                } else {
+                    pares_agens_core::HeadroomHook::disabled(state_dyn, handler)
+                }
+            };
+
             let agent = Arc::new(
                 Agent::with_cerebellum(memory, cerebellum, plures_lm)
                     .with_model(
@@ -3098,7 +3221,8 @@ async fn main() {
                         Arc::clone(&tool_dispatcher),
                         system_prompt_text,
                     )
-                    .with_turn_store(Arc::clone(&store) as Arc<dyn pares_agens_core::memory::store::MemoryStore>),
+                    .with_turn_store(Arc::clone(&store) as Arc<dyn pares_agens_core::memory::store::MemoryStore>)
+                    .with_headroom(headroom_hook),
             );
 
             // Set up terminal
@@ -3574,6 +3698,7 @@ mod tests {
             embed_model: "nomic-embed-text".to_string(),
             api_key: None,
             system_prompt_path: None,
+            headroom: None,
         });
 
         let first_agent = factory.build_agent().expect("build initial agent");

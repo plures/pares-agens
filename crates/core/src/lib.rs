@@ -94,3 +94,10 @@ pub mod model_invoker;
 pub mod heartbeat;
 /// Plugin framework — application platform for schema-driven apps.
 pub mod plugins;
+/// HeadroomActionHandler — production implementation of headroom .px side-effect actors.
+pub mod headroom;
+/// Headroom context-compression bridge wired into the agent model loop.
+pub mod headroom_bridge;
+
+pub use headroom::HeadroomActionHandler;
+pub use headroom_bridge::HeadroomHook;

@@ -26,6 +26,7 @@ use crate::cerebellum::{Cerebellum, Route};
 use crate::delegation::aggregator::ResultAggregator;
 use crate::delegation::broker::DelegationBroker;
 use crate::event::Event;
+use crate::headroom_bridge::HeadroomHook;
 use crate::memory::entry::Exchange;
 use crate::memory::store::MemoryStore;
 use crate::memory::{passes_quality_gate, PluresLm};
@@ -159,6 +160,10 @@ pub struct Agent {
     personality_documents_cache: Mutex<Option<String>>,
     /// Cached plugin schema context for system prompt injection.
     plugin_context: Mutex<Option<String>>,
+    /// Optional headroom compression hook. When `Some` (and enabled), the
+    /// transient message clone sent to the model on each turn is byte-shrunk
+    /// before transmission. The canonical history is never compressed.
+    headroom: Option<HeadroomHook>,
 }
 
 #[derive(Debug, Clone)]
@@ -199,6 +204,7 @@ impl Agent {
             branch_state: Mutex::new(HashMap::new()),
             personality_documents_cache: Mutex::new(None),
             plugin_context: Mutex::new(None),
+            headroom: None,
         }
     }
 
@@ -231,6 +237,7 @@ impl Agent {
             branch_state: Mutex::new(HashMap::new()),
             personality_documents_cache: Mutex::new(None),
             plugin_context: Mutex::new(None),
+            headroom: None,
         }
     }
 
@@ -250,6 +257,16 @@ impl Agent {
     /// Attach a personality contract for dynamic prompt building.
     pub fn with_personality(mut self, personality: crate::personality::PersonalityContract) -> Self {
         self.personality = Some(personality);
+        self
+    }
+
+    /// Attach a headroom compression hook.
+    ///
+    /// When set, the transient message clone sent to the model on each turn
+    /// of [`run_model_loop`](Self::run_model_loop) is compressed first (the
+    /// canonical history is left untouched). A disabled hook is a no-op.
+    pub fn with_headroom(mut self, hook: HeadroomHook) -> Self {
+        self.headroom = Some(hook);
         self
     }
 
@@ -479,6 +496,7 @@ impl Agent {
                 &history_snapshot,
                 content,
                 &options,
+                id,
             )
             .await
         {
@@ -509,6 +527,7 @@ impl Agent {
                         &history_snapshot,
                         content,
                         &deep_options,
+                        id,
                     )
                     .await
                 {
@@ -713,6 +732,9 @@ impl Agent {
         prompt
     }
 
+    // One extra arg (`request_id`) threads the inbound message id through to
+    // the headroom compression hook for observability keying.
+    #[allow(clippy::too_many_arguments)]
     async fn run_model_loop(
         &self,
         model_client: &Arc<dyn ModelClient>,
@@ -721,6 +743,7 @@ impl Agent {
         history_snapshot: &[ChatMessage],
         content: &str,
         options: &ChatOptions,
+        request_id: &str,
     ) -> Result<(String, Option<Vec<f64>>, Vec<ChatMessage>), String> {
         let mut messages = Vec::with_capacity(history_snapshot.len() + 2);
         messages.push(ChatMessage::system(system_text));
@@ -733,7 +756,14 @@ impl Agent {
         let mut final_logprobs = None;
         for turn in 0..10 {
             let model_start = Instant::now();
-            let completion = model_client.complete(&messages, &tools, options).await?;
+            // Headroom: compress a TRANSIENT clone of the messages for this
+            // model call only. The canonical `messages` vec (persisted and
+            // returned below) is never mutated, so history stays lossless.
+            let outbound = match &self.headroom {
+                Some(hook) => hook.compress_messages(request_id, &messages).await,
+                None => messages.clone(),
+            };
+            let completion = model_client.complete(&outbound, &tools, options).await?;
             let latency_ms = model_start.elapsed().as_millis();
             info!(turn, latency_ms, tool_calls = completion.tool_calls.len(), "model completion received");
 
@@ -1792,6 +1822,220 @@ mod tests {
             trimmed[0].content.contains("[Compacted context]"),
             "expected compacted context note, got: {}",
             trimmed[0].content
+        );
+    }
+
+    // ── Headroom seam: run_model_loop direct drive ──────────────────────
+    //
+    // These exercise the *private* `run_model_loop` so we can observe BOTH
+    // what the model received (a transient, compressed clone) AND the
+    // canonical `messages` vec the loop returns (which must stay full-size).
+    // The public-API view of this seam lives in
+    // `tests/headroom_agent_e2e.rs`.
+
+    use crate::headroom::HeadroomActionHandler;
+    use crate::headroom_bridge::count_message_tokens;
+    use crate::state::PluresDbStateStore;
+
+    /// Records every `messages` slice handed to `complete`; replies with a
+    /// tool-call-free assistant text so the loop ends in one turn.
+    struct CapturingModel {
+        seen: Arc<Mutex<Vec<Vec<ChatMessage>>>>,
+    }
+
+    #[async_trait]
+    impl ModelClient for CapturingModel {
+        async fn complete(
+            &self,
+            messages: &[ChatMessage],
+            _tools: &[ToolDefinition],
+            _options: &ChatOptions,
+        ) -> Result<ModelCompletion, String> {
+            self.seen.lock().unwrap().push(messages.to_vec());
+            Ok(ModelCompletion {
+                content: Some("ack".into()),
+                tool_calls: vec![],
+                logprobs: None,
+            })
+        }
+    }
+
+    fn enabled_headroom(min_tokens: usize) -> HeadroomHook {
+        let store = Arc::new(PluresDbStateStore::in_memory());
+        let handler = Arc::new(HeadroomActionHandler::new(store.crdt_store()));
+        HeadroomHook::new(store as Arc<dyn crate::state::StateStore>, handler, min_tokens)
+    }
+
+    /// A history snapshot whose aggregate is far over the 500-token gate, with
+    /// a mix of roles (incl. a tool message carrying a `tool_call_id`) so we
+    /// can assert per-field preservation across the seam.
+    fn over_threshold_history() -> Vec<ChatMessage> {
+        let prose: String = (0..100)
+            .map(|i| {
+                format!(
+                    "This is sentence number {i} of an intentionally long block of prose used \
+                     to push the aggregate token count comfortably past the compression gate. "
+                )
+            })
+            .collect();
+        let code: String = {
+            let mut c = String::from("```rust\n");
+            for i in 0..30 {
+                c.push_str(&format!(
+                    "pub fn worker_{i}(x: usize) -> usize {{\n    let mut acc = 0;\n    \
+                     for k in 0..x {{ acc += k; }}\n    acc\n}}\n\n"
+                ));
+            }
+            c.push_str("```");
+            c
+        };
+        let mut tool_msg = ChatMessage::user("placeholder");
+        tool_msg.role = "tool".into();
+        tool_msg.content =
+            "tool output line. ".repeat(80) + "distinctive-tail-marker-xyz";
+        tool_msg.tool_call_id = Some("call_42".into());
+
+        vec![
+            ChatMessage::assistant(prose),
+            tool_msg,
+            ChatMessage::user(code),
+        ]
+    }
+
+    #[tokio::test]
+    async fn run_model_loop_compresses_transient_clone_preserving_canonical() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let model: Arc<dyn ModelClient> = Arc::new(CapturingModel {
+            seen: Arc::clone(&seen),
+        });
+        let tools: Arc<dyn ToolDispatcher> = Arc::new(MockTools);
+        let agent = Agent::new(Arc::new(InMemory::new()))
+            .with_model(Arc::clone(&model), Arc::clone(&tools), "sys".into())
+            .with_headroom(enabled_headroom(500));
+
+        let history = over_threshold_history();
+        // What the loop will build, uncompressed: [system, ...history, user].
+        let mut canonical_input = vec![ChatMessage::system("sys")];
+        canonical_input.extend(history.iter().cloned());
+        canonical_input.push(ChatMessage::user("final user turn"));
+        let canonical_tokens = count_message_tokens(&canonical_input);
+        assert!(
+            canonical_tokens > 500,
+            "fixture must exceed the gate; got {canonical_tokens}"
+        );
+
+        let options = ChatOptions {
+            temperature: None,
+            logprobs: false,
+        };
+        let (_reply, _logprobs, returned) = agent
+            .run_model_loop(
+                &model,
+                &tools,
+                "sys".into(),
+                &history,
+                "final user turn",
+                &options,
+                "req-unit",
+            )
+            .await
+            .expect("run_model_loop should succeed");
+
+        // The model saw exactly one (compressed) payload.
+        let calls = seen.lock().unwrap();
+        assert_eq!(calls.len(), 1, "single turn → single model call");
+        let captured = &calls[0];
+
+        // Count parity: system + history + user, on both sides.
+        let expected_len = history.len() + 2;
+        assert_eq!(captured.len(), expected_len, "message count must be preserved");
+
+        // Roles preserved positionally, and the tool message keeps its id.
+        for (got, want) in captured.iter().zip(canonical_input.iter()) {
+            assert_eq!(got.role, want.role, "role preserved");
+            assert_eq!(
+                got.tool_call_id, want.tool_call_id,
+                "tool_call_id preserved"
+            );
+        }
+        // Explicitly: the tool message (index 2 = system + assistant + tool).
+        assert_eq!(captured[2].role, "tool");
+        assert_eq!(captured[2].tool_call_id.as_deref(), Some("call_42"));
+
+        // REAL reduction on the transient clone.
+        let captured_tokens = count_message_tokens(captured);
+        assert!(
+            captured_tokens < canonical_tokens,
+            "transient clone must be smaller: captured {captured_tokens} !< canonical {canonical_tokens}"
+        );
+
+        // CANONICAL history (the loop's return value) is UNCHANGED in size:
+        // it equals the full uncompressed payload plus the appended assistant
+        // reply ("ack"), and is strictly larger than the compressed clone.
+        let returned_tokens = count_message_tokens(&returned);
+        assert!(
+            returned_tokens >= canonical_tokens,
+            "canonical history must not shrink: {returned_tokens} < {canonical_tokens}"
+        );
+        assert!(
+            returned_tokens > captured_tokens,
+            "canonical ({returned_tokens}) must exceed compressed clone ({captured_tokens})"
+        );
+        // The distinctive tail marker from the tool message survives intact in
+        // the canonical history (proves no lossy rewrite of the real record).
+        assert!(
+            returned.iter().any(|m| m.content.contains("distinctive-tail-marker-xyz")),
+            "canonical history must retain the verbatim tool content"
+        );
+
+        eprintln!(
+            "UNIT seam reduction: canonical {canonical_tokens} tok -> compressed clone \
+             {captured_tokens} tok; returned canonical {returned_tokens} tok"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_model_loop_without_headroom_sends_originals() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let model: Arc<dyn ModelClient> = Arc::new(CapturingModel {
+            seen: Arc::clone(&seen),
+        });
+        let tools: Arc<dyn ToolDispatcher> = Arc::new(MockTools);
+        // No `.with_headroom(...)` → None path.
+        let agent = Agent::new(Arc::new(InMemory::new())).with_model(
+            Arc::clone(&model),
+            Arc::clone(&tools),
+            "sys".into(),
+        );
+
+        let history = over_threshold_history();
+        let mut canonical_input = vec![ChatMessage::system("sys")];
+        canonical_input.extend(history.iter().cloned());
+        canonical_input.push(ChatMessage::user("final user turn"));
+
+        let options = ChatOptions {
+            temperature: None,
+            logprobs: false,
+        };
+        let _ = agent
+            .run_model_loop(
+                &model,
+                &tools,
+                "sys".into(),
+                &history,
+                "final user turn",
+                &options,
+                "req-unit-none",
+            )
+            .await
+            .expect("run_model_loop should succeed");
+
+        let calls = seen.lock().unwrap();
+        let captured = &calls[0];
+        assert_eq!(
+            count_message_tokens(captured),
+            count_message_tokens(&canonical_input),
+            "with no headroom hook, the model must receive the originals untouched"
         );
     }
 }

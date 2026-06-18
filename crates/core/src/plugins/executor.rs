@@ -90,7 +90,7 @@ impl PluginCrudExecutor {
                 // Apply filters
                 if let Some(Value::Object(filter_map)) = filters {
                     let matches = filter_map.iter().all(|(k, v)| {
-                        data.get(k).map_or(false, |actual| actual == v)
+                        data.get(k) == Some(v)
                     });
                     if !matches {
                         continue;

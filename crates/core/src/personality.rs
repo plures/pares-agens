@@ -246,7 +246,7 @@ impl PersonalityContract {
             self.rules.len()
         );
         let mut sorted = self.rules.clone();
-        sorted.sort_by(|a, b| b.priority.cmp(&a.priority));
+        sorted.sort_by_key(|r| std::cmp::Reverse(r.priority));
         for r in &sorted {
             let tag = if r.enforced { "enforced" } else { "guidance" };
             out.push_str(&format!(

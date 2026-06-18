@@ -55,7 +55,7 @@ pub fn build_system_prompt(personality: &PersonalityContract, context: &AgentCon
 
     // Core rules
     let mut sorted_rules: Vec<&BehaviorRule> = personality.rules.iter().collect();
-    sorted_rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+    sorted_rules.sort_by_key(|r| std::cmp::Reverse(r.priority));
 
     if !sorted_rules.is_empty() {
         prompt.push_str("\n## Behavioral Rules\n");
@@ -70,7 +70,7 @@ pub fn build_system_prompt(personality: &PersonalityContract, context: &AgentCon
         if let Some(overrides) = personality.channel_overrides.get(channel) {
             if !overrides.is_empty() {
                 let mut sorted_overrides: Vec<&BehaviorRule> = overrides.iter().collect();
-                sorted_overrides.sort_by(|a, b| b.priority.cmp(&a.priority));
+                sorted_overrides.sort_by_key(|r| std::cmp::Reverse(r.priority));
                 prompt.push_str(&format!("\n## Channel Rules ({})\n", channel));
                 for rule in &sorted_overrides {
                     let prefix = if rule.enforced { "MUST" } else { "SHOULD" };
