@@ -100,7 +100,7 @@ impl StateStore for InMemoryStateStore {
 /// writes to the same key perform a CRDT merge-update, preserving the
 /// last-writer-wins semantics expected by agents.
 pub struct PluresDbStateStore {
-    store: CrdtStore,
+    store: Arc<CrdtStore>,
 }
 
 impl PluresDbStateStore {
@@ -113,7 +113,7 @@ impl PluresDbStateStore {
         let storage: Arc<dyn StorageEngine> =
             Arc::new(SledStorage::open(path).map_err(|e| format!("open failed: {e}"))?);
 
-        let store = CrdtStore::default().with_persistence(storage);
+        let store = Arc::new(CrdtStore::default().with_persistence(storage));
         Ok(Self { store })
     }
 
@@ -123,8 +123,18 @@ impl PluresDbStateStore {
     /// touching the filesystem.
     pub fn in_memory() -> Self {
         let storage: Arc<dyn StorageEngine> = Arc::new(MemoryStorage::default());
-        let store = CrdtStore::default().with_persistence(storage);
+        let store = Arc::new(CrdtStore::default().with_persistence(storage));
         Self { store }
+    }
+
+    /// Return a shared handle to the underlying [`CrdtStore`].
+    ///
+    /// This allows other subsystems (e.g. the headroom compression bridge's
+    /// [`HeadroomActionHandler`](crate::HeadroomActionHandler)) to read and
+    /// write the *same* CRDT-backed store that holds agent state, so that
+    /// observability keys written by one component are visible to the other.
+    pub fn crdt_store(&self) -> Arc<CrdtStore> {
+        Arc::clone(&self.store)
     }
 }
 
