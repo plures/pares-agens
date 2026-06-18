@@ -12,7 +12,7 @@ on:
   milestone:
     types: [closed]
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '0 */6 * * *'
   workflow_dispatch:
 
 jobs:
@@ -20,3 +20,4 @@ jobs:
     uses: plures/praxis-business/.github/workflows/copilot-pr-lifecycle-reusable.yml@main
     secrets:
       COPILOT_PAT: ${{ secrets.COPILOT_PAT }}
+

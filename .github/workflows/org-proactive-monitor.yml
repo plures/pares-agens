@@ -2,8 +2,12 @@ name: Org Proactive Monitor
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '0 */6 * * *'
   workflow_dispatch:
+
+concurrency:
+  group: org-proactive-monitor
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -152,3 +156,4 @@ jobs:
           fi
 
           echo "Telegram alert sent"
+
