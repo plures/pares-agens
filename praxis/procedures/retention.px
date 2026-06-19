@@ -1,0 +1,55 @@
+# retention.px — Memory retention and decay as v3 dataflow procedures
+#
+# Evaluates whether memory entries should be retained, decayed, or forgotten.
+# Implements spaced-repetition-inspired scoring for long-term memory management.
+# Both are utilities called during periodic memory maintenance.
+#
+# Queue topology:
+#
+#   (none — utilities only, called by periodic_memory_maintenance in memory.px)
+#
+
+# [parser-skip] fact RetentionScore:
+# [parser-skip]   memory_key: string
+# [parser-skip]   score: float
+# [parser-skip]   action: enum(retain, decay, forget)
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint retention_score_bounds:
+# [parser-skip]   given: "Retention scores must be between 0.0 and 1.0"
+# [parser-skip]   check: RetentionScore.score >= 0.0 AND RetentionScore.score <= 1.0
+# [parser-skip]   severity: error
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Utility Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# utility: called by periodic_memory_maintenance (memory.px)
+procedure evaluate_retention(all_memories: list) -> retention_results:
+  given: "Evaluate whether memory entries should be retained, decayed, or forgotten"
+  timestamp_now {} -> $now
+  loop over $all_memories as memory:
+    compute_retention_score {memory: $memory, now: $now, decay_rate: 0.05} -> $score
+    when score < 0.1:
+      mark_for_forget {key: $memory} -> $marked
+      pluresdb_write {key: "memory:forget_queue", value: $marked}
+    end
+    when score < 0.4:
+      mark_decayed {key: $memory, score: $score} -> $decayed
+      pluresdb_write {key: $memory, value: $decayed}
+    end
+  end
+  return {evaluated_count: $all_memories}
+
+# utility: called by periodic_memory_maintenance (memory.px)
+procedure consolidate_memories(all_memories: list) -> consolidation_results:
+  given: "Merge duplicate or highly similar memories into consolidated entries"
+  find_duplicates {memories: $all_memories, similarity_threshold: 0.92} -> $duplicates
+  loop over $duplicates as pair:
+    merge_memories {a: $pair, b: $pair} -> $merged
+    pluresdb_write {key: "memory:consolidated", value: $merged}
+  end
+  return {merged_count: $duplicates}

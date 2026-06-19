@@ -1,0 +1,162 @@
+# dev-lifecycle.px - Development lifecycle orchestration as .px procedures
+#
+# Pure logic for staged development work. No side effects.
+# The Rust action handlers execute what these procedures define.
+#
+# Architecture:
+#   .px defines: stages, transitions, gates, retry logic, escalation rules
+#   Rust actors do: spawn subagents, read/write PluresDB, send notifications
+#
+# Queue topology:
+#   task_request:*  → [plan_task]  → writes devtask:{id}
+#   stage_complete:*  → [evaluate_gate]  → writes next_action:{task_id}
+#   task_complete:*  → [report_result]  → writes notification:{task_id}
+#
+
+# ─────────────────────────────────────────────────────────────────────────
+# Facts (data shapes) — documentation only
+# ─────────────────────────────────────────────────────────────────────────
+
+# [parser-skip] fact DevTask:
+# [parser-skip]   id: string
+# [parser-skip]   description: string
+# [parser-skip]   repo: string
+# [parser-skip]   workdir: string
+# [parser-skip]   stages: list[Stage]
+# [parser-skip]   status: enum(planning, running, passed, failed, blocked)
+# [parser-skip]   created_at: int
+# [parser-skip]   completed_at: optional[int]
+# [parser-skip]
+# [parser-skip] fact Stage:
+# [parser-skip]   name: enum(analyze, fix, test, deploy, verify)
+# [parser-skip]   prompt: string
+# [parser-skip]   status: enum(pending, running, passed, failed, blocked, skipped)
+# [parser-skip]   attempts: int
+# [parser-skip]   max_retries: int
+# [parser-skip]   timeout_seconds: int
+# [parser-skip]   depends_on: list[string]
+# [parser-skip]   output: optional[string]
+# [parser-skip]   started_at: optional[int]
+# [parser-skip]   completed_at: optional[int]
+# [parser-skip]
+# [parser-skip] fact StageResult:
+# [parser-skip]   stage_name: string
+# [parser-skip]   task_id: string
+# [parser-skip]   status: enum(passed, failed, blocked)
+# [parser-skip]   output: string
+# [parser-skip]   duration_ms: int
+# [parser-skip]
+
+# ─────────────────────────────────────────────────────────────────────────
+# Constraints — documentation only
+# ─────────────────────────────────────────────────────────────────────────
+
+# [parser-skip] constraint stages_must_be_ordered:
+# [parser-skip]   given: "Stage transitions must respect dependency order"
+# [parser-skip]   check: for each stage in DevTask.stages: stage.depends_on are all status=passed
+# [parser-skip]   severity: error
+
+# [parser-skip] constraint test_before_deploy:
+# [parser-skip]   given: "Code must pass tests before deployment"
+# [parser-skip]   check: when stage.name == "deploy": stage("test").status == "passed"
+# [parser-skip]   severity: error
+# [parser-skip]   message: "Cannot deploy without passing test stage. No exceptions."
+
+# [parser-skip] constraint verify_closes_loop:
+# [parser-skip]   given: "Every deploy must be followed by verification"
+# [parser-skip]   check: when stage("deploy").status == "passed": stage("verify").status != "skipped"
+# [parser-skip]   severity: error
+# [parser-skip]   message: "Skipping verification is not allowed. The loop must close."
+
+# [parser-skip] constraint max_retry_bounded:
+# [parser-skip]   given: "Retries must not exceed stage max"
+# [parser-skip]   check: Stage.attempts <= Stage.max_retries + 1
+# [parser-skip]   severity: error
+
+# ─────────────────────────────────────────────────────────────────────────
+# Dataflow Procedures
+# ─────────────────────────────────────────────────────────────────────────
+
+# Entry point: decompose a task request into a staged plan
+procedure plan_task:
+  trigger: on_write
+  given: "Decompose a development task into ordered lifecycle stages"
+
+  # Get default stage definitions from Rust action handler
+  get_default_stages {repo: $new_value.repo} -> $defaults
+
+  # Merge task-specific prompts with default stage config
+  merge_stage_config {defaults: $defaults, overrides: $new_value.stages} -> $stages
+
+  # Persist the task plan
+  timestamp_now {} -> $now
+  generate_id {} -> $plan_id
+
+  write_state {key: "devtask:{$new_value.id}", value: {
+    id: $new_value.id,
+    description: $new_value.description,
+    repo: $new_value.repo,
+    workdir: $new_value.workdir,
+    stages: $stages,
+    status: "planning",
+    created_at: $now
+  }} -> $written
+
+  return {task_id: $new_value.id, stages: $stages, status: "planned"}
+
+
+# Gate evaluation: called after each stage completes
+procedure evaluate_gate:
+  trigger: on_write
+  given: "Evaluate a completed stage and determine next action"
+
+  # Read the full task record
+  read_state {key: "devtask:{$new_value.task_id}"} -> $task
+
+  # Update the completed stage with its result
+  update_stage_status {task: $task, stage_name: $new_value.stage_name, status: $new_value.status, output: $new_value.output, attempts: $new_value.attempts} -> $updated_task
+
+  # Persist the updated task
+  write_state {key: "devtask:{$new_value.task_id}", value: $updated_task} -> $persisted
+
+  # Find the next stage to run (returns null if all done)
+  find_next_stage {task: $updated_task, after: $new_value.stage_name} -> $next
+
+  # Return the gate decision
+  return {task_id: $new_value.task_id, completed_stage: $new_value.stage_name, status: $new_value.status, next_stage: $next}
+
+
+# Report task completion or failure
+procedure report_result:
+  trigger: on_write
+  given: "Generate a completion or failure report for a dev task"
+
+  # Read the task record
+  read_state {key: "devtask:{$new_value.task_id}"} -> $task
+
+  # Build summary from all stage outputs
+  collect_stage_outputs {task: $task} -> $summary
+
+  # Format the notification message
+  format_stage_brief {task: $task, summary: $summary} -> $message
+
+  return {task_id: $new_value.task_id, status: $task.status, message: $message, summary: $summary}
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Utility Procedures
+# ─────────────────────────────────────────────────────────────────────────
+
+# Build the subagent prompt for a specific stage
+procedure build_stage_brief:
+  given: "Construct a complete subagent task brief for a lifecycle stage"
+
+  read_state {key: "devtask:{$task_id}"} -> $task
+  get_stage {task: $task, name: $stage_name} -> $stage
+
+  # Collect outputs from dependency stages as context
+  collect_stage_outputs {task: $task} -> $context
+
+  format_stage_brief {task: $task, stage: $stage, context: $context, workdir: $task.workdir} -> $brief
+
+  return $brief

@@ -1,0 +1,62 @@
+# Task Management Instructions
+#
+# This procedure defines WHEN and HOW the agent uses the task registry.
+# The task tools (task_create, task_complete, task_list, task_get, task_update)
+# are always available. These instructions guide their use.
+
+procedure task_management_guidance()
+  """
+  Guidance for autonomous task management. The agent's pending tasks are
+  auto-injected into context as <pending_tasks> block. The agent is responsible
+  for creating and completing tasks consciously.
+  """
+
+  # --- When to create tasks ---
+  step guidance_create
+    emit {
+      when_to_create: [
+        "When you commit to doing something ('I will fix X', 'Let me investigate Y')",
+        "When you identify work that needs doing but can't do it right now",
+        "When a user request has multiple steps and you want to track progress",
+        "When you discover a bug or issue that needs follow-up",
+        "When you promise a follow-up check or verification"
+      ],
+      when_NOT_to_create: [
+        "For trivial one-shot responses (answering a question, looking something up)",
+        "For work you're doing RIGHT NOW in this turn (just do it)",
+        "For vague aspirations without concrete next steps"
+      ]
+    }
+
+  # --- Priority guidance ---
+  step guidance_priority
+    emit {
+      priority_scale: {
+        p10_critical: "System is down, data loss risk, blocking deployment",
+        p8_9_high: "User explicitly waiting, same-session commitment, time-sensitive",
+        p5_7_medium: "Promised follow-up, improvement work, non-blocking fixes",
+        p1_4_low: "Nice-to-have, background maintenance, future optimization"
+      }
+    }
+
+  # --- When to complete tasks ---
+  step guidance_complete
+    emit {
+      when_to_complete: [
+        "When you have done the work and verified the result",
+        "When the task is no longer relevant (superseded, cancelled by user)",
+        "When you realize the task was a misunderstanding",
+        "Include a reason explaining what was done or why it's no longer needed"
+      ]
+    }
+
+  # --- Heartbeat behavior ---
+  step guidance_heartbeat
+    emit {
+      on_heartbeat: [
+        "Review <pending_tasks> in your context — are any ready to execute?",
+        "If a task is actionable and nothing higher-priority blocks it, do it",
+        "If a task is stale (created long ago, no longer relevant), complete it with reason",
+        "If a task needs user input before proceeding, leave it pending"
+      ]
+    }

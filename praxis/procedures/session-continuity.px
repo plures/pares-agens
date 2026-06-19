@@ -1,0 +1,83 @@
+# session-continuity.px — Session continuity as v3 dataflow procedures
+#
+# Handles session persistence, context recovery, and state checkpointing.
+# periodic_checkpoint is queue-driven; all others are utilities.
+#
+# Queue topology:
+#
+#   checkpoint_tick ─→ [periodic_checkpoint] ─→ checkpoint_done
+#                           │
+#                           ├─ calls [save_session_state] (utility)
+#                           ├─ calls [recover_session] (utility)
+#                           ├─ calls [cleanup_old_sessions] (utility)
+#                           └─ calls [prepare_response_context] (utility)
+#
+
+# [parser-skip] fact CheckpointResult:
+# [parser-skip]   saved: bool
+# [parser-skip]   timestamp: int
+# [parser-skip] 
+# [parser-skip] fact RecoveredState:
+# [parser-skip]   recovered: bool
+# [parser-skip]   state: optional[string]
+# [parser-skip]   reason: optional[string]
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint checkpoint_timestamp_valid:
+# [parser-skip]   given: "Checkpoints must always include a valid timestamp"
+# [parser-skip]   check: CheckpointResult.timestamp > 0
+# [parser-skip]   severity: error
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Dataflow Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# Periodically checkpoint session state
+procedure periodic_checkpoint(session_id: string from "checkpoint_tick") -> checkpoint_result into "checkpoint_done":
+  given: "Periodically checkpoint session state"
+  db_get {key: "session:state"} -> $current_state
+  save_session_state {session_id: $session_id, state: $current_state} -> $result
+  return $result
+
+# ═══════════════════════════════════════════════════════════════════
+# Utility Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# utility: called by periodic_checkpoint
+procedure save_session_state(session_id: string, state: string) -> save_result:
+  given: "Checkpoint current session state for recovery"
+  timestamp_now {} -> $now
+  pluresdb_write {key: "session:checkpoint:" , value: {state: $state, timestamp: $now}}
+  return {saved: true, timestamp: $now}
+
+# utility: called by prepare_response_context
+procedure recover_session(session_id: string) -> recovered_state:
+  given: "Recover session state from the last checkpoint"
+  db_get {key: "session:checkpoint:" } -> $checkpoint
+  when checkpoint.empty:
+    return {recovered: false, reason: "no checkpoint found"}
+  end
+  return {recovered: true, state: $checkpoint}
+
+# utility: called by heartbeat (session maintenance)
+procedure cleanup_old_sessions(max_age_hours: int) -> cleanup_result:
+  given: "Remove session checkpoints older than max_age_hours"
+  db_get_prefix {prefix: "session:checkpoint:"} -> $checkpoints
+  timestamp_now {} -> $now
+  loop over $checkpoints as cp:
+    compute_age_hours {checkpoint: $cp, now: $now} -> $age
+    when age > $max_age_hours:
+      pluresdb_delete {key: $cp}
+    end
+  end
+  return {cleaned: true}
+
+# utility: called by invoke_model (spine-actions.px)
+procedure prepare_response_context(session_id: string, messages: list) -> context:
+  given: "Prepare full context for response generation including session state"
+  recover_session {session_id: $session_id} -> $state
+  db_get {key: "session:personality"} -> $personality
+  return {state: $state, personality: $personality, messages: $messages}

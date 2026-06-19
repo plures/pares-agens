@@ -1,0 +1,427 @@
+# unified-router.px — Single entry point for ALL inbound messages (v3 dataflow)
+#
+# THIS REPLACES the Cerebellum's imperative Rust orchestration.
+# Every message enters PluresDB → router fires → queues populate → procedures fire.
+# Rust only exists at IO boundaries (model API, tool execution, channel delivery).
+#
+# The key insight: PluresDB IS the router. Writing to a queue IS routing.
+# The graph runs to quiescence. No scheduler. No dispatcher. No priority system.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# FULL PIPELINE (all queue-driven, no imperative orchestration)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+#   [inbound] ─────────────────────────────────────────────────────────────────
+#       │
+#       ▼
+#   [classify_and_route] ─── reads: agent_promises, active_tasks, conversation_tail
+#       │
+#       ├── is_continuation? ──→ [task_steering] queue
+#       │                              │
+#       │                              ▼
+#       │                    [dispatch_steered_task]
+#       │                              │
+#       │                              ▼
+#       │                        [model_request] queue (with task context)
+#       │
+#       ├── is_heartbeat? ──→ [heartbeat_action] queue
+#       │
+#       ├── is_procedural? ──→ [procedural_response] queue (no model needed)
+#       │
+#       └── is_conversation? ──→ [context_assembly] queue
+#                                      │
+#                                      ▼
+#                              [assemble_context] ─── reads: memory, history, entities
+#                                      │
+#                                      ▼
+#                                [model_request] queue
+#
+#   [model_request] ───────────────────────────────────────────────────────────
+#       │
+#       ▼
+#   [invoke_model] ──── SIDE EFFECT: calls model API (Rust IO boundary)
+#       │
+#       ▼
+#   [model_response] queue
+#       │
+#       ├── has_tool_calls? ──→ [tool_dispatch] queue
+#       │                              │
+#       │                              ▼
+#       │                    [execute_tools] ── SIDE EFFECT: tool execution (Rust IO)
+#       │                              │
+#       │                              ▼
+#       │                    [tool_result] queue ──→ feeds back to [model_request]
+#       │
+#       └── final_response? ──→ [delivery] queue
+#                                      │
+#                                      ├──→ [detect_commitments] (parallel consumer)
+#                                      │           │
+#                                      │           ▼
+#                                      │     [commitment_tasks] (writes PluresDB)
+#                                      │
+#                                      ▼
+#                              [deliver_response] ── SIDE EFFECT: send to channel (Rust IO)
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# QUIESCENCE = DONE
+# When all queues are empty, the system is idle. No poll loops. No timers.
+# Next message writes to [inbound] → everything fires again.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════════
+# Facts
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] fact InboundMessage:
+# [parser-skip]   content: string
+# [parser-skip]   chat_id: string
+# [parser-skip]   sender: string
+# [parser-skip]   timestamp: int
+# [parser-skip]   message_id: optional[string]
+# [parser-skip] 
+# [parser-skip] fact RouteDecision:
+# [parser-skip]   destination: enum(task_steering, heartbeat, procedural, conversation)
+# [parser-skip]   is_continuation: bool
+# [parser-skip]   continuation_confidence: float
+# [parser-skip]   tier: enum(fast, standard, premium)
+# [parser-skip]   reason: string
+# [parser-skip] 
+# [parser-skip] fact ModelRequest:
+# [parser-skip]   messages: list
+# [parser-skip]   model_tier: enum(fast, standard, premium)
+# [parser-skip]   streaming: bool
+# [parser-skip]   source: enum(conversation, task_steering, tool_followup)
+# [parser-skip]   task_id: optional[string]
+# [parser-skip] 
+# [parser-skip] fact ModelResponse:
+# [parser-skip]   content: string
+# [parser-skip]   tool_calls: optional[list]
+# [parser-skip]   model: string
+# [parser-skip]   finish_reason: string
+# [parser-skip] 
+# [parser-skip] fact DeliveryRequest:
+# [parser-skip]   content: string
+# [parser-skip]   chat_id: string
+# [parser-skip]   streaming: bool
+# [parser-skip]   reply_to: optional[string]
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint every_message_gets_routed:
+# [parser-skip]   given: "No message may be silently dropped without an explicit Drop decision"
+# [parser-skip]   check: RouteDecision.destination != ""
+# [parser-skip]   severity: error
+# [parser-skip] 
+# [parser-skip] constraint model_request_has_messages:
+# [parser-skip]   given: "Model requests must contain at least one message"
+# [parser-skip]   check: length(ModelRequest.messages) > 0
+# [parser-skip]   severity: error
+# [parser-skip] 
+# [parser-skip] constraint delivery_has_content:
+# [parser-skip]   given: "Delivery requests must have non-empty content"
+# [parser-skip]   check: DeliveryRequest.content != ""
+# [parser-skip]   severity: error
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# CONFIG
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] config unified_router:
+# [parser-skip]   short_message_threshold: int = 3        # words — skip recall for <= this
+# [parser-skip]   continuation_confidence_min: float = 0.7  # below this, treat as new request
+# [parser-skip]   recall_limit: int = 10
+# [parser-skip]   context_token_budget: int = 4096
+# [parser-skip]   tool_loop_depth_max: int = 10
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# ENTRY POINT: classify_and_route
+# ═══════════════════════════════════════════════════════════════════
+
+# This is the ONLY entry point. Every message enters here.
+# It replaces: cerebellum.preprocess(), router::decide(), task-steering classify_continuation
+procedure classify_and_route(message: InboundMessage from "inbound") -> decision into "route_decision":
+  given: "Unified entry point: classify intent and route to appropriate queue"
+
+  # 1. Check for task continuation FIRST (before any other classification)
+  read_state {key: "agent_promises"} -> $promises
+  read_state {key: "active_tasks"} -> $tasks
+  read_state {key: "conversation_tail"} -> $tail
+
+  when $promises != null OR $tasks != null:
+    classify_continuation {
+      message: $message.content,
+      recent_promises: $promises,
+      active_tasks: $tasks,
+      conversation_tail: $tail
+    } -> $continuation
+
+    when $continuation.is_continuation AND $continuation.confidence >= config.continuation_confidence_min:
+      return {
+        destination: "task_steering",
+        is_continuation: true,
+        continuation_confidence: $continuation.confidence,
+        tier: "standard",
+        reason: "task continuation detected"
+      }
+    end
+  end
+
+  # 2. Check for heartbeat/system events
+  when message.sender == "heartbeat" OR message.sender == "system":
+    return {
+      destination: "heartbeat",
+      is_continuation: false,
+      continuation_confidence: 0.0,
+      tier: "fast",
+      reason: "system event"
+    }
+  end
+
+  # 3. Check for procedural (no-model) responses
+  classify_intent {message: $message.content} -> $intent
+  when $intent == "greeting" OR $intent == "farewell" OR $intent == "status_query":
+    return {
+      destination: "procedural",
+      is_continuation: false,
+      continuation_confidence: 0.0,
+      tier: "fast",
+      reason: $intent
+    }
+  end
+
+  # 4. Default: conversation (needs model)
+  score_complexity {text: $message.content} -> $complexity
+  determine_tier {complexity: $complexity, has_tools: ($intent == "tool_use")} -> $tier
+
+  return {
+    destination: "conversation",
+    is_continuation: false,
+    continuation_confidence: 0.0,
+    tier: $tier,
+    reason: "conversation"
+  }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CONTEXT ASSEMBLY (fires for conversation-routed messages)
+# ═══════════════════════════════════════════════════════════════════
+
+procedure assemble_context(decision: RouteDecision from "route_decision", message: InboundMessage from "inbound") -> request into "model_request":
+  given: "Assemble context from memory, history, and entities for model invocation"
+
+  # Only fire for conversation destinations
+  when decision.destination != "conversation":
+    return null  # other destinations handled by their own procedures
+  end
+
+  # Short message fast-path: skip embedding/recall
+  word_count {text: $message.content} -> $words
+  when $words <= config.short_message_threshold:
+    # Use recent conversation history as context (no semantic recall)
+    read_state {key: "chat_history:{$message.chat_id}"} -> $history
+    build_messages {
+      system: null,
+      history: $history,
+      user_message: $message.content,
+      context: null
+    } -> $messages
+    return {
+      messages: $messages,
+      model_tier: decision.tier,
+      streaming: true,
+      source: "conversation",
+      task_id: null
+    }
+  end
+
+  # Full path: embed → recall → entity extract → context manage → build prompt
+  embed_text {text: $message.content} -> $embedding
+  recall_memories {embedding: $embedding, limit: config.recall_limit} -> $memories
+  extract_entities {text: $message.content} -> $entities
+  manage_context {
+    memories: $memories,
+    entities: $entities,
+    token_budget: config.context_token_budget
+  } -> $context
+
+  read_state {key: "chat_history:{$message.chat_id}"} -> $history
+  read_state {key: "system_prompt:{$message.chat_id}"} -> $system
+
+  build_messages {
+    system: $system,
+    history: $history,
+    user_message: $message.content,
+    context: $context
+  } -> $messages
+
+  return {
+    messages: $messages,
+    model_tier: decision.tier,
+    streaming: true,
+    source: "conversation",
+    task_id: null
+  }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# TASK STEERING (fires for continuation-routed messages)
+# ═══════════════════════════════════════════════════════════════════
+
+procedure dispatch_steered_task(decision: RouteDecision from "route_decision", message: InboundMessage from "inbound") -> request into "model_request":
+  given: "When a message is a task continuation, build the model request with task context"
+
+  when decision.destination != "task_steering":
+    return null
+  end
+
+  # Find the target task
+  read_state {key: "most_recent_task_id"} -> $task_id
+  read_state {key: "task:{$task_id}"} -> $task
+
+  when $task == null:
+    # Task was completed/removed — fall through to normal conversation
+    return null
+  end
+
+  read_state {key: "chat_history:{$message.chat_id}"} -> $history
+
+  build_messages {
+    system: "[task-steering] User confirmed task execution.",
+    history: $history,
+    user_message: format("[task-steering] Execute: {description}
+User said: {msg}", {description: $task.description, msg: $message.content}),
+    context: null
+  } -> $messages
+
+  return {
+    messages: $messages,
+    model_tier: "standard",
+    streaming: true,
+    source: "task_steering",
+    task_id: $task_id
+  }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# MODEL INVOCATION (IO boundary — Rust handles the actual API call)
+# ═══════════════════════════════════════════════════════════════════
+
+procedure invoke_model(request: ModelRequest from "model_request") -> response into "model_response":
+  given: "Call the model API — this is a SIDE EFFECT (Rust IO boundary)"
+  # The action handler dispatches to the actual model client
+  model_complete {
+    messages: $request.messages,
+    model_tier: $request.model_tier,
+    streaming: $request.streaming
+  } -> $result
+
+  return {
+    content: $result.content,
+    tool_calls: $result.tool_calls,
+    model: $result.model,
+    finish_reason: $result.finish_reason
+  }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# TOOL LOOP (fires when model response has tool_calls)
+# ═══════════════════════════════════════════════════════════════════
+
+procedure route_model_response(response: ModelResponse from "model_response") -> delivery into "delivery":
+  given: "Route model response: if tool_calls present, dispatch tools; otherwise deliver"
+
+  when response.tool_calls != null AND length(response.tool_calls) > 0:
+    # Dispatch to tool execution — result feeds back to model_request
+    dispatch_tools {calls: $response.tool_calls} -> $results
+    # Feed results back as a new model request
+    build_tool_followup {tool_results: $results, original_response: $response} -> $followup
+    push_queue {queue: "model_request", value: $followup}
+    return null  # don't deliver yet — tool loop continues
+  end
+
+  # Final response — deliver to user
+  return {
+    content: response.content,
+    chat_id: read_state("current_chat_id"),
+    streaming: true,
+    reply_to: null
+  }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# DELIVERY (IO boundary — Rust sends to channel)
+# ═══════════════════════════════════════════════════════════════════
+
+procedure deliver_response(delivery: DeliveryRequest from "delivery") -> done into "delivered":
+  given: "Send response to user channel — SIDE EFFECT (Rust IO boundary)"
+
+  # Side effect: send message
+  channel_send {
+    chat_id: $delivery.chat_id,
+    content: $delivery.content,
+    streaming: $delivery.streaming,
+    reply_to: $delivery.reply_to
+  } -> $sent
+
+  # Side effect: update conversation history
+  append_history {
+    chat_id: $delivery.chat_id,
+    role: "assistant",
+    content: $delivery.content
+  }
+
+  # Side effect: update conversation tail for continuation detection
+  read_state {key: "conversation_tail"} -> $tail
+  append_tail {tail: $tail, role: "assistant", content: $delivery.content, max: 5} -> $new_tail
+  write_state {key: "conversation_tail", value: $new_tail}
+
+  return {delivered: true}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# COMMITMENT DETECTION (parallel consumer of delivery queue)
+# ═══════════════════════════════════════════════════════════════════
+
+# This fires IN PARALLEL with deliver_response — both consume from "delivery"
+# In practice, the delivery queue fans out to both procedures.
+# (Alternatively, this reads from "model_response" before routing.)
+procedure detect_and_store_commitments(response: ModelResponse from "model_response") -> events into "commitment_events":
+  given: "Scan model responses for commitments and create tasks (parallel to delivery)"
+
+  when response.tool_calls != null:
+    return null  # don't scan intermediate tool-loop responses
+  end
+
+  # Delegate to commitment-detection.px logic
+  detect_commitments {response: $response.content} -> $commitments
+
+  when $commitments == null OR length($commitments) == 0:
+    return null
+  end
+
+  create_tasks_from_commitments {commitments: $commitments} -> $events
+  return $events
+
+
+# ═══════════════════════════════════════════════════════════════════
+# INBOUND HISTORY TRACKING (always fires, captures user message)
+# ═══════════════════════════════════════════════════════════════════
+
+procedure track_inbound(message: InboundMessage from "inbound") -> tracked into "inbound_tracked":
+  given: "Record inbound message in conversation history and tail (parallel to routing)"
+
+  # Side effect: append to history
+  append_history {
+    chat_id: $message.chat_id,
+    role: "user",
+    content: $message.content
+  }
+
+  # Side effect: update conversation tail
+  read_state {key: "conversation_tail"} -> $tail
+  append_tail {tail: $tail, role: "user", content: $message.content, max: 5} -> $new_tail
+  write_state {key: "conversation_tail", value: $new_tail}
+
+  return {tracked: true}

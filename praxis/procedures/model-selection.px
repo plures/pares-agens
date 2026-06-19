@@ -1,0 +1,163 @@
+# model-selection.px - Dynamic model selection as orchestration procedure
+#
+# Architecture (from kbristol):
+#   The "router" is not a config. It's a procedure.
+#   active_providers → available_models → classify_task → score → select → inject context → call
+#   The orchestrator doesn't know or care what model was selected.
+#   Model selection is just another procedure triggered by writing data.
+#
+# Queue topology:
+#   model_request → [select_model] → model_selected
+#   model_selected → [build_session_context] → context_ready
+#   context_ready → [generate] → generation_complete (IO boundary: actual LLM call)
+#
+
+# ═══════════════════════════════════════════════════════════════════════
+# Facts
+# ═══════════════════════════════════════════════════════════════════════
+
+# [parser-skip] fact ModelProvider:
+# [parser-skip]   name: string           # "openai", "anthropic", "google", "local"
+# [parser-skip]   status: string         # "active", "degraded", "offline"
+# [parser-skip]   models: list[Model]
+# [parser-skip]   rate_limits: object    # current usage vs limits
+# [parser-skip]
+# [parser-skip] fact Model:
+# [parser-skip]   id: string             # "claude-opus-4", "gpt-5.2", etc
+# [parser-skip]   provider: string
+# [parser-skip]   capabilities: object   # {code: 0.95, reasoning: 0.9, speed: 0.7, context_window: 200000}
+# [parser-skip]   cost_per_1k: float
+# [parser-skip]   latency_p50_ms: int
+# [parser-skip]   available: bool
+# [parser-skip]
+# [parser-skip] fact TaskRequirements:
+# [parser-skip]   needs_code: bool
+# [parser-skip]   needs_reasoning: bool
+# [parser-skip]   needs_speed: bool
+# [parser-skip]   context_needed: int    # tokens of context to inject
+# [parser-skip]   cost_sensitivity: string  # "low", "medium", "high"
+# [parser-skip]   quality_floor: float   # minimum capability score required
+# [parser-skip]
+
+# ═══════════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint model_must_be_available:
+# [parser-skip]   given: "Never select a model that's offline or over rate limit"
+# [parser-skip]   check: selected_model.available == true AND selected_model.provider.status != "offline"
+# [parser-skip]   severity: error
+# [parser-skip]   message: "Selected model is unavailable. Re-run selection with updated provider state."
+
+# [parser-skip] constraint context_fits_window:
+# [parser-skip]   given: "Selected model must have enough context window for the task"
+# [parser-skip]   check: selected_model.context_window >= task.context_needed * 1.2
+# [parser-skip]   severity: error
+# [parser-skip]   message: "Task context exceeds model's window. Select a model with larger context."
+
+# [parser-skip] constraint cost_within_budget:
+# [parser-skip]   given: "Respect cost sensitivity — don't use opus for formatting tasks"
+# [parser-skip]   check: when task.cost_sensitivity == "high": selected_model.cost_per_1k <= budget_threshold
+# [parser-skip]   severity: warning
+# [parser-skip]   message: "Selected model exceeds cost budget for this task's sensitivity level."
+
+# ═══════════════════════════════════════════════════════════════════════
+# Procedures
+# ═══════════════════════════════════════════════════════════════════════
+
+# Entry: select the best model for a task
+procedure select_model(request: object from "model_request") -> write into "model_selected":
+  given: "Dynamically select the best available model based on task requirements and live provider state"
+
+  # Get live provider state from PluresDB
+  read_state {key: "providers:active"} -> $providers
+
+  # Enumerate all currently available models across providers
+  list_available_models {providers: $providers} -> $models
+
+  # Classify what this task actually needs
+  classify_task_requirements {
+    task: $request,
+    history_key: "model_selection:history"
+  } -> $requirements
+
+  # Score each model against requirements
+  # Scoring is a pure function: capabilities × weights → score
+  score_models_against_requirements {
+    models: $models,
+    requirements: $requirements
+  } -> $scored
+
+  # Pick the top scorer (with fallback chain)
+  select_top_with_fallback {
+    scored: $scored,
+    fallback_count: 2
+  } -> $selection
+
+  # Record selection for future learning
+  write_state {key: "model_selection:last", value: {
+    task_type: $requirements,
+    selected: $selection,
+    timestamp: $request
+  }}
+
+  return {
+    model: $selection,
+    task: $request,
+    requirements: $requirements
+  }
+
+
+# Build optimal session context for the selected model
+procedure build_session_context(selection: object from "model_selected") -> write into "context_ready":
+  given: "Assemble the best session context given the model's capabilities and the task"
+
+  get_field {object: $selection, field: "model"} -> $model
+  get_field {object: $selection, field: "task"} -> $task
+  get_field {object: $model, field: "context_window"} -> $window
+
+  # Calculate context budget (leave room for generation)
+  compute_context_budget {
+    window: $window,
+    reserve_for_output: 4096,
+    reserve_for_system: 2048
+  } -> $budget
+
+  # Retrieve relevant memories, constrained by budget
+  recall_relevant_context {
+    task: $task,
+    max_tokens: $budget,
+    strategy: "recency_weighted_relevance"
+  } -> $context
+
+  # Build the final prompt assembly
+  assemble_session {
+    system_context: $context,
+    task: $task,
+    model: $model
+  } -> $session
+
+  return $session
+
+
+# After generation completes, record quality signal for future selection
+procedure record_model_performance(result: object from "generation_complete") -> write into "model_feedback":
+  given: "Learn from each generation to improve future model selection"
+
+  get_field {object: $result, field: "model_used"} -> $model
+  get_field {object: $result, field: "quality_signal"} -> $quality
+  get_field {object: $result, field: "latency_ms"} -> $latency
+  get_field {object: $result, field: "task_type"} -> $task_type
+
+  # Update running performance stats in PluresDB
+  read_state {key: "model_stats:{$model}"} -> $stats
+  update_running_average {
+    stats: $stats,
+    new_quality: $quality,
+    new_latency: $latency,
+    task_type: $task_type
+  } -> $updated_stats
+
+  write_state {key: "model_stats:{$model}", value: $updated_stats}
+
+  return {recorded: true}

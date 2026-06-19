@@ -1,0 +1,271 @@
+# task-steering.px — Message continuation & task steering (v3 dataflow)
+#
+# Determines whether an inbound message is a NEW request or a CONTINUATION
+# of existing work. If continuation, steers the active task instead of
+# creating a new conversation.
+#
+# This is the critical missing piece: "do it", "yes", "continue", "fix it"
+# are NOT new requests — they steer the most recent task/commitment.
+#
+# Queue topology:
+#
+#   inbound ─→ [classify_continuation] ─→ continuation_decision
+#                     │                          │
+#                     │                    ┌─────┴──────┐
+#                     │                    ▼            ▼
+#                     │          [steer_active_task]  (pass-through to routing)
+#                     │                    │
+#                     │                    ▼
+#                     │            task_dispatch
+#                     │
+#                     └─ reads: agent_promises, active_tasks
+#
+
+# ═══════════════════════════════════════════════════════════════════
+# Facts
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] fact ContinuationSignal:
+# [parser-skip]   is_continuation: bool
+# [parser-skip]   confidence: float
+# [parser-skip]   target_task_id: optional[string]
+# [parser-skip]   intent: enum(confirm, redirect, clarify, cancel, new_request)
+# [parser-skip]   original_message: string
+# [parser-skip] 
+# [parser-skip] fact SteerResult:
+# [parser-skip]   task_id: string
+# [parser-skip]   action: enum(dispatched, priority_bumped, cancelled, clarified)
+# [parser-skip]   message_to_agent: string
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint continuation_confidence_bounded:
+# [parser-skip]   given: "Continuation confidence must be between 0.0 and 1.0"
+# [parser-skip]   check: ContinuationSignal.confidence >= 0.0 AND ContinuationSignal.confidence <= 1.0
+# [parser-skip]   severity: error
+# [parser-skip] 
+# [parser-skip] constraint steer_requires_task:
+# [parser-skip]   given: "Cannot steer a task that doesn't exist"
+# [parser-skip]   check: SteerResult.task_id != ""
+# [parser-skip]   severity: error
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Dataflow Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# Entry point: every inbound message hits this BEFORE routing.
+# Short-circuits to task steering if it's a continuation.
+procedure classify_continuation(message: string from "inbound", context: string from "conversation_context") -> decision into "continuation_decision":
+  given: "Determine if an inbound message is a task continuation or a new request"
+
+  # Load recent promises and active tasks
+  read_state {key: "agent_promises"} -> $promises
+  read_state {key: "active_tasks"} -> $tasks
+
+  # If no promises or tasks exist, it's always a new request
+  when $promises == null AND $tasks == null:
+    return {
+      is_continuation: false,
+      confidence: 1.0,
+      target_task_id: null,
+      intent: "new_request",
+      original_message: $message
+    }
+  end
+
+  # Check for continuation patterns
+  classify_intent {
+    message: $message,
+    recent_promises: $promises,
+    active_tasks: $tasks,
+    conversation_tail: $context
+  } -> $classification
+
+  # Confirmation patterns: "do it", "yes", "go ahead", "fix it", "proceed"
+  # Redirect patterns: "actually, do X instead", "focus on Y"
+  # Clarification patterns: "what do you mean by...", "which one?"
+  # Cancel patterns: "never mind", "stop", "cancel"
+
+  return $classification
+
+
+# Fires when classify_continuation determines this IS a continuation
+procedure steer_active_task(decision: ContinuationSignal from "continuation_decision") -> result into "task_dispatch":
+  given: "Steer the active task based on user's continuation intent"
+
+  # Only fire for continuations
+  when decision.is_continuation == false:
+    return null  # pass-through — routing.px handles new requests
+  end
+
+  # Resolve the target task
+  when decision.target_task_id != null:
+    read_state {key: "task:{decision.target_task_id}"} -> $task
+  end
+  when decision.target_task_id == null:
+    # No explicit target — use the most recent promise/task
+    read_state {key: "most_recent_task_id"} -> $recent_id
+    read_state {key: "task:{$recent_id}"} -> $task
+  end
+
+  when $task == null:
+    # Edge case: promise existed but task was already completed/removed
+    return null  # fall through to normal routing
+  end
+
+  # Act on intent
+  when decision.intent == "confirm":
+    # User confirmed — dispatch immediately with high priority
+    update_state {key: "task:{$task.id}:priority", value: 0}  # highest
+    return {
+      task_id: $task.id,
+      action: "dispatched",
+      message_to_agent: "[task-steering] User confirmed. Execute now: {$task.description}"
+    }
+  end
+
+  when decision.intent == "redirect":
+    # User wants a different focus — update task description
+    update_state {key: "task:{$task.id}:description", value: decision.original_message}
+    return {
+      task_id: $task.id,
+      action: "dispatched",
+      message_to_agent: "[task-steering] User redirected task. New focus: {decision.original_message}"
+    }
+  end
+
+  when decision.intent == "cancel":
+    # User cancelled — mark task done, don't dispatch
+    update_state {key: "task:{$task.id}:status", value: "cancelled"}
+    return {
+      task_id: $task.id,
+      action: "cancelled",
+      message_to_agent: null
+    }
+  end
+
+  when decision.intent == "clarify":
+    # User needs clarification — don't dispatch, ask the model to clarify
+    return {
+      task_id: $task.id,
+      action: "clarified",
+      message_to_agent: "[task-steering] User asking for clarification on: {$task.description}. Question: {decision.original_message}"
+    }
+  end
+
+  return null
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Utility Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# utility: called by classify_continuation
+procedure classify_intent(message: string, recent_promises: list, active_tasks: list, conversation_tail: string) -> classification:
+  given: "Classify message intent relative to recent promises and tasks"
+
+  # Normalize message
+  lowercase {text: $message} -> $lower
+
+  # Confirmation signals (short, affirmative, action-directing)
+  match_patterns {
+    text: $lower,
+    patterns: [
+      "do it", "yes", "go ahead", "proceed", "fix it", "do that",
+      "go for it", "make it happen", "execute", "run it", "ship it",
+      "start", "begin", "let's go", "yep", "yeah", "confirmed",
+      "approved", "do both", "do all", "continue", "keep going"
+    ]
+  } -> $is_confirm
+
+  when $is_confirm:
+    # Find most relevant task
+    find_most_recent {tasks: $active_tasks, promises: $recent_promises} -> $target
+    return {
+      is_continuation: true,
+      confidence: 0.95,
+      target_task_id: $target,
+      intent: "confirm",
+      original_message: $message
+    }
+  end
+
+  # Cancel signals
+  match_patterns {
+    text: $lower,
+    patterns: [
+      "never mind", "cancel", "stop", "don't", "abort",
+      "forget it", "scratch that", "nah", "no don't"
+    ]
+  } -> $is_cancel
+
+  when $is_cancel:
+    find_most_recent {tasks: $active_tasks, promises: $recent_promises} -> $target
+    return {
+      is_continuation: true,
+      confidence: 0.9,
+      target_task_id: $target,
+      intent: "cancel",
+      original_message: $message
+    }
+  end
+
+  # Redirect signals ("actually...", "instead...", "focus on...")
+  match_patterns {
+    text: $lower,
+    patterns: ["actually", "instead", "focus on", "prioritize", "switch to", "rather"]
+  } -> $is_redirect
+
+  when $is_redirect AND length($message) > 15:
+    find_most_recent {tasks: $active_tasks, promises: $recent_promises} -> $target
+    return {
+      is_continuation: true,
+      confidence: 0.8,
+      target_task_id: $target,
+      intent: "redirect",
+      original_message: $message
+    }
+  end
+
+  # Short messages (< 20 chars) after a promise are likely continuations
+  when length($message) < 20 AND length($recent_promises) > 0:
+    # Heuristic: short messages right after promises = continuation
+    time_since_last_promise {promises: $recent_promises} -> $gap_seconds
+    when $gap_seconds < 300:  # within 5 minutes
+      find_most_recent {tasks: $active_tasks, promises: $recent_promises} -> $target
+      return {
+        is_continuation: true,
+        confidence: 0.7,
+        target_task_id: $target,
+        intent: "confirm",
+        original_message: $message
+      }
+    end
+  end
+
+  # Default: new request
+  return {
+    is_continuation: false,
+    confidence: 0.6,
+    target_task_id: null,
+    intent: "new_request",
+    original_message: $message
+  }
+
+
+# utility: called by classify_intent
+procedure find_most_recent(tasks: list, promises: list) -> task_id:
+  given: "Find the most recently created task or promise"
+  # Merge tasks + promises by timestamp, return newest ID
+  sort_by_time {items: $tasks, field: "created_at", order: "desc"} -> $sorted
+  when length($sorted) > 0:
+    return $sorted[0].id
+  end
+  # Fall back to promises
+  when length($promises) > 0:
+    last {list: $promises} -> $last_promise
+    return $last_promise.task_id
+  end
+  return null

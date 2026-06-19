@@ -1,0 +1,316 @@
+# recursive-self-improvement.px - RSI as core orchestration principle
+#
+# Architecture:
+#   The root orchestrator doesn't just execute tasks — it LEARNS from them.
+#   After each task cycle, it evaluates its own performance and can:
+#   1. Refine sub-procedure parameters (tuning)
+#   2. Write new sub-procedures for patterns it encounters repeatedly (growth)
+#   3. Deprecate sub-procedures that consistently underperform (pruning)
+#   4. Compose existing procedures in new ways (recombination)
+#
+#   The orchestrator improves SUB-procedures, never itself directly.
+#   Self-modification of the RSI procedure requires human approval.
+#   This is the safety boundary.
+#
+# Queue topology:
+#   task_complete → [evaluate_performance] → performance_signal
+#   performance_signal → [identify_improvement] → improvement_candidate
+#   improvement_candidate → [validate_improvement] → validated_improvement | rejected_improvement
+#   validated_improvement → [apply_improvement] → procedure_updated
+#   procedure_updated → [notify_human] → notification (if threshold exceeded)
+#
+
+# ═══════════════════════════════════════════════════════════════════════
+# Facts
+# ═══════════════════════════════════════════════════════════════════════
+
+# [parser-skip] fact PerformanceSignal:
+# [parser-skip]   task_id: string
+# [parser-skip]   task_type: string
+# [parser-skip]   stages_attempted: int
+# [parser-skip]   stages_passed_first_try: int
+# [parser-skip]   total_retries: int
+# [parser-skip]   total_duration_ms: int
+# [parser-skip]   model_selections: list[object]    # which models were picked and how they performed
+# [parser-skip]   context_quality: float            # did the context contain what was needed?
+# [parser-skip]   final_result_quality: float       # human signal or automated check
+# [parser-skip]   bottleneck_stage: optional[string] # which stage took longest / retried most
+# [parser-skip]
+# [parser-skip] fact ImprovementCandidate:
+# [parser-skip]   target_procedure: string          # which .px to improve
+# [parser-skip]   improvement_type: string          # "tune", "grow", "prune", "recombine"
+# [parser-skip]   rationale: string                 # why this improvement
+# [parser-skip]   proposed_change: string           # the new .px content or parameter delta
+# [parser-skip]   confidence: float                 # how confident are we this helps
+# [parser-skip]   evidence: list[string]            # task_ids that support this improvement
+# [parser-skip]
+# [parser-skip] fact ImprovementHistory:
+# [parser-skip]   procedure_name: string
+# [parser-skip]   version: int
+# [parser-skip]   previous_content: string          # for rollback
+# [parser-skip]   change_description: string
+# [parser-skip]   applied_at: int
+# [parser-skip]   performance_before: float         # avg quality before change
+# [parser-skip]   performance_after: optional[float] # measured after N tasks
+# [parser-skip]
+
+# ═══════════════════════════════════════════════════════════════════════
+# Constraints (SAFETY BOUNDARIES)
+# ═══════════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint cannot_modify_self:
+# [parser-skip]   given: "The RSI procedure cannot modify itself or constraint-checking procedures"
+# [parser-skip]   check: improvement_candidate.target_procedure NOT IN ["recursive-self-improvement", "validate_improvement", "constraint_check"]
+# [parser-skip]   severity: error
+# [parser-skip]   message: "Self-modification of RSI or safety procedures requires human approval. Write to notification queue instead."
+
+# [parser-skip] constraint improvement_needs_evidence:
+# [parser-skip]   given: "Improvements must be backed by at least 3 task observations"
+# [parser-skip]   check: improvement_candidate.evidence.length >= 3
+# [parser-skip]   severity: error
+# [parser-skip]   message: "Cannot propose improvement without at least 3 supporting observations. Collect more data."
+
+# [parser-skip] constraint rate_limited_modifications:
+# [parser-skip]   given: "No more than 3 procedure modifications per 24h without human approval"
+# [parser-skip]   check: count(improvements_applied_last_24h) < 3
+# [parser-skip]   severity: error
+# [parser-skip]   message: "Modification rate limit reached. Queue remaining improvements for human review."
+
+# [parser-skip] constraint must_be_rollbackable:
+# [parser-skip]   given: "Every improvement must store the previous version for rollback"
+# [parser-skip]   check: improvement.previous_content != null
+# [parser-skip]   severity: error
+# [parser-skip]   message: "Cannot apply improvement without storing previous version. Rollback must always be possible."
+
+# [parser-skip] constraint validated_before_registration:
+# [parser-skip]   given: "New/modified procedures must pass constraint validation before going live"
+# [parser-skip]   check: improvement.validation_passed == true
+# [parser-skip]   severity: error
+# [parser-skip]   message: "Procedure failed constraint validation. Cannot register."
+
+# [parser-skip] constraint regression_triggers_rollback:
+# [parser-skip]   given: "If performance degrades after an improvement, auto-rollback"
+# [parser-skip]   check: when improvement.performance_after != null: improvement.performance_after >= improvement.performance_before * 0.9
+# [parser-skip]   severity: error
+# [parser-skip]   message: "Performance regression detected. Rolling back to previous version."
+
+# ═══════════════════════════════════════════════════════════════════════
+# Procedures
+# ═══════════════════════════════════════════════════════════════════════
+
+# Evaluate performance after each completed task
+procedure evaluate_performance(completion: object from "task_complete") -> write into "performance_signal":
+  given: "Extract performance signals from a completed task for the improvement loop"
+
+  get_field {object: $completion, field: "task_id"} -> $task_id
+  get_field {object: $completion, field: "stages"} -> $stages
+  get_field {object: $completion, field: "result"} -> $result
+
+  # Count retries, passes, duration
+  compute_stage_stats {stages: $stages} -> $stats
+
+  # Identify the bottleneck (slowest or most-retried stage)
+  find_bottleneck {stages: $stages} -> $bottleneck
+
+  # Read model selection history for this task
+  read_state {key: "model_selection:task:{$task_id}"} -> $model_history
+
+  # Compute overall quality signal
+  compute_quality_signal {
+    result: $result,
+    stats: $stats,
+    model_history: $model_history
+  } -> $quality
+
+  # Store for trend analysis
+  timestamp_now {} -> $now
+  write_state {key: "performance:task:{$task_id}", value: {
+    stats: $stats,
+    quality: $quality,
+    bottleneck: $bottleneck,
+    timestamp: $now
+  }}
+
+  return {
+    task_id: $task_id,
+    task_type: $completion,
+    stats: $stats,
+    quality: $quality,
+    bottleneck: $bottleneck,
+    model_history: $model_history
+  }
+
+
+# Identify improvement opportunities from accumulated signals
+procedure identify_improvement(signal: object from "performance_signal") -> write into "improvement_candidate":
+  given: "Analyze performance signals to propose procedure improvements"
+
+  # Read recent performance history (last N tasks)
+  read_state {key: "performance:history"} -> $history
+
+  # Append current signal
+  append_to_list {list: $history, items: [$signal]} -> $updated_history
+  write_state {key: "performance:history", value: $updated_history}
+
+  # Pattern detection: is there a recurring bottleneck?
+  detect_recurring_pattern {
+    history: $updated_history,
+    min_occurrences: 3,
+    lookback: 20
+  } -> $pattern
+
+  # If no actionable pattern, exit early (no improvement needed)
+  check_actionable {pattern: $pattern} -> $actionable
+
+  # Generate improvement proposal
+  propose_improvement {
+    pattern: $pattern,
+    current_procedures: "praxis/procedures/",
+    improvement_types: ["tune", "grow", "prune", "recombine"]
+  } -> $proposal
+
+  return $proposal
+
+
+# Validate a proposed improvement before applying
+procedure validate_improvement(candidate: object from "improvement_candidate") -> write into "validated_improvement":
+  given: "Ensure proposed improvement passes all safety constraints before application"
+
+  get_field {object: $candidate, field: "target_procedure"} -> $target
+  get_field {object: $candidate, field: "proposed_change"} -> $new_content
+
+  # Safety check: cannot modify self or safety procedures
+  check_modification_target {
+    target: $target,
+    forbidden: ["recursive-self-improvement", "validate_improvement", "constraint_check"]
+  } -> $target_safe
+
+  # Parse the proposed .px content — must be syntactically valid
+  validate_px_syntax {content: $new_content} -> $syntax_valid
+
+  # Run constraint checks against the proposed procedure
+  validate_constraints {
+    procedure_content: $new_content,
+    constraint_files: "praxis/px-first.px"
+  } -> $constraints_pass
+
+  # Check rate limit
+  read_state {key: "improvements:applied_last_24h"} -> $recent_count
+  check_rate_limit {count: $recent_count, max: 3} -> $within_limit
+
+  # Read current version for rollback storage
+  read_state {key: "procedure:content:{$target}"} -> $current_content
+
+  # All checks must pass
+  all_checks_pass {
+    target_safe: $target_safe,
+    syntax_valid: $syntax_valid,
+    constraints_pass: $constraints_pass,
+    within_limit: $within_limit
+  } -> $validated
+
+  return {
+    candidate: $candidate,
+    previous_content: $current_content,
+    validation_passed: $validated
+  }
+
+
+# Apply a validated improvement
+procedure apply_improvement(validated: object from "validated_improvement") -> write into "procedure_updated":
+  given: "Apply a validated improvement: store previous version, write new content, register"
+
+  get_field {object: $validated, field: "candidate"} -> $candidate
+  get_field {object: $candidate, field: "target_procedure"} -> $target
+  get_field {object: $candidate, field: "proposed_change"} -> $new_content
+  get_field {object: $validated, field: "previous_content"} -> $previous
+
+  # Store version history (for rollback)
+  read_state {key: "procedure:versions:{$target}"} -> $versions
+  timestamp_now {} -> $now
+  append_to_list {list: $versions, items: [{
+    content: $previous,
+    replaced_at: $now,
+    reason: $candidate
+  }]} -> $updated_versions
+  write_state {key: "procedure:versions:{$target}", value: $updated_versions}
+
+  # Write the new procedure content
+  write_state {key: "procedure:content:{$target}", value: $new_content}
+
+  # Register in reactive registry (makes it live)
+  register_procedure {
+    name: $target,
+    content: $new_content
+  } -> $registered
+
+  # Increment daily modification counter
+  read_state {key: "improvements:applied_last_24h"} -> $count
+  increment {value: $count} -> $new_count
+  write_state {key: "improvements:applied_last_24h", value: $new_count}
+
+  # Record for performance comparison
+  read_state {key: "performance:avg_quality"} -> $current_avg
+  write_state {key: "improvement:pending_eval:{$target}", value: {
+    applied_at: $now,
+    performance_before: $current_avg,
+    change_description: $candidate
+  }}
+
+  return {
+    procedure: $target,
+    version: $new_count,
+    registered: $registered
+  }
+
+
+# Monitor improvements for regression and auto-rollback
+procedure check_regression(signal: object from "performance_signal") -> write into "rollback_needed":
+  given: "After an improvement is applied, monitor for regression and rollback if quality drops"
+
+  # Check if any pending evaluations exist
+  read_state {key: "improvement:pending_evals"} -> $pending
+
+  # For each pending improvement, compare before/after
+  evaluate_pending_improvements {
+    pending: $pending,
+    current_signal: $signal,
+    min_samples_for_eval: 5,
+    regression_threshold: 0.9
+  } -> $evaluations
+
+  # If regression detected, trigger rollback
+  find_regressions {evaluations: $evaluations} -> $regressions
+
+  return $regressions
+
+
+# Rollback a regressing improvement
+procedure rollback_improvement(regression: object from "rollback_needed") -> write into "procedure_updated":
+  given: "Rollback a procedure to its previous version when regression is detected"
+
+  get_field {object: $regression, field: "procedure"} -> $target
+
+  # Read version history
+  read_state {key: "procedure:versions:{$target}"} -> $versions
+
+  # Get most recent previous version
+  get_last_item {list: $versions} -> $previous_version
+  get_field {object: $previous_version, field: "content"} -> $restore_content
+
+  # Restore it
+  write_state {key: "procedure:content:{$target}", value: $restore_content}
+  register_procedure {name: $target, content: $restore_content} -> $registered
+
+  # Notify human about the rollback
+  write_state {key: "notification:rollback", value: {
+    procedure: $target,
+    reason: $regression,
+    rolled_back_to: $previous_version
+  }}
+
+  return {
+    procedure: $target,
+    rolled_back: true,
+    registered: $registered
+  }

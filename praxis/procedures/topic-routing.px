@@ -1,0 +1,156 @@
+# topic-routing.px - Message topic classification and session context routing
+#
+# Architecture (from kbristol):
+#   if exists(previous_topic) -> new_message.topic.default = previous
+#   -> classifier.determineTopic(new_message + messages_marked_for_reevaluation)
+#   -> if clear topic found: set topic, trigger context change
+#   -> else: keep default, mark for reevaluation
+#   -> topic change triggers session context change
+#   -> no topic change triggers steering message
+#
+# Queue topology:
+#   inbound_message → [classify_topic] → topic_decision
+#   topic_decision(changed=true) → [switch_context] → context_loaded
+#   topic_decision(changed=false) → [steer_continuation] → steering_message
+#
+
+# ═══════════════════════════════════════════════════════════════════════
+# Facts
+# ═══════════════════════════════════════════════════════════════════════
+
+# [parser-skip] fact TopicState:
+# [parser-skip]   current_topic: optional[string]
+# [parser-skip]   confidence: float
+# [parser-skip]   messages_pending_reeval: list[string]
+# [parser-skip]   last_change_at: optional[int]
+# [parser-skip]
+# [parser-skip] fact TopicDecision:
+# [parser-skip]   new_topic: optional[string]
+# [parser-skip]   changed: bool
+# [parser-skip]   confidence: float
+# [parser-skip]   reeval_ids: list[string]
+# [parser-skip]
+
+# ═══════════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint topic_requires_confidence:
+# [parser-skip]   given: "Topic changes require minimum confidence threshold"
+# [parser-skip]   check: when TopicDecision.changed == true: TopicDecision.confidence >= 0.7
+# [parser-skip]   severity: error
+# [parser-skip]   message: "Cannot switch topic without sufficient confidence. Mark for reevaluation instead."
+
+# [parser-skip] constraint reeval_bounded:
+# [parser-skip]   given: "Messages pending reevaluation cannot grow unbounded"
+# [parser-skip]   check: TopicState.messages_pending_reeval.length <= 5
+# [parser-skip]   severity: warning
+# [parser-skip]   message: "Too many messages pending reevaluation. Force a topic decision."
+
+# ═══════════════════════════════════════════════════════════════════════
+# Procedures
+# ═══════════════════════════════════════════════════════════════════════
+
+# Entry: classify an incoming message's topic
+procedure classify_topic(message: object from "inbound_classified") -> write into "topic_decision":
+  given: "Determine the topic of an incoming message relative to conversation state"
+
+  # Get current topic state from PluresDB
+  read_state {key: "topic:current"} -> $topic_state
+
+  # Default: inherit previous topic
+  get_field {object: $topic_state, field: "current_topic", default: null} -> $default_topic
+
+  # Get messages marked for reevaluation (they need re-classifying with new context)
+  read_state {key: "topic:pending_reeval"} -> $pending_reeval
+
+  # Run classifier with current message + pending messages
+  classify_message_topic {
+    message: $message,
+    previous_topic: $default_topic,
+    pending_messages: $pending_reeval
+  } -> $classification
+
+  # Evaluate confidence
+  get_field {object: $classification, field: "confidence"} -> $confidence
+  get_field {object: $classification, field: "topic"} -> $found_topic
+
+  # Decision logic: high confidence = change topic; low confidence = keep default, mark for reeval
+  evaluate_topic_confidence {
+    found_topic: $found_topic,
+    default_topic: $default_topic,
+    confidence: $confidence,
+    threshold: 0.7
+  } -> $decision
+
+  return $decision
+
+
+# Triggered when topic changes — load new context
+procedure switch_context(decision: object from "topic_changed") -> write into "context_loaded":
+  given: "Switch session context when topic changes"
+
+  get_field {object: $decision, field: "new_topic"} -> $new_topic
+
+  # Load topic-specific context from PluresDB
+  read_state {key: "topic:context:{$new_topic}"} -> $context
+
+  # Update current topic state
+  timestamp_now {} -> $now
+  write_state {key: "topic:current", value: {
+    current_topic: $new_topic,
+    last_change_at: $now,
+    messages_pending_reeval: []
+  }}
+
+  # Clear reevaluation queue (new topic resolves ambiguity)
+  write_state {key: "topic:pending_reeval", value: []}
+
+  # Return loaded context for the cerebellum to use
+  return {topic: $new_topic, context: $context, switched: true}
+
+
+# Triggered when topic does NOT change — generate steering
+procedure steer_continuation(decision: object from "topic_unchanged") -> write into "steering_message":
+  given: "Generate steering guidance when topic continues"
+
+  get_field {object: $decision, field: "default_topic"} -> $current_topic
+  get_field {object: $decision, field: "reeval_ids"} -> $new_reeval
+
+  # Add message to reevaluation queue if confidence was low
+  read_state {key: "topic:pending_reeval"} -> $existing_reeval
+  append_to_list {list: $existing_reeval, items: $new_reeval} -> $updated_reeval
+  write_state {key: "topic:pending_reeval", value: $updated_reeval}
+
+  # Generate steering based on continued topic
+  build_steering {
+    topic: $current_topic,
+    continuation: true,
+    pending_reeval_count: $updated_reeval
+  } -> $steering
+
+  return $steering
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Utilities
+# ═══════════════════════════════════════════════════════════════════════
+
+# Force topic decision when reevaluation queue is full
+procedure force_topic_resolution(from "reeval_overflow") -> write into "topic_decision":
+  given: "When reevaluation queue exceeds bounds, force a classification with all pending context"
+
+  read_state {key: "topic:pending_reeval"} -> $pending
+  read_state {key: "topic:current"} -> $topic_state
+
+  # Classify with all accumulated context — must make a decision
+  force_classify_topic {
+    pending_messages: $pending,
+    current_topic: $topic_state,
+    force_decision: true
+  } -> $forced_decision
+
+  # Clear reeval queue regardless
+  write_state {key: "topic:pending_reeval", value: []}
+
+  return $forced_decision

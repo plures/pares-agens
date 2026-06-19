@@ -1,0 +1,61 @@
+# guidance.px — Praxis guidance generation as v3 dataflow procedures
+#
+# Generates contextual guidance blocks injected into system prompts.
+# inject_guidance and update_guidance_on_violation are queue-driven;
+# generate_guidance is a utility called by inject_guidance.
+#
+# Queue topology:
+#
+#   model_request ─→ [inject_guidance] ─→ enhanced_prompt
+#   constraint_violation ─→ [update_guidance_on_violation] ─→ active_guidance
+#                                │
+#                                └─ calls [generate_guidance] (utility)
+#
+
+# [parser-skip] fact Guidance:
+# [parser-skip]   constraints: list
+# [parser-skip]   session_type: string
+# [parser-skip]   formatted_block: string
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint guidance_always_injected:
+# [parser-skip]   given: "Every model request must pass through guidance injection"
+# [parser-skip]   check: enhanced_prompt.guidance != ""
+# [parser-skip]   severity: error
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Dataflow Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# Inject praxis guidance into the system prompt before model invocation
+procedure inject_guidance(model_request: string from "model_request") -> enhanced_prompt into "enhanced_prompt":
+  given: "Inject praxis guidance into the system prompt before model invocation"
+  generate_guidance {session_type: $session_type, context: $context} -> $guidance
+  pluresdb_read {key: "config:system_prompt"} -> $base_prompt
+  append_guidance {base: $base_prompt, guidance: $guidance} -> $enhanced
+  pluresdb_write {key: "config:system_prompt_enhanced", value: $enhanced}
+  return $enhanced
+
+# Update guidance when a constraint violation is detected
+procedure update_guidance_on_violation(event: string from "constraint_violation") -> updated_guidance into "active_guidance":
+  given: "Update guidance when a constraint violation is detected"
+  db_get {key: "session:violation_history"} -> $history
+  pluresdb_append {key: "session:violation_history", value: $event}
+  regenerate_guidance {violations: $history} -> $updated
+  return $updated
+
+# ═══════════════════════════════════════════════════════════════════
+# Utility Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# utility: called by inject_guidance
+procedure generate_guidance(session_type: string, context: string) -> guidance:
+  given: "Generate contextual praxis guidance for the current conversation state"
+  db_get_prefix {prefix: "constraint:"} -> $constraints
+  db_get {key: "session:context"} -> $session_context
+  filter_relevant {constraints: $constraints, context: $session_context} -> $relevant
+  format_guidance_block {constraints: $relevant, session_type: $session_type} -> $guidance
+  return $guidance

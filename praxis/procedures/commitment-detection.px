@@ -1,0 +1,249 @@
+# commitment-detection.px — Extract agent commitments from model responses (v3 dataflow)
+#
+# Replaces the Rust-side extract_commitments() function.
+# Detects when the model makes promises and creates tasks from them.
+#
+# Queue topology:
+#
+#   model_response ─→ [detect_commitments] ─→ commitments
+#                                                  │
+#                                                  ▼
+#                                    [create_tasks_from_commitments] ─→ task_created
+#                                                  │
+#                                                  ├─ writes: agent_promises (state)
+#                                                  ├─ writes: task:{id} (PluresDB)
+#                                                  └─ writes: most_recent_task_id (state)
+#
+
+# ═══════════════════════════════════════════════════════════════════
+# Facts
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] fact Commitment:
+# [parser-skip]   text: string
+# [parser-skip]   verb: string
+# [parser-skip]   confidence: float
+# [parser-skip]   source_pattern: enum(numbered_list, will_statement, let_me, action_verb)
+# [parser-skip] 
+# [parser-skip] fact TaskCreatedEvent:
+# [parser-skip]   task_id: string
+# [parser-skip]   description: string
+# [parser-skip]   priority: int
+# [parser-skip]   source_commitment: string
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint commitment_minimum_length:
+# [parser-skip]   given: "Commitments must be substantive — not too short to be actionable"
+# [parser-skip]   check: length(Commitment.text) >= 15
+# [parser-skip]   severity: error
+# [parser-skip] 
+# [parser-skip] constraint commitment_has_verb:
+# [parser-skip]   given: "Commitments must contain an action verb to be actionable"
+# [parser-skip]   check: Commitment.verb != ""
+# [parser-skip]   severity: warning
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Dataflow Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# Scan model responses for commitment language
+procedure detect_commitments(response: string from "model_response") -> commitments into "commitments":
+  given: "Extract actionable commitments from a model response"
+
+  # Split response into sentences
+  split_sentences {text: $response} -> $sentences
+
+  # Action verbs that signal commitment
+  define $action_verbs = [
+    "diagnose", "fix", "implement", "write", "create", "update",
+    "check", "verify", "build", "deploy", "configure", "set up",
+    "refactor", "optimize", "debug", "test", "add", "remove",
+    "migrate", "install", "resolve", "investigate", "wire",
+    "connect", "integrate", "port", "rewrite", "redesign"
+  ]
+
+  define $commitments = []
+
+  # Pattern 1: Numbered lists with action verbs
+  # "1. Diagnose why..."  "2. Fix the..."
+  extract_numbered_items {text: $response} -> $numbered
+  loop over $numbered as item:
+    extract_leading_verb {text: $item, verbs: $action_verbs} -> $verb
+    when $verb != null AND length($item) >= 15:
+      append $commitments {
+        text: $item,
+        verb: $verb,
+        confidence: 0.95,
+        source_pattern: "numbered_list"
+      }
+    end
+  end
+
+  # Pattern 2: "I will..." / "I'll..."
+  extract_will_statements {sentences: $sentences} -> $will_items
+  loop over $will_items as item:
+    extract_leading_verb {text: $item, verbs: $action_verbs} -> $verb
+    when $verb != null AND length($item) >= 15:
+      # Deduplicate against numbered items
+      is_duplicate {item: $item, existing: $commitments} -> $dup
+      when NOT $dup:
+        append $commitments {
+          text: $item,
+          verb: $verb,
+          confidence: 0.9,
+          source_pattern: "will_statement"
+        }
+      end
+    end
+  end
+
+  # Pattern 3: "Let me..." statements
+  extract_let_me_statements {sentences: $sentences} -> $let_me_items
+  loop over $let_me_items as item:
+    extract_leading_verb {text: $item, verbs: $action_verbs} -> $verb
+    when $verb != null AND length($item) >= 15:
+      is_duplicate {item: $item, existing: $commitments} -> $dup
+      when NOT $dup:
+        append $commitments {
+          text: $item,
+          verb: $verb,
+          confidence: 0.85,
+          source_pattern: "let_me"
+        }
+      end
+    end
+  end
+
+  when length($commitments) == 0:
+    return null  # no commitments detected — propagation stops
+  end
+
+  return $commitments
+
+
+# Create tasks from detected commitments
+procedure create_tasks_from_commitments(commitments: list[Commitment] from "commitments") -> events into "task_created":
+  given: "Create tracked tasks from detected agent commitments"
+
+  define $events = []
+  define $task_ids = []
+
+  loop over $commitments as commitment:
+    # Generate task ID
+    generate_id {} -> $id
+    timestamp_now {} -> $now
+
+    # Priority based on confidence + position (first = highest priority)
+    compute_priority {confidence: $commitment.confidence, index: index()} -> $priority
+
+    # Write task to PluresDB
+    pluresdb_write {
+      key: "task:{$id}",
+      value: {
+        id: $id,
+        description: $commitment.text,
+        priority: $priority,
+        status: "pending",
+        created_at: $now,
+        source: "commitment_detection",
+        source_pattern: $commitment.source_pattern,
+        verb: $commitment.verb
+      }
+    }
+
+    append $task_ids $id
+    append $events {
+      task_id: $id,
+      description: $commitment.text,
+      priority: $priority,
+      source_commitment: $commitment.text
+    }
+  end
+
+  # Store in agent_promises state (for heartbeat + steering lookups)
+  read_state {key: "agent_promises"} -> $existing
+  when $existing == null:
+    define $existing = []
+  end
+
+  timestamp_now {} -> $now
+  loop over $commitments as c:
+    append $existing {
+      what: $c.text,
+      completed: false,
+      created_at: $now,
+      task_id: get_at($task_ids, index())
+    }
+  end
+
+  # Cap at 20 most recent
+  truncate_list {list: $existing, max: 20, keep: "tail"} -> $capped
+  write_state {key: "agent_promises", value: $capped}
+
+  # Track most recent task for steering
+  last {list: $task_ids} -> $last_task_id
+  write_state {key: "most_recent_task_id", value: $last_task_id}
+
+  return $events
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Utility Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# utility: called by detect_commitments
+procedure extract_numbered_items(text: string) -> items:
+  given: "Extract items from numbered lists (1. ..., 2. ..., etc)"
+  regex_extract_all {text: $text, pattern: "^\\s*\\d+\\.\\s+(.+)$", flags: "m"} -> $matches
+  return $matches
+
+# utility: called by detect_commitments
+procedure extract_will_statements(sentences: list) -> items:
+  given: "Extract clauses following 'I will' or 'I'll'"
+  define $results = []
+  loop over $sentences as s:
+    regex_extract {text: $s, pattern: "(?i)I(?:'ll| will)\\s+(.{15,})"} -> $match
+    when $match != null:
+      append $results $match
+    end
+  end
+  return $results
+
+# utility: called by detect_commitments
+procedure extract_let_me_statements(sentences: list) -> items:
+  given: "Extract clauses following 'Let me'"
+  define $results = []
+  loop over $sentences as s:
+    regex_extract {text: $s, pattern: "(?i)Let me\\s+(.{15,})"} -> $match
+    when $match != null:
+      append $results $match
+    end
+  end
+  return $results
+
+# utility: called by detect_commitments
+procedure extract_leading_verb(text: string, verbs: list) -> verb:
+  given: "Check if text starts with a recognized action verb"
+  lowercase {text: $text} -> $lower
+  loop over $verbs as v:
+    starts_with {text: $lower, prefix: $v} -> $match
+    when $match:
+      return $v
+    end
+  end
+  return null
+
+# utility: called by detect_commitments
+procedure is_duplicate(item: string, existing: list) -> duplicate:
+  given: "Check if a commitment is already in the list (prefix match)"
+  substring {text: $item, start: 0, end: 30} -> $prefix
+  loop over $existing as e:
+    contains {text: $e.text, substring: $prefix} -> $match
+    when $match:
+      return true
+    end
+  end
+  return false
