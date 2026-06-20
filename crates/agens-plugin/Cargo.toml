@@ -1,0 +1,44 @@
+[package]
+name = "agens-plugin"
+description = "Pares Agens — thin plugin over pares-radix-as-a-library (CommandProvider + agens-brought IP: headroom, model/bitnet)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "pares-agens"
+path = "src/bin/pares-agens.rs"
+
+[dependencies]
+# --- radix-as-a-library (the host runtime + capability surface) ---
+# Pinned to the PUSHED radix branch SHA so the cross-repo dep resolves in CI.
+pares-radix-cli-runtime = { git = "https://github.com/plures/pares-radix.git", rev = "9ff9dda2b9eae439cee99884df5b16cc02282c5b" }
+pares-radix-cli-api     = { git = "https://github.com/plures/pares-radix.git", rev = "9ff9dda2b9eae439cee99884df5b16cc02282c5b" }
+pares-agens-core        = { git = "https://github.com/plures/pares-radix.git", rev = "9ff9dda2b9eae439cee99884df5b16cc02282c5b", features = ["embeddings"] }
+pares-agens-channels    = { git = "https://github.com/plures/pares-radix.git", rev = "9ff9dda2b9eae439cee99884df5b16cc02282c5b" }
+pares-models            = { git = "https://github.com/plures/pares-radix.git", rev = "9ff9dda2b9eae439cee99884df5b16cc02282c5b" }
+pares-agens-bitnet      = { git = "https://github.com/plures/pares-radix.git", rev = "9ff9dda2b9eae439cee99884df5b16cc02282c5b", features = ["model-client"] }
+
+# --- pluresdb (headroom + px executor types; pinned to the SAME revs radix core uses
+#     so the ActionHandler/CrdtStore types unify across the graph) ---
+pluresdb    = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3", features = ["embeddings"] }
+pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "195c67b" }
+
+# --- headroom leaf deps ---
+sha2 = "0.10"
+tiktoken-rs = "0.6"
+unicode-segmentation = "1"
+
+# --- common ---
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

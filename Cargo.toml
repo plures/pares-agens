@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client", "crates/cli", "crates/privacy", "crates/marketplace", "crates/agenda", "crates/praxis", "crates/sync", "crates/audit", "crates/tauri-app", "crates/tui"]
+members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client", "crates/cli", "crates/privacy", "crates/marketplace", "crates/agenda", "crates/praxis", "crates/sync", "crates/audit", "crates/tauri-app", "crates/tui", "crates/agens-plugin"]
 # Keep the Tauri desktop app crates in the workspace so their dependency graph
 # is captured in the root Cargo.lock. They may still be built separately by
 # installer workflows via `cargo tauri build --locked`, but the lockfile must
