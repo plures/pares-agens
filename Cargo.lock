@@ -4670,7 +4670,7 @@ dependencies = [
 [[package]]
 name = "pares-agens-agenda"
 version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=9ff9dda2b9eae439cee99884df5b16cc02282c5b#9ff9dda2b9eae439cee99884df5b16cc02282c5b"
+source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4702,7 +4702,7 @@ dependencies = [
 [[package]]
 name = "pares-agens-audit"
 version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=9ff9dda2b9eae439cee99884df5b16cc02282c5b#9ff9dda2b9eae439cee99884df5b16cc02282c5b"
+source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4718,7 +4718,7 @@ dependencies = [
 [[package]]
 name = "pares-agens-bitnet"
 version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=9ff9dda2b9eae439cee99884df5b16cc02282c5b#9ff9dda2b9eae439cee99884df5b16cc02282c5b"
+source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "async-trait",
  "pares-agens-bitnet-sys",
@@ -4731,7 +4731,7 @@ dependencies = [
 [[package]]
 name = "pares-agens-bitnet-sys"
 version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=9ff9dda2b9eae439cee99884df5b16cc02282c5b#9ff9dda2b9eae439cee99884df5b16cc02282c5b"
+source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "cc",
 ]
@@ -4758,7 +4758,7 @@ dependencies = [
 [[package]]
 name = "pares-agens-channels"
 version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=9ff9dda2b9eae439cee99884df5b16cc02282c5b#9ff9dda2b9eae439cee99884df5b16cc02282c5b"
+source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "async-trait",
  "axum",
@@ -4840,7 +4840,7 @@ dependencies = [
 [[package]]
 name = "pares-agens-core"
 version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=9ff9dda2b9eae439cee99884df5b16cc02282c5b#9ff9dda2b9eae439cee99884df5b16cc02282c5b"
+source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -4907,7 +4907,7 @@ dependencies = [
 [[package]]
 name = "pares-agens-privacy"
 version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=9ff9dda2b9eae439cee99884df5b16cc02282c5b#9ff9dda2b9eae439cee99884df5b16cc02282c5b"
+source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "regex",
  "serde",
@@ -4986,7 +4986,7 @@ dependencies = [
 [[package]]
 name = "pares-models"
 version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=9ff9dda2b9eae439cee99884df5b16cc02282c5b#9ff9dda2b9eae439cee99884df5b16cc02282c5b"
+source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -5002,7 +5002,7 @@ dependencies = [
 [[package]]
 name = "pares-radix-cli"
 version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=9ff9dda2b9eae439cee99884df5b16cc02282c5b#9ff9dda2b9eae439cee99884df5b16cc02282c5b"
+source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "chrono",
  "pares-agens-core 1.47.2",
@@ -5015,7 +5015,7 @@ dependencies = [
 [[package]]
 name = "pares-radix-cli-api"
 version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=9ff9dda2b9eae439cee99884df5b16cc02282c5b#9ff9dda2b9eae439cee99884df5b16cc02282c5b"
+source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "async-trait",
  "clap",
@@ -5025,7 +5025,7 @@ dependencies = [
 [[package]]
 name = "pares-radix-cli-runtime"
 version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=9ff9dda2b9eae439cee99884df5b16cc02282c5b#9ff9dda2b9eae439cee99884df5b16cc02282c5b"
+source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5060,7 +5060,7 @@ dependencies = [
 [[package]]
 name = "pares-radix-marketplace"
 version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=9ff9dda2b9eae439cee99884df5b16cc02282c5b#9ff9dda2b9eae439cee99884df5b16cc02282c5b"
+source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "serde",
  "serde_json",
@@ -5071,7 +5071,7 @@ dependencies = [
 [[package]]
 name = "pares-radix-mcp-client"
 version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=9ff9dda2b9eae439cee99884df5b16cc02282c5b#9ff9dda2b9eae439cee99884df5b16cc02282c5b"
+source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "async-trait",
  "pares-agens-core 1.47.2",
@@ -5086,7 +5086,7 @@ dependencies = [
 [[package]]
 name = "pares-radix-mcp-server"
 version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=9ff9dda2b9eae439cee99884df5b16cc02282c5b#9ff9dda2b9eae439cee99884df5b16cc02282c5b"
+source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -5114,7 +5114,7 @@ dependencies = [
 [[package]]
 name = "pares-radix-praxis"
 version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=9ff9dda2b9eae439cee99884df5b16cc02282c5b#9ff9dda2b9eae439cee99884df5b16cc02282c5b"
+source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5130,7 +5130,7 @@ dependencies = [
 [[package]]
 name = "pares-radix-tui"
 version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=9ff9dda2b9eae439cee99884df5b16cc02282c5b#9ff9dda2b9eae439cee99884df5b16cc02282c5b"
+source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5147,7 +5147,7 @@ dependencies = [
 [[package]]
 name = "pares-rector"
 version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=9ff9dda2b9eae439cee99884df5b16cc02282c5b#9ff9dda2b9eae439cee99884df5b16cc02282c5b"
+source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "hostname",
  "num_cpus",
