@@ -1,10 +1,15 @@
-//! `pares-agens` - the agens plugin binary (praxisbot). [SCAFFOLD - provider added next step]
+//! `pares-agens` - the agens plugin binary (praxisbot).
+//!
+//! Composes the host runtime (`pares-radix-cli-runtime::run_with_providers`)
+//! with the agens [`AgensProvider`], which contributes the agent subcommands
+//! (`serve-spine`, `serve`, `tui`, `ask`, `classify`). The host owns the
+//! command surface; this binary registers the provider into it (decision C1).
 
+use agens_plugin::AgensProvider;
 use pares_radix_cli_runtime::{run_with_providers, ProviderRegistry};
 
 #[tokio::main]
 async fn main() {
-    // Provider registration is wired in once AgensProvider lands.
-    let registry = ProviderRegistry::new();
+    let registry = ProviderRegistry::new().register(Box::new(AgensProvider::new()));
     run_with_providers(registry).await;
 }

@@ -15,4 +15,7 @@
 //! The dependency arrow is strictly `agens-plugin -> pares-radix (as lib)`. Radix
 //! never depends on agens (invariant).
 
+pub mod agent_commands;
 pub mod headroom;
+
+pub use agent_commands::AgensProvider;

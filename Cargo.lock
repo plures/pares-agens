@@ -48,15 +48,24 @@ name = "agens-plugin"
 version = "1.14.0"
 dependencies = [
  "async-trait",
+ "chrono",
  "clap",
+ "crossterm",
+ "futures-util",
+ "html2text",
+ "pares-agens-agenda 1.47.2",
  "pares-agens-bitnet",
  "pares-agens-channels 1.47.2",
  "pares-agens-core 1.47.2",
  "pares-models 1.47.2",
  "pares-radix-cli-api",
  "pares-radix-cli-runtime",
+ "pares-radix-praxis",
+ "pares-radix-tui",
  "pluresdb 2.9.10",
  "pluresdb-px",
+ "ratatui",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "sha2",
@@ -64,9 +73,12 @@ dependencies = [
  "thiserror 2.0.18",
  "tiktoken-rs",
  "tokio",
+ "tokio-tungstenite 0.28.0",
+ "toml 0.8.2",
  "tracing",
  "tracing-subscriber",
  "unicode-segmentation",
+ "uuid",
 ]
 
 [[package]]

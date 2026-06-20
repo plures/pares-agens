@@ -19,6 +19,9 @@ pares-agens-core        = { git = "https://github.com/plures/pares-radix.git", r
 pares-agens-channels    = { git = "https://github.com/plures/pares-radix.git", rev = "9ff9dda2b9eae439cee99884df5b16cc02282c5b" }
 pares-models            = { git = "https://github.com/plures/pares-radix.git", rev = "9ff9dda2b9eae439cee99884df5b16cc02282c5b" }
 pares-agens-bitnet      = { git = "https://github.com/plures/pares-radix.git", rev = "9ff9dda2b9eae439cee99884df5b16cc02282c5b", features = ["model-client"] }
+pares-agens-agenda      = { git = "https://github.com/plures/pares-radix.git", rev = "9ff9dda2b9eae439cee99884df5b16cc02282c5b" }
+pares-radix-tui         = { git = "https://github.com/plures/pares-radix.git", rev = "9ff9dda2b9eae439cee99884df5b16cc02282c5b" }
+pares-radix-praxis      = { git = "https://github.com/plures/pares-radix.git", rev = "9ff9dda2b9eae439cee99884df5b16cc02282c5b" }
 
 # --- pluresdb (headroom + px executor types; pinned to the SAME revs radix core uses
 #     so the ActionHandler/CrdtStore types unify across the graph) ---
@@ -39,6 +42,21 @@ async-trait.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+# --- agent-command deps (carved from radix cli-runtime in Stage 4c) ---
+reqwest.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+futures-util = "0.3"
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+html2text = "0.17"
+crossterm = "0.28"
+ratatui = "0.29"
+toml = "0.8"
+
+[features]
+default = []
+bitnet-native = ["pares-agens-bitnet/inference"]
 
 [dev-dependencies]
 tempfile = "3"
