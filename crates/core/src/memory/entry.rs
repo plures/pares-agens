@@ -110,7 +110,7 @@ pub struct ChatTurn {
     pub timestamp: String,
     /// The ordered messages that make up this turn (user, assistant, tool
     /// calls/results — everything the model loop produced).
-    pub messages: Vec<crate::model::ChatMessage>,
+    pub messages: Vec<pares_radix_core::model::ChatMessage>,
 }
 
 fn default_chat_turn_session_id() -> String {

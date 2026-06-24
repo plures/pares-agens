@@ -102,7 +102,7 @@ impl MemoryStore for InMemoryStore {
 // ---------------------------------------------------------------------------
 
 /// The PluresDB actor ID used for all write operations.
-const ACTOR: &str = "pares-agens";
+const ACTOR: &str = "pares-radix";
 
 /// The PluresDB key prefix for conversation turn entries.
 const TURN_PREFIX: &str = "turn:";
@@ -419,8 +419,9 @@ impl PluresDbStore {
         }
         let payload = HostInferenceCapabilityPayload { capability };
         let data = seal_value_for_storage(
-            serde_json::to_value(payload)
-                .map_err(|e| Error::Store(format!("serialise host inference capability failed: {e}")))?,
+            serde_json::to_value(payload).map_err(|e| {
+                Error::Store(format!("serialise host inference capability failed: {e}"))
+            })?,
             self.host_sea_key.as_ref(),
         )?;
         let key = format!("{HOST_PREFIX}{hostname}{INFERENCE_CAPABILITIES_SUFFIX}");
@@ -1069,5 +1070,406 @@ mod tests {
         let store = PluresDbStore::in_memory();
         let removed = store.remove("nope").await.unwrap();
         assert!(!removed);
+    }
+
+    // ── Mutation gap-closing tests ───────────────────────────────────────
+
+    #[test]
+    fn validate_sync_shared_key_rejects_invalid_input() {
+        // If validate_sync_shared_key is mutated to always return Ok(()),
+        // this test catches it.
+        let result = validate_sync_shared_key("not-a-valid-key");
+        assert!(result.is_err(), "invalid shared key should be rejected");
+    }
+
+    #[test]
+    fn validate_sync_shared_key_rejects_empty_string() {
+        let result = validate_sync_shared_key("");
+        assert!(result.is_err(), "empty shared key should be rejected");
+    }
+
+    #[tokio::test]
+    async fn pluresdb_store_crdt_store_returns_underlying_store() {
+        let store = PluresDbStore::in_memory();
+        // Insert something and verify crdt_store sees it
+        store.insert(make_entry("cs1", "crdt check")).await.unwrap();
+        let crdt = store.crdt_store();
+        let records = crdt.list();
+        assert!(
+            !records.is_empty(),
+            "crdt_store() must return the actual underlying store"
+        );
+    }
+
+    #[tokio::test]
+    async fn pluresdb_store_crdt_store_arc_returns_same_store() {
+        let store = PluresDbStore::in_memory();
+        store.insert(make_entry("ca1", "arc check")).await.unwrap();
+        let arc = store.crdt_store_arc();
+        let records = arc.list();
+        assert!(
+            !records.is_empty(),
+            "crdt_store_arc() must return arc to the same underlying store"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_host_adapters_rejects_hostname_with_slash() {
+        let store = PluresDbStore::in_memory();
+        let result = store
+            .set_host_adapters(
+                "bad/host",
+                vec![HostAdapterConfig {
+                    kind: "telegram".to_string(),
+                    connection_id: "x".to_string(),
+                    single_connection: false,
+                }],
+            )
+            .await;
+        assert!(result.is_err(), "hostname with '/' must be rejected");
+    }
+
+    #[tokio::test]
+    async fn set_host_adapters_rejects_hostname_with_control_char() {
+        let store = PluresDbStore::in_memory();
+        let result = store
+            .set_host_adapters(
+                "host\x01name",
+                vec![HostAdapterConfig {
+                    kind: "telegram".to_string(),
+                    connection_id: "x".to_string(),
+                    single_connection: false,
+                }],
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "hostname with control char must be rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_host_adapters_rejects_empty_hostname() {
+        let store = PluresDbStore::in_memory();
+        let result = store
+            .set_host_adapters(
+                "",
+                vec![HostAdapterConfig {
+                    kind: "telegram".to_string(),
+                    connection_id: "x".to_string(),
+                    single_connection: false,
+                }],
+            )
+            .await;
+        assert!(result.is_err(), "empty hostname must be rejected");
+    }
+
+    #[tokio::test]
+    async fn set_host_adapters_rejects_whitespace_only_hostname() {
+        let store = PluresDbStore::in_memory();
+        let result = store
+            .set_host_adapters(
+                "   ",
+                vec![HostAdapterConfig {
+                    kind: "telegram".to_string(),
+                    connection_id: "x".to_string(),
+                    single_connection: false,
+                }],
+            )
+            .await;
+        assert!(result.is_err(), "whitespace-only hostname must be rejected");
+    }
+
+    #[tokio::test]
+    async fn list_host_adapters_filters_non_adapter_entries() {
+        let store = PluresDbStore::in_memory();
+        // Insert a memory entry, an inference capability, and an adapter
+        store.insert(make_entry("m1", "memory")).await.unwrap();
+        store
+            .set_host_inference_capability(
+                "host-x",
+                HostInferenceCapability {
+                    host: "10.0.0.1".to_string(),
+                    port: 8080,
+                    experts: vec![],
+                },
+            )
+            .await
+            .unwrap();
+        store
+            .set_host_adapters(
+                "host-y",
+                vec![HostAdapterConfig {
+                    kind: "signal".to_string(),
+                    connection_id: "sig1".to_string(),
+                    single_connection: true,
+                }],
+            )
+            .await
+            .unwrap();
+        let adapters = store.list_host_adapters().await.unwrap();
+        // Must only return the adapter, not memory or inference
+        assert_eq!(adapters.len(), 1);
+        assert_eq!(adapters[0].host, "host-y");
+    }
+
+    #[tokio::test]
+    async fn set_host_inference_capability_rejects_hostname_with_slash() {
+        let store = PluresDbStore::in_memory();
+        let result = store
+            .set_host_inference_capability(
+                "bad/host",
+                HostInferenceCapability {
+                    host: "x".to_string(),
+                    port: 80,
+                    experts: vec![],
+                },
+            )
+            .await;
+        assert!(result.is_err(), "hostname with '/' must be rejected");
+    }
+
+    #[tokio::test]
+    async fn set_host_inference_capability_rejects_hostname_with_control_char() {
+        let store = PluresDbStore::in_memory();
+        let result = store
+            .set_host_inference_capability(
+                "host\x00bad",
+                HostInferenceCapability {
+                    host: "x".to_string(),
+                    port: 80,
+                    experts: vec![],
+                },
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "hostname with control char must be rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_host_inference_capability_rejects_empty_hostname() {
+        let store = PluresDbStore::in_memory();
+        let result = store
+            .set_host_inference_capability(
+                "",
+                HostInferenceCapability {
+                    host: "x".to_string(),
+                    port: 80,
+                    experts: vec![],
+                },
+            )
+            .await;
+        assert!(result.is_err(), "empty hostname must be rejected");
+    }
+
+    #[tokio::test]
+    async fn list_host_inference_capabilities_filters_non_capability_entries() {
+        let store = PluresDbStore::in_memory();
+        // Insert memory, adapters, and one inference capability
+        store.insert(make_entry("m2", "memory")).await.unwrap();
+        store
+            .set_host_adapters(
+                "host-a",
+                vec![HostAdapterConfig {
+                    kind: "telegram".to_string(),
+                    connection_id: "t1".to_string(),
+                    single_connection: true,
+                }],
+            )
+            .await
+            .unwrap();
+        store
+            .set_host_inference_capability(
+                "host-b",
+                HostInferenceCapability {
+                    host: "10.0.0.2".to_string(),
+                    port: 9090,
+                    experts: vec!["nlp".to_string()],
+                },
+            )
+            .await
+            .unwrap();
+        let caps = store.list_host_inference_capabilities().await.unwrap();
+        // Must only return the inference capability
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].host, "host-b");
+    }
+
+    // ── ChatTurn tests (PluresDbStore) ───────────────────────────────────
+
+    fn make_turn(id: &str, channel: &str, timestamp: &str) -> ChatTurn {
+        ChatTurn {
+            id: id.to_string(),
+            channel: channel.to_string(),
+            session_id: "main".to_string(),
+            timestamp: timestamp.to_string(),
+            messages: vec![pares_radix_core::model::ChatMessage::system("test")],
+        }
+    }
+
+    #[tokio::test]
+    async fn pluresdb_store_insert_turn_and_recent_turns_roundtrip() {
+        let store = PluresDbStore::in_memory();
+        let turn = make_turn("t1", "telegram", "2026-01-01T00:00:00Z");
+        store.insert_turn(turn.clone()).await.unwrap();
+        let turns = store.recent_turns("telegram", 10).await.unwrap();
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].id, "t1");
+        assert_eq!(turns[0].channel, "telegram");
+    }
+
+    #[tokio::test]
+    async fn pluresdb_store_recent_turns_filters_by_channel() {
+        let store = PluresDbStore::in_memory();
+        store
+            .insert_turn(make_turn("t1", "telegram", "2026-01-01T00:00:01Z"))
+            .await
+            .unwrap();
+        store
+            .insert_turn(make_turn("t2", "cli", "2026-01-01T00:00:02Z"))
+            .await
+            .unwrap();
+        store
+            .insert_turn(make_turn("t3", "telegram", "2026-01-01T00:00:03Z"))
+            .await
+            .unwrap();
+
+        let telegram_turns = store.recent_turns("telegram", 10).await.unwrap();
+        assert_eq!(telegram_turns.len(), 2);
+        assert!(telegram_turns.iter().all(|t| t.channel == "telegram"));
+
+        let cli_turns = store.recent_turns("cli", 10).await.unwrap();
+        assert_eq!(cli_turns.len(), 1);
+        assert_eq!(cli_turns[0].id, "t2");
+    }
+
+    #[tokio::test]
+    async fn pluresdb_store_recent_turns_respects_limit() {
+        let store = PluresDbStore::in_memory();
+        for i in 0..5 {
+            store
+                .insert_turn(make_turn(
+                    &format!("t{i}"),
+                    "ch",
+                    &format!("2026-01-01T00:00:0{i}Z"),
+                ))
+                .await
+                .unwrap();
+        }
+        let turns = store.recent_turns("ch", 3).await.unwrap();
+        assert_eq!(turns.len(), 3);
+        // Should be the 3 most recent (t2, t3, t4)
+        assert_eq!(turns[0].id, "t2");
+        assert_eq!(turns[1].id, "t3");
+        assert_eq!(turns[2].id, "t4");
+    }
+
+    #[tokio::test]
+    async fn pluresdb_store_recent_turns_empty_for_unknown_channel() {
+        let store = PluresDbStore::in_memory();
+        store
+            .insert_turn(make_turn("t1", "telegram", "2026-01-01T00:00:00Z"))
+            .await
+            .unwrap();
+        let turns = store.recent_turns("nonexistent", 10).await.unwrap();
+        assert!(turns.is_empty());
+    }
+
+    #[cfg(feature = "embeddings")]
+    #[tokio::test]
+    async fn pluresdb_store_open_with_embeddings_works() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PluresDbStore::open_with_embeddings(dir.path()).unwrap();
+        store
+            .insert(make_entry("emb-1", "embeddings test entry"))
+            .await
+            .unwrap();
+        let all = store.all().await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, "emb-1");
+    }
+
+    /// Verifies `open_with_embeddings` actually creates a store backed by
+    /// persistent storage (SledStorage) rather than a bare in-memory CrdtStore.
+    /// Catches the mutant that replaces the function body with `Ok(Default::default())`
+    /// because Default::default() yields a store without persistence, which means
+    /// the host_sea_key is None and encryption/decryption behavior differs.
+    #[cfg(feature = "embeddings")]
+    #[tokio::test]
+    async fn pluresdb_store_open_with_embeddings_has_host_sea_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PluresDbStore::open_with_embeddings(dir.path()).unwrap();
+        // A properly opened store must have a host_sea_key (generated/loaded from disk).
+        // Default::default() would leave it as None.
+        assert!(
+            store.host_sea_key.is_some(),
+            "open_with_embeddings must produce a store with a host_sea_key"
+        );
+    }
+
+    /// Verifies that `list_host_adapters` requires BOTH prefix AND suffix match.
+    /// Catches the mutant that replaces `&&` with `||` on line 384:
+    /// An entry that ends with "/adapters" but does NOT start with "host/"
+    /// must NOT appear in results.
+    #[tokio::test]
+    async fn list_host_adapters_requires_both_prefix_and_suffix() {
+        let store = PluresDbStore::in_memory();
+        // Manually insert an entry with the right suffix but wrong prefix
+        let fake_key = format!("nothost/sneaky{ADAPTERS_SUFFIX}");
+        let payload = serde_json::json!({"adapters": [{"kind": "fake", "connection_id": "x", "single_connection": false}]});
+        let sealed = seal_value_for_storage(payload, store.host_sea_key.as_ref()).unwrap();
+        store.store.put(fake_key, ACTOR, sealed);
+
+        // Also insert a valid adapter
+        store
+            .set_host_adapters(
+                "real-host",
+                vec![HostAdapterConfig {
+                    kind: "signal".to_string(),
+                    connection_id: "s1".to_string(),
+                    single_connection: true,
+                }],
+            )
+            .await
+            .unwrap();
+
+        let adapters = store.list_host_adapters().await.unwrap();
+        // Only the real adapter should appear — the fake one has wrong prefix
+        assert_eq!(adapters.len(), 1);
+        assert_eq!(adapters[0].host, "real-host");
+    }
+
+    /// Verifies that `list_host_inference_capabilities` requires BOTH prefix AND suffix.
+    /// Catches the mutant that replaces `&&` with `||` on line 439:
+    /// An entry with the right suffix but wrong prefix must NOT appear.
+    #[tokio::test]
+    async fn list_host_inference_capabilities_requires_both_prefix_and_suffix() {
+        let store = PluresDbStore::in_memory();
+        // Manually insert an entry with the right suffix but wrong prefix
+        let fake_key = format!("nothost/sneaky{INFERENCE_CAPABILITIES_SUFFIX}");
+        let payload =
+            serde_json::json!({"capability": {"host": "1.2.3.4", "port": 80, "experts": []}});
+        let sealed = seal_value_for_storage(payload, store.host_sea_key.as_ref()).unwrap();
+        store.store.put(fake_key, ACTOR, sealed);
+
+        // Also insert a valid capability
+        store
+            .set_host_inference_capability(
+                "real-host",
+                HostInferenceCapability {
+                    host: "10.0.0.1".to_string(),
+                    port: 9090,
+                    experts: vec!["nlp".to_string()],
+                },
+            )
+            .await
+            .unwrap();
+
+        let caps = store.list_host_inference_capabilities().await.unwrap();
+        // Only the real capability should appear
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].host, "real-host");
     }
 }

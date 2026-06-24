@@ -1,12 +1,15 @@
 [package]
 name = "pares-agens-core"
-description = "Core event loop and procedure executor for Pares Agens"
+description = "Cognition layer (agent, cerebellum, delegation, memory) for Pares Agens"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [features]
+## Enable the spine integration test suite.
+spine = []
+
 ## Enable the `VaultSecretStore` backed by plures-vault encrypted storage.
 ##
 ## When this feature is active, a `vault-core` dependency is pulled from the
@@ -20,6 +23,18 @@ vault = ["dep:vault-core"]
 ## Requires the `embeddings` feature on the `pluresdb` dependency.
 embeddings = []
 
+## Enable OpenTelemetry OTLP trace export.
+## Adds gRPC span exporter that integrates with the tracing subscriber.
+## Configure via OTEL_EXPORTER_OTLP_ENDPOINT and OTEL_SERVICE_NAME env vars.
+otel = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry-semantic-conventions",
+    "dep:tracing-opentelemetry",
+    "dep:tracing-subscriber",
+]
+
 [dependencies]
 tokio.workspace = true
 serde.workspace = true
@@ -28,24 +43,48 @@ async-trait.workspace = true
 uuid.workspace = true
 tracing.workspace = true
 chrono.workspace = true
+hostname = "0.4"
 thiserror.workspace = true
 reqwest.workspace = true
 semver = "1"
 toml = "0.8"
 base64 = "0.22"
-subtle = "2"
-pares-agens-privacy = { path = "../privacy" }
-pares-agens-praxis = { path = "../praxis" }
-pluresdb = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3", features = ["embeddings"] }
-pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "195c67b" }
 sha2 = "0.10"
-tiktoken-rs = "0.6"
-unicode-segmentation = "1"
+subtle = "2"
+walkdir = "2"
+# Cognition depends on the platform crate. In pares-radix this is a local path
+# (`../radix-core`); here it is referenced via git and redirected to the local
+# pares-radix checkout by the temporary [patch] block in the workspace root
+# Cargo.toml (Stage S-C scaffolding — to be replaced by a real pin in S-F).
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", rev = "61b151b" }
+# Praxis (decision ledger / constraints) — same git+patch redirect as core.
+pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", rev = "61b151b" }
+# Privacy and audit are local crates in this (pares-agens) workspace.
+pares-agens-privacy = { path = "../privacy" }
+pares-agens-audit = { path = "../audit" }
+pluresdb = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3", features = ["embeddings"] }
 pluresdb-procedures = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3" }
 pluresdb-sync = { git = "https://github.com/plures/pluresdb", rev = "407917e8b73c3924b7860df7c0eaa941d9338566" }
 pluresdb-sea = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3" }
 vault-core = { git = "https://github.com/plures/plures-vault", rev = "d4e4783ddd14f63af2699ea97f29ca5895ef6590", package = "vault-core", optional = true }
-pares-agens-audit = { path = "../audit" }
+
+regex = "1"
+regex-lite = "0.1"
+futures-util = "0.3"
+
+# OpenTelemetry (optional, behind "otel" feature)
+opentelemetry = { version = "0.28", optional = true }
+opentelemetry_sdk = { version = "0.28", features = ["rt-tokio"], optional = true }
+opentelemetry-otlp = { version = "0.28", features = ["grpc-tonic", "http-proto", "reqwest-blocking-client"], optional = true }
+opentelemetry-semantic-conventions = { version = "0.28", optional = true }
+tracing-opentelemetry = { version = "0.29", optional = true }
+tracing-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
+wiremock = "0.6"
 tempfile = "3"
+opentelemetry_sdk = { version = "0.28", features = ["rt-tokio", "testing"] }
+opentelemetry = { version = "0.28" }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tracing-opentelemetry = "0.29"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

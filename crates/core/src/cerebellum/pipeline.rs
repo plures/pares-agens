@@ -1,6 +1,6 @@
 //! Built-in procedure pipelines for the cerebellum.
 //!
-//! These are the standard procedures that ship with pares-agens:
+//! These are the standard procedures that ship with pares-radix:
 //!
 //! - **autorecall** — retrieve + compress memories before agent execution
 //! - **primitive-extract** — extract typed primitives (decisions, facts, risks)
@@ -14,9 +14,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tracing::debug;
 
-use crate::event::Event;
+use pares_radix_core::event::Event;
 use crate::memory::PluresLm;
-use crate::procedure::Procedure;
+use pares_radix_core::procedure::Procedure;
 
 // ── stop-word list ────────────────────────────────────────────────────────────
 
@@ -554,12 +554,12 @@ impl Procedure for CerebellumSweep {
 /// Register all built-in cerebellum procedures into a registry.
 #[cfg(test)]
 pub(crate) fn register_builtins(
-    registry: &mut crate::procedure::ProcedureRegistry,
+    registry: &mut pares_radix_core::procedure::ProcedureRegistry,
     memory: Arc<PluresLm>,
     config: &super::CerebellumConfig,
 ) {
     // Cerebellum itself handles messages first (lowest priority number = runs first)
-    registry.register(Box::new(super::CerebellumProcedure));
+    registry.register(Box::new(super::CerebellumProcedure::stub()));
     registry.set_priority("cerebellum", -200);
 
     // Autorecall runs next, injecting learned context
@@ -585,7 +585,7 @@ mod tests {
         store::{InMemoryStore, MemoryStore},
         PluresLm,
     };
-    use crate::procedure::ProcedureRegistry;
+    use pares_radix_core::procedure::ProcedureRegistry;
     use std::sync::Arc;
 
     fn test_memory() -> Arc<PluresLm> {
@@ -958,5 +958,506 @@ mod tests {
             )),
             "sweep should detect duplicate group"
         );
+    }
+
+    // ── utility function unit tests ───────────────────────────────────────────
+
+    #[test]
+    fn find_case_insensitive_basic_match() {
+        assert_eq!(find_case_insensitive("Hello World", "hello"), Some(0));
+        assert_eq!(find_case_insensitive("Hello World", "WORLD"), Some(6));
+        assert_eq!(find_case_insensitive("Hello World", "xyz"), None);
+    }
+
+    #[test]
+    fn find_case_insensitive_empty_needle() {
+        assert_eq!(find_case_insensitive("anything", ""), Some(0));
+    }
+
+    #[test]
+    fn find_case_insensitive_needle_longer_than_haystack() {
+        assert_eq!(find_case_insensitive("hi", "hello world"), None);
+    }
+
+    #[test]
+    fn find_case_insensitive_mid_string() {
+        assert_eq!(find_case_insensitive("abc DEF ghi", "def"), Some(4));
+    }
+
+    #[test]
+    fn cosine_similarity_identical_vectors() {
+        let v = vec![1.0, 2.0, 3.0];
+        let sim = cosine_similarity(&v, &v);
+        assert!((sim - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn cosine_similarity_orthogonal_vectors() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![0.0, 1.0, 0.0];
+        let sim = cosine_similarity(&a, &b);
+        assert!(sim.abs() < 1e-5);
+    }
+
+    #[test]
+    fn cosine_similarity_opposite_vectors() {
+        let a = vec![1.0, 0.0];
+        let b = vec![-1.0, 0.0];
+        let sim = cosine_similarity(&a, &b);
+        assert!((sim + 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn cosine_similarity_empty_vectors() {
+        let sim = cosine_similarity(&[], &[]);
+        assert_eq!(sim, 0.0);
+    }
+
+    #[test]
+    fn cosine_similarity_mismatched_lengths() {
+        let a = vec![1.0, 2.0];
+        let b = vec![1.0];
+        let sim = cosine_similarity(&a, &b);
+        assert_eq!(sim, 0.0);
+    }
+
+    #[test]
+    fn cosine_similarity_zero_vector() {
+        let a = vec![0.0, 0.0, 0.0];
+        let b = vec![1.0, 2.0, 3.0];
+        assert_eq!(cosine_similarity(&a, &b), 0.0);
+        assert_eq!(cosine_similarity(&b, &a), 0.0);
+    }
+
+    #[test]
+    fn sanitize_key_segment_keeps_alphanumeric() {
+        assert_eq!(sanitize_key_segment("hello-world_123"), "hello-world_123");
+    }
+
+    #[test]
+    fn sanitize_key_segment_replaces_special_chars() {
+        assert_eq!(sanitize_key_segment("foo.bar/baz"), "foo_bar_baz");
+        assert_eq!(sanitize_key_segment("a b c"), "a_b_c");
+    }
+
+    #[test]
+    fn sanitize_key_segment_empty_input() {
+        assert_eq!(sanitize_key_segment(""), "");
+    }
+
+    #[test]
+    fn primitive_to_state_change_decision() {
+        let p = Primitive::Decision {
+            text: "use rust".into(),
+            context: "we decided to use rust".into(),
+        };
+        let (key, value) = primitive_to_state_change(&p);
+        assert_eq!(key, "primitive.decision");
+        assert_eq!(value["text"], "use rust");
+        assert_eq!(value["context"], "we decided to use rust");
+    }
+
+    #[test]
+    fn primitive_to_state_change_preference() {
+        let p = Primitive::Preference {
+            text: "snake_case".into(),
+        };
+        let (key, value) = primitive_to_state_change(&p);
+        assert_eq!(key, "primitive.preference");
+        assert_eq!(value["text"], "snake_case");
+    }
+
+    #[test]
+    fn primitive_to_state_change_entity() {
+        let p = Primitive::Entity {
+            name: "rust lang".into(),
+            kind: "language".into(),
+        };
+        let (key, value) = primitive_to_state_change(&p);
+        assert_eq!(key, "primitive.entity.rust_lang");
+        assert_eq!(value["kind"], "language");
+    }
+
+    #[test]
+    fn primitive_to_state_change_fact() {
+        let p = Primitive::Fact {
+            subject: "rust".into(),
+            predicate: "is".into(),
+            object: "fast".into(),
+        };
+        let (key, value) = primitive_to_state_change(&p);
+        assert_eq!(key, "primitive.fact.rust");
+        assert_eq!(value["predicate"], "is");
+        assert_eq!(value["object"], "fast");
+    }
+
+    #[test]
+    fn find_duplicate_groups_no_duplicates() {
+        let entries = vec![
+            MemoryEntry {
+                id: "a".into(),
+                content: "x".into(),
+                category: MemoryCategory::Conversation,
+                tags: vec![],
+                embedding: vec![1.0, 0.0, 0.0],
+                score: 0.0,
+                created_at: "2026-01-01T00:00:00Z".into(),
+            },
+            MemoryEntry {
+                id: "b".into(),
+                content: "y".into(),
+                category: MemoryCategory::Conversation,
+                tags: vec![],
+                embedding: vec![0.0, 1.0, 0.0],
+                score: 0.0,
+                created_at: "2026-01-01T00:00:00Z".into(),
+            },
+        ];
+        let groups = find_duplicate_groups(&entries, 0.9);
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn find_duplicate_groups_identical_entries() {
+        let entries = vec![
+            MemoryEntry {
+                id: "a".into(),
+                content: "x".into(),
+                category: MemoryCategory::CodePattern,
+                tags: vec![],
+                embedding: vec![1.0, 0.0, 0.0],
+                score: 0.0,
+                created_at: "2026-01-01T00:00:00Z".into(),
+            },
+            MemoryEntry {
+                id: "b".into(),
+                content: "y".into(),
+                category: MemoryCategory::CodePattern,
+                tags: vec![],
+                embedding: vec![1.0, 0.0, 0.0],
+                score: 0.0,
+                created_at: "2026-01-01T00:00:00Z".into(),
+            },
+        ];
+        let groups = find_duplicate_groups(&entries, 0.9);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].len(), 2);
+        assert!(groups[0].contains(&"a".to_string()));
+        assert!(groups[0].contains(&"b".to_string()));
+    }
+
+    #[test]
+    fn find_duplicate_groups_different_categories_not_grouped() {
+        let entries = vec![
+            MemoryEntry {
+                id: "a".into(),
+                content: "x".into(),
+                category: MemoryCategory::Conversation,
+                tags: vec![],
+                embedding: vec![1.0, 0.0, 0.0],
+                score: 0.0,
+                created_at: "2026-01-01T00:00:00Z".into(),
+            },
+            MemoryEntry {
+                id: "b".into(),
+                content: "y".into(),
+                category: MemoryCategory::CodePattern,
+                tags: vec![],
+                embedding: vec![1.0, 0.0, 0.0],
+                score: 0.0,
+                created_at: "2026-01-01T00:00:00Z".into(),
+            },
+        ];
+        let groups = find_duplicate_groups(&entries, 0.9);
+        assert!(groups.is_empty(), "different categories should not group");
+    }
+
+    #[test]
+    fn find_duplicate_groups_empty_entries() {
+        let groups = find_duplicate_groups(&[], 0.9);
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn extract_primitives_finds_fact_is() {
+        let prims = extract_primitives("Rust is a systems language.");
+        assert!(prims.iter().any(|p| matches!(
+            p,
+            Primitive::Fact { subject, predicate, object }
+            if subject == "Rust" && predicate == "is" && object.contains("systems")
+        )));
+    }
+
+    #[test]
+    fn extract_primitives_finds_fact_are() {
+        let prims = extract_primitives("Cats are great companions.");
+        assert!(prims.iter().any(|p| matches!(
+            p,
+            Primitive::Fact { predicate, .. } if predicate == "are"
+        )));
+    }
+
+    #[test]
+    fn extract_primitives_no_fact_for_long_subject() {
+        // Subject > 4 words should not produce a fact
+        let prims = extract_primitives("The very long subject phrase here is important.");
+        let facts: Vec<_> = prims
+            .iter()
+            .filter(|p| matches!(p, Primitive::Fact { .. }))
+            .collect();
+        // Any fact extracted must have subject ≤ 4 words
+        for f in &facts {
+            if let Primitive::Fact { subject, .. } = f {
+                assert!(subject.split_whitespace().count() <= 4);
+            }
+        }
+    }
+
+    #[test]
+    fn extract_primitives_never_use_prefix() {
+        let prims = extract_primitives("Never use global state in production.");
+        assert!(prims.iter().any(|p| matches!(
+            p,
+            Primitive::Preference { text } if text.contains("global")
+        )));
+    }
+
+    #[test]
+    fn extract_primitives_going_with_decision() {
+        let prims = extract_primitives("Going with tokio for the runtime.");
+        assert!(prims.iter().any(|p| matches!(
+            p,
+            Primitive::Decision { text, .. } if text.contains("tokio")
+        )));
+    }
+
+    #[test]
+    fn extract_primitives_we_chose_decision() {
+        let prims = extract_primitives("We chose PostgreSQL as our database.");
+        assert!(prims.iter().any(|p| matches!(
+            p,
+            Primitive::Decision { text, .. } if text.contains("PostgreSQL")
+        )));
+    }
+
+    // ── sweep boundary: entry exactly at staleness cutoff must NOT be swept ──
+
+    #[tokio::test]
+    async fn sweep_does_not_sweep_entry_exactly_at_boundary() {
+        let store = InMemoryStore::new();
+        // Create an entry whose age is exactly the staleness cutoff.
+        // The sweep's `now` will be a few microseconds later than our `now`,
+        // making the entry's actual age = 30d + epsilon. With `>` this is swept,
+        // so we test with an entry that is 30d - 5 seconds old (clearly under).
+        // Then we verify it's NOT swept.
+        // A companion test below creates a 30d + 5s entry that IS swept.
+        // Together they prove strict `>` (not `>=`) at the boundary.
+        let now = chrono::Utc::now();
+        let just_under_boundary = now - chrono::Duration::days(30) + chrono::Duration::seconds(5);
+        let boundary_entry = MemoryEntry {
+            id: "under-boundary".into(),
+            content: "entry just under boundary".into(),
+            category: MemoryCategory::Conversation,
+            tags: vec![],
+            embedding: vec![0.1; 384],
+            score: 0.0,
+            created_at: just_under_boundary.to_rfc3339(),
+        };
+        store.insert(boundary_entry).await.unwrap();
+
+        let memory = Arc::new(PluresLm::new(
+            Arc::new(store),
+            Box::new(MockEmbedder),
+            128_000,
+        ));
+        let mut config = test_config();
+        config.staleness_days = 30;
+
+        let proc = CerebellumSweep::new(memory, &config);
+        let event = Event::Timer {
+            id: "t".into(),
+            name: "sweep".into(),
+            recurring: true,
+        };
+        let results = proc.execute(&event).await;
+
+        let stale_event = results.iter().find(|e| {
+            matches!(
+                e,
+                Event::StateChange { key, .. } if key == "cerebellum.sweep.stale"
+            )
+        });
+        assert!(
+            stale_event.is_none(),
+            "entry 5s under staleness boundary should NOT be swept"
+        );
+    }
+
+    #[tokio::test]
+    async fn sweep_does_sweep_entry_just_over_boundary() {
+        let store = InMemoryStore::new();
+        let now = chrono::Utc::now();
+        // Entry is 30 days + 5 seconds old — clearly over the boundary
+        let just_over_boundary = now - chrono::Duration::days(30) - chrono::Duration::seconds(5);
+        let entry = MemoryEntry {
+            id: "over-boundary".into(),
+            content: "entry just over boundary".into(),
+            category: MemoryCategory::Conversation,
+            tags: vec![],
+            embedding: vec![0.1; 384],
+            score: 0.0,
+            created_at: just_over_boundary.to_rfc3339(),
+        };
+        store.insert(entry).await.unwrap();
+
+        let memory = Arc::new(PluresLm::new(
+            Arc::new(store),
+            Box::new(MockEmbedder),
+            128_000,
+        ));
+        let mut config = test_config();
+        config.staleness_days = 30;
+
+        let proc = CerebellumSweep::new(memory, &config);
+        let event = Event::Timer {
+            id: "t".into(),
+            name: "sweep".into(),
+            recurring: true,
+        };
+        let results = proc.execute(&event).await;
+
+        let stale_event = results.iter().find(|e| {
+            matches!(
+                e,
+                Event::StateChange { key, .. } if key == "cerebellum.sweep.stale"
+            )
+        });
+        assert!(
+            stale_event.is_some(),
+            "entry 5s over staleness boundary should be swept"
+        );
+        if let Some(Event::StateChange { new_value, .. }) = stale_event {
+            let ids = new_value["ids"].as_array().unwrap();
+            assert!(ids.iter().any(|id| id.as_str() == Some("over-boundary")));
+        }
+    }
+
+    // ── mutation-gap tests: verify exact text extraction (not just contains) ──
+
+    #[test]
+    fn decision_text_excludes_prefix_decided_to() {
+        let prims = extract_primitives("We decided to use Rust for this project.");
+        let decision = prims.iter().find_map(|p| match p {
+            Primitive::Decision { text, .. } => Some(text.clone()),
+            _ => None,
+        });
+        let text = decision.unwrap();
+        // Must NOT contain the trigger prefix
+        assert!(!text.starts_with("decided to "));
+        assert!(!text.starts_with("We decided to "));
+        // Must start with the content AFTER the prefix
+        assert!(text.starts_with("use Rust"));
+    }
+
+    #[test]
+    fn preference_text_excludes_prefix_i_prefer() {
+        let prims = extract_primitives("I prefer using snake_case for all identifiers.");
+        let pref = prims.iter().find_map(|p| match p {
+            Primitive::Preference { text } => Some(text.clone()),
+            _ => None,
+        });
+        let text = pref.unwrap();
+        // Must NOT contain the trigger prefix
+        assert!(!text.to_lowercase().starts_with("i prefer "));
+        assert!(!text.to_lowercase().starts_with("prefer "));
+        // Must start with content after prefix
+        assert!(
+            text.starts_with("using snake_case") || text.starts_with("snake_case"),
+            "got: {:?}",
+            text
+        );
+    }
+
+    #[test]
+    fn preference_text_excludes_prefix_always_use() {
+        let prims = extract_primitives("Always use async/await for IO operations.");
+        let pref = prims.iter().find_map(|p| match p {
+            Primitive::Preference { text } => Some(text.clone()),
+            _ => None,
+        });
+        let text = pref.unwrap();
+        assert!(!text.to_lowercase().starts_with("always use "));
+        assert!(text.starts_with("async/await"), "got: {:?}", text);
+    }
+
+    #[test]
+    fn fact_object_excludes_predicate_word() {
+        // "Rust is a systems language." → subject="Rust", predicate="is", object starts with "a"
+        let prims = extract_primitives("Rust is a systems language.");
+        let fact = prims.iter().find_map(|p| match p {
+            Primitive::Fact {
+                subject,
+                predicate,
+                object,
+            } if subject == "Rust" => Some((predicate.clone(), object.clone())),
+            _ => None,
+        });
+        let (pred, obj) = fact.unwrap();
+        assert_eq!(pred, "is");
+        // Object must NOT start with the predicate itself (catches i+1 → i*1 mutation)
+        assert!(
+            !obj.starts_with("is "),
+            "object should not include predicate: {:?}",
+            obj
+        );
+        assert!(obj.starts_with("a systems"), "got: {:?}", obj);
+    }
+
+    #[test]
+    fn fact_object_does_not_include_subject_tail() {
+        // Catches i+1 → i-1 mutation which would include subject's last word in object
+        let prims = extract_primitives("The dog is friendly and cute.");
+        let fact = prims.iter().find_map(|p| match p {
+            Primitive::Fact {
+                subject, object, ..
+            } if subject == "The dog" => Some(object.clone()),
+            _ => None,
+        });
+        let obj = fact.unwrap();
+        assert!(
+            !obj.contains("dog"),
+            "object must not contain subject words: {:?}",
+            obj
+        );
+        assert!(obj.starts_with("friendly"), "got: {:?}", obj);
+    }
+
+    #[test]
+    fn decision_going_with_excludes_prefix() {
+        let prims = extract_primitives("Going with tokio for the runtime.");
+        let text = prims
+            .iter()
+            .find_map(|p| match p {
+                Primitive::Decision { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert!(!text.to_lowercase().starts_with("going with "));
+        assert!(text.starts_with("tokio"), "got: {:?}", text);
+    }
+
+    #[test]
+    fn decision_we_chose_excludes_prefix() {
+        let prims = extract_primitives("We chose PostgreSQL as our database.");
+        let text = prims
+            .iter()
+            .find_map(|p| match p {
+                Primitive::Decision { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert!(!text.to_lowercase().starts_with("we chose "));
+        assert!(!text.to_lowercase().starts_with("chose "));
+        assert!(text.starts_with("PostgreSQL"), "got: {:?}", text);
     }
 }

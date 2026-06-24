@@ -1,6 +1,6 @@
 //! Isolated conversation context for a single sub-agent run.
 
-use crate::model::ChatMessage;
+use pares_radix_core::model::ChatMessage;
 
 /// Holds the conversation history for a single sub-agent invocation.
 ///
@@ -58,7 +58,7 @@ impl AgentContext {
 
     /// Return the full message slice for passing to a [`ModelClient`].
     ///
-    /// [`ModelClient`]: crate::model::ModelClient
+    /// [`ModelClient`]: pares_radix_core::model::ModelClient
     pub fn as_messages(&self) -> &[ChatMessage] {
         &self.messages
     }

@@ -25,3 +25,19 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
 teloxide = { version = "0.17", features = ["macros", "throttle"] }
 clap = { version = "4", features = ["derive", "env"] }
+
+# ---------------------------------------------------------------------------
+# TEMPORARY Stage S-C scaffolding (DO NOT SHIP / revert before S-F).
+#
+# Stage S-C relocates the canonical cognition from pares-radix into this repo
+# (crates/core) wired on top of pares-radix-core, but pares-radix's split is
+# still UNPUSHED locally. This [patch] redirects the git deps that crates/core
+# references (pares-radix-core, pares-radix-praxis) to the local pares-radix
+# checkout so the cognition crate compiles against the unpushed canonical code.
+#
+# S-F replaces this with a real published pin (and removes this block).
+# ---------------------------------------------------------------------------
+[patch."https://github.com/plures/pares-radix.git"]
+pares-radix-core   = { path = "C:/Projects/pares-radix/crates/radix-core" }
+pares-radix-praxis = { path = "C:/Projects/pares-radix/crates/praxis" }
+

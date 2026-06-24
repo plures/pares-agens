@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::ToolDefinition;
+use pares_radix_core::model::ToolDefinition;
 
 // ── AgentCapabilities ────────────────────────────────────────────────────────
 

@@ -31,7 +31,10 @@ pub struct AgentContext<'a> {
 /// 4. Channel-specific overrides
 /// 5. Recalled memory context
 /// 6. Conversation summary
-pub fn build_system_prompt(personality: &PersonalityContract, context: &AgentContext<'_>) -> String {
+pub fn build_system_prompt(
+    personality: &PersonalityContract,
+    context: &AgentContext<'_>,
+) -> String {
     let mut prompt = String::with_capacity(2048);
 
     // Deep preamble
@@ -70,7 +73,7 @@ pub fn build_system_prompt(personality: &PersonalityContract, context: &AgentCon
         if let Some(overrides) = personality.channel_overrides.get(channel) {
             if !overrides.is_empty() {
                 let mut sorted_overrides: Vec<&BehaviorRule> = overrides.iter().collect();
-                sorted_overrides.sort_by_key(|r| std::cmp::Reverse(r.priority));
+                sorted_overrides.sort_by_key(|o| std::cmp::Reverse(o.priority));
                 prompt.push_str(&format!("\n## Channel Rules ({})\n", channel));
                 for rule in &sorted_overrides {
                     let prefix = if rule.enforced { "MUST" } else { "SHOULD" };
@@ -86,6 +89,23 @@ pub fn build_system_prompt(personality: &PersonalityContract, context: &AgentCon
         prompt.push_str(context.learned_context.trim());
         prompt.push('\n');
     }
+
+    // Response formatting — suppress internal monologue
+    prompt.push_str("\n## Response Style\n");
+    prompt
+        .push_str("- Do NOT narrate your thinking process, reasoning steps, or decision-making.\n");
+    prompt.push_str("- Do NOT explain what tools you are about to call or why.\n");
+    prompt.push_str(
+        "- Do NOT say 'Let me...', 'I\'ll...', 'First, I need to...', or similar preambles.\n",
+    );
+    prompt.push_str("- When using tools: just call them. Report the result, not the process.\n");
+    prompt.push_str("- Keep responses concise and direct. Lead with the answer.\n");
+    prompt.push_str(
+        "- If a task requires multiple steps, do them silently and report the outcome.\n",
+    );
+    prompt.push_str(
+        "- Only explain your process if the user explicitly asks how you did something.\n",
+    );
 
     // Conversation summary
     if let Some(summary) = context.conversation_summary {
@@ -116,7 +136,7 @@ pub fn build_system_prompt_from_file(path: Option<&std::path::Path>) -> Result<S
     }
 
     if let Ok(home) = std::env::var("HOME") {
-        let home_prompt = std::path::PathBuf::from(&home).join(".pares-agens/SYSTEM-PROMPT.md");
+        let home_prompt = std::path::PathBuf::from(&home).join(".pares-radix/SYSTEM-PROMPT.md");
         if home_prompt.exists() {
             tracing::info!("Loading system prompt from {}", home_prompt.display());
             return std::fs::read_to_string(&home_prompt)
@@ -124,7 +144,7 @@ pub fn build_system_prompt_from_file(path: Option<&std::path::Path>) -> Result<S
         }
     }
 
-    Ok("You are Pares Agens, an AI agent built on the plures technology stack. Be direct, use tools proactively, and push commits without asking.".to_string())
+    Ok("You are Pares Radix, an AI agent built on the plures technology stack. Be direct, use tools proactively, and push commits without asking.".to_string())
 }
 
 #[cfg(test)]
@@ -143,7 +163,7 @@ mod tests {
             plugin_context: None,
         };
         let prompt = build_system_prompt(&contract, &ctx);
-        assert!(prompt.contains("Pares Agens"));
+        assert!(prompt.contains("Pares Radix"));
         assert!(prompt.contains("MUST: Never share private data"));
         assert!(prompt.contains("Channel Rules (telegram)"));
         assert!(prompt.contains("Recalled Context"));
@@ -162,5 +182,27 @@ mod tests {
         };
         let prompt = build_system_prompt(&contract, &ctx);
         assert!(prompt.starts_with("Think deeply"));
+    }
+
+    #[test]
+    fn prompt_includes_response_style_section() {
+        let contract = PersonalityContract::default_contract(None);
+        let ctx = AgentContext {
+            channel: None,
+            learned_context: "",
+            conversation_summary: None,
+            deep: false,
+            personality_documents: None,
+            plugin_context: None,
+        };
+        let prompt = build_system_prompt(&contract, &ctx);
+        assert!(
+            prompt.contains("## Response Style"),
+            "missing Response Style section"
+        );
+        assert!(
+            prompt.contains("Do NOT narrate"),
+            "missing monologue suppression"
+        );
     }
 }

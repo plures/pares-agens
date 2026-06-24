@@ -44,12 +44,10 @@ impl ResultAggregator {
 
     /// Merge `results` into an [`AggregatedResult`].
     ///
-    /// When only one agent succeeds, its output is returned directly without
-    /// any wrapper heading — the user sees a clean, coherent response.
-    ///
-    /// When multiple agents succeed, outputs are concatenated under per-agent
-    /// headings. A future improvement should run a synthesis pass through a
-    /// cheap model to merge them into a single voice.
+    /// When a single agent succeeds, its output is returned verbatim.
+    /// When multiple agents succeed, their outputs are concatenated under
+    /// per-agent Markdown headings.  Failed results are recorded but do not
+    /// contribute to the content.
     pub fn aggregate(&self, results: Vec<SubTaskResult>) -> AggregatedResult {
         let mut sections: Vec<(String, String)> = Vec::new();
         let mut succeeded: Vec<String> = Vec::new();
@@ -72,16 +70,17 @@ impl ResultAggregator {
             }
         }
 
-        // Single agent: return its output directly, no header wrapper.
-        // This produces a clean response that reads like one voice.
+        // Single agent: return output verbatim without a heading.
+        // Multiple agents: join sections with a separator (no ## headings to avoid
+        // internal routing labels leaking into user-facing output).
         let content = if sections.len() == 1 {
             sections.into_iter().next().unwrap().1
         } else {
             sections
                 .into_iter()
-                .map(|(name, output)| format!("## {}\n\n{}", name, output))
+                .map(|(_name, output)| output)
                 .collect::<Vec<_>>()
-                .join("\n\n")
+                .join("\n\n---\n\n")
         };
 
         AggregatedResult {
@@ -122,21 +121,12 @@ mod tests {
         ]);
         assert!(result.all_succeeded());
         assert!(result.has_output());
-        assert!(result.content.contains("## researcher"));
-        assert!(result.content.contains("## analyst"));
+        // Multi-agent output should NOT leak internal agent names as headings
+        assert!(!result.content.contains("## researcher"));
+        assert!(!result.content.contains("## analyst"));
         assert!(result.content.contains("Found 3 papers."));
-    }
-
-    #[test]
-    fn single_agent_no_header() {
-        let agg = ResultAggregator::new();
-        let result = agg.aggregate(vec![
-            ok("coder", "Here is the implementation."),
-        ]);
-        assert!(result.all_succeeded());
-        assert!(result.has_output());
-        assert!(!result.content.contains("## coder"), "single agent output should not have a header");
-        assert_eq!(result.content, "Here is the implementation.");
+        assert!(result.content.contains("Analysis complete."));
+        assert!(result.content.contains("---"));
     }
 
     #[test]
@@ -152,6 +142,19 @@ mod tests {
             result.failed,
             vec![("coder".to_string(), "model timeout".to_string())]
         );
+        // Single successful agent: no heading prefix
+        assert_eq!(result.content, "some output");
+    }
+
+    #[test]
+    fn aggregate_single_agent_no_heading() {
+        let agg = ResultAggregator::new();
+        let result = agg.aggregate(vec![ok("analyst", "Analysis complete.")]);
+        assert!(result.all_succeeded());
+        assert!(result.has_output());
+        // Single agent output should be verbatim, no ## heading
+        assert!(!result.content.contains("## analyst"));
+        assert_eq!(result.content, "Analysis complete.");
     }
 
     #[test]
