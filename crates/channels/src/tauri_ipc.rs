@@ -1,6 +1,6 @@
 //! Tauri IPC channel adapter.
 //!
-//! Bridges the Tauri desktop frontend to the Pares Agens core event loop via
+//! Bridges the Tauri desktop frontend to the Pares Radix core event loop via
 //! in-process tokio channels, keeping this crate free of any Tauri dependency.
 //!
 //! # Usage

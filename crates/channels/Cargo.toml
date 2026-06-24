@@ -16,10 +16,17 @@ tracing.workspace = true
 teloxide.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true
+serde = { workspace = true }
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors"] }
 pares-agens-core = { path = "../core" }
 pares-radix-core = { git = "https://github.com/plures/pares-radix.git", rev = "61b151b" }
 pares-agens-marketplace = { path = "../marketplace" }
 pares-agens-agenda = { path = "../agenda" }
+pares-rector = { git = "https://github.com/plures/pares-radix.git", rev = "61b151b", package = "pares-rector" }
+
+[features]
+default = []
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

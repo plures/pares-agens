@@ -26,6 +26,7 @@ use crate::cerebellum::{Cerebellum, Route};
 use pares_radix_core::chronos::{ChronosAction, ChronosTimeline};
 use crate::delegation::aggregator::ResultAggregator;
 use crate::delegation::broker::DelegationBroker;
+use crate::headroom_bridge::HeadroomHook;
 use pares_radix_core::event::Event;
 use crate::memory::entry::Exchange;
 use crate::memory::store::MemoryStore;
@@ -181,6 +182,10 @@ pub struct Agent {
     /// Optional task manager for autonomous work execution.
     task_manager: Option<Arc<pares_radix_core::task_manager::TaskManager>>,
     // Telemetry logger for interaction tracking.
+    /// Optional headroom compression hook. When `Some` (and enabled), the
+    /// transient message clone sent to the model on each turn is byte-shrunk
+    /// before transmission. The canonical history is never compressed.
+    headroom: Option<HeadroomHook>,
 }
 
 #[derive(Debug, Clone)]
@@ -228,6 +233,7 @@ impl Agent {
             pii_guard: PiiGuard::new(),
             state_store: None,
             task_manager: None,
+            headroom: None,
         }
     }
 
@@ -267,6 +273,7 @@ impl Agent {
             pii_guard: PiiGuard::new(),
             state_store: None,
             task_manager: None,
+            headroom: None,
         }
     }
 
@@ -291,6 +298,15 @@ impl Agent {
     /// Attach a task manager for autonomous work execution.
     pub fn with_task_manager(mut self, task_manager: Arc<pares_radix_core::task_manager::TaskManager>) -> Self {
         self.task_manager = Some(task_manager);
+        self
+    }
+
+    /// Attach a headroom compression hook. When attached and enabled, the
+    /// transient message clone sent to the model on each turn of
+    /// [`run_model_loop`](Self::run_model_loop) is compressed first (the
+    /// canonical history is left untouched). A disabled hook is a no-op.
+    pub fn with_headroom(mut self, hook: HeadroomHook) -> Self {
+        self.headroom = Some(hook);
         self
     }
 
@@ -1289,6 +1305,19 @@ impl Agent {
                     m.clone()
                 }
             }).collect();
+
+            // Headroom: compress a TRANSIENT clone of the messages for this
+            // model call only. The canonical `messages` vec (persisted and
+            // returned below) is never mutated, so history stays lossless.
+            // `run_model_loop` carries no caller request-id, so mint a unique
+            // id per model call purely for headroom audit keying.
+            let messages_for_model: Vec<ChatMessage> = match &self.headroom {
+                Some(hook) => {
+                    let headroom_req_id = Uuid::new_v4().to_string();
+                    hook.compress_messages(&headroom_req_id, &messages_for_model).await
+                }
+                None => messages_for_model,
+            };
 
             let model_start = Instant::now();
             info!(

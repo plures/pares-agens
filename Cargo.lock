@@ -5001,17 +5001,21 @@ name = "pares-agens-channels"
 version = "1.14.0"
 dependencies = [
  "async-trait",
+ "axum 0.8.9",
  "pares-agens-agenda 1.14.0",
  "pares-agens-core 1.14.0",
  "pares-agens-marketplace",
  "pares-radix-core",
+ "pares-rector 1.47.2 (git+https://github.com/plures/pares-radix.git?rev=61b151b)",
  "pluresdb 2.9.10",
  "reqwest 0.12.28",
+ "serde",
  "serde_json",
  "teloxide",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
+ "tower-http",
  "tracing",
  "uuid",
 ]
@@ -5026,7 +5030,7 @@ dependencies = [
  "pares-agens-agenda 1.47.2",
  "pares-agens-core 1.47.2",
  "pares-radix-marketplace",
- "pares-rector",
+ "pares-rector 1.47.2 (git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171)",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -5086,6 +5090,7 @@ dependencies = [
  "pares-radix-praxis",
  "pluresdb 2.9.10",
  "pluresdb-procedures",
+ "pluresdb-px",
  "pluresdb-sea",
  "pluresdb-sync 3.6.0",
  "regex",
@@ -5098,11 +5103,13 @@ dependencies = [
  "subtle",
  "tempfile",
  "thiserror 2.0.18",
+ "tiktoken-rs",
  "tokio",
  "toml 0.8.2",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "unicode-segmentation",
  "uuid",
  "vault-core",
  "walkdir",
@@ -5229,6 +5236,7 @@ dependencies = [
  "tauri-plugin-clipboard-manager",
  "tauri-plugin-global-shortcut",
  "tauri-plugin-notification",
+ "tauri-plugin-tui",
  "tauri-plugin-window-state",
  "tokio",
  "tracing",
@@ -5328,7 +5336,7 @@ dependencies = [
  "pares-radix-mcp-server 1.47.2",
  "pares-radix-praxis",
  "pares-radix-tui",
- "pares-rector",
+ "pares-rector 1.47.2 (git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171)",
  "ratatui",
  "reqwest 0.12.28",
  "serde",
@@ -5485,6 +5493,22 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pares-rector"
+version = "1.47.2"
+source = "git+https://github.com/plures/pares-radix.git?rev=61b151b#61b151bcbddc35995e10e1f35ef2dccc672a4171"
+dependencies = [
+ "hostname",
+ "num_cpus",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 0.8.2",
  "tracing",
  "uuid",
 ]
@@ -7780,6 +7804,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
+name = "svelte-ratatui-adapter"
+version = "0.10.0"
+source = "git+https://github.com/plures/svelte-ratatui.git?rev=480e286#480e286ad12ba106e9826e1f769826c45bfadf1a"
+dependencies = [
+ "crossterm",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "svelte-ratatui-compiler",
+]
+
+[[package]]
+name = "svelte-ratatui-compiler"
+version = "0.10.0"
+source = "git+https://github.com/plures/svelte-ratatui.git?rev=480e286#480e286ad12ba106e9826e1f769826c45bfadf1a"
+dependencies = [
+ "ratatui",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "swift-rs"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8140,6 +8186,20 @@ dependencies = [
  "thiserror 2.0.18",
  "time",
  "url",
+]
+
+[[package]]
+name = "tauri-plugin-tui"
+version = "0.10.0"
+source = "git+https://github.com/plures/svelte-ratatui.git?rev=480e286#480e286ad12ba106e9826e1f769826c45bfadf1a"
+dependencies = [
+ "crossterm",
+ "log",
+ "ratatui",
+ "serde_json",
+ "svelte-ratatui-adapter",
+ "svelte-ratatui-compiler",
+ "tauri",
 ]
 
 [[package]]

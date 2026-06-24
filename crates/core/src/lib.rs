@@ -26,6 +26,10 @@ pub mod cerebellum;
 pub mod delegation;
 /// Feature-gate helpers over the license tier.
 pub mod features;
+/// HeadroomActionHandler — production implementation of headroom .px side-effect actors.
+pub mod headroom;
+/// Headroom context-compression bridge wired into the agent model loop.
+pub mod headroom_bridge;
 /// Heartbeat system — periodic proactive check-ins.
 pub mod heartbeat;
 /// PluresLM — native memory recall, capture, and context injection.
@@ -43,6 +47,8 @@ pub mod prompt_builder;
 
 pub use agent::Memory as AgentMemory;
 pub use agent::{Agent, InMemory};
+pub use headroom::HeadroomActionHandler;
+pub use headroom_bridge::HeadroomHook;
 
 /// Re-export the single canonical message-classifier contract from the platform
 /// crate so callers can reach it as `pares_agens_core::{ClassifierBackend, …}`

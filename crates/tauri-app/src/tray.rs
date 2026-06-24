@@ -1,4 +1,4 @@
-//! System tray setup for Pares Agens.
+//! System tray setup for Pares Radix.
 //!
 //! Creates the tray icon with a context menu that lets users:
 //! - Show / Hide the main window

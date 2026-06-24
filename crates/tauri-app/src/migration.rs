@@ -1,4 +1,4 @@
-//! Tauri IPC commands for the OpenClaw → Pares Agens migration wizard.
+//! Tauri IPC commands for the OpenClaw → Pares Radix migration wizard.
 //!
 //! Three commands are exposed:
 //!

@@ -29,3 +29,12 @@ pares-agens-channels = { path = "../channels" }
 pares-agens-migrate = { path = "../cli", package = "pares-agens-cli" }
 pares-models = { path = "../models" }
 mcp-client = { path = "../mcp-client" }
+
+[dependencies.tauri-plugin-tui]
+git = "https://github.com/plures/svelte-ratatui.git"
+rev = "480e286"
+optional = true
+
+[features]
+default = []
+tui = ["tauri-plugin-tui"]

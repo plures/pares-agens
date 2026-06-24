@@ -132,7 +132,11 @@ impl ModelRouter {
         request: &ChatCompletionRequest,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatCompletionChunk, Error>> + Send>>, Error> {
         let provider = self.select_provider(&request.model).to_owned();
-        match self.get_client(&provider)?.chat_completion_stream(request).await {
+        match self
+            .get_client(&provider)?
+            .chat_completion_stream(request)
+            .await
+        {
             Ok(stream) => Ok(Box::pin(stream)),
             Err(ref e) if Self::is_client_error(e) && !self.config.fallback_models.is_empty() => {
                 tracing::warn!(
@@ -187,7 +191,11 @@ impl ModelRouter {
             let mut req = original.clone();
             req.model = fallback_model.clone();
             tracing::info!(model = %fallback_model, "trying fallback model (stream)");
-            match self.get_client(&provider)?.chat_completion_stream(&req).await {
+            match self
+                .get_client(&provider)?
+                .chat_completion_stream(&req)
+                .await
+            {
                 Ok(stream) => {
                     tracing::info!(model = %fallback_model, "fallback model succeeded (stream)");
                     return Ok(Box::pin(stream));

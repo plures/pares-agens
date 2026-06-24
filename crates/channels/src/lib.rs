@@ -1,5 +1,5 @@
 #![warn(missing_docs)]
-//! Channel adapters for Pares Agens.
+//! Channel adapters for Pares Radix.
 //!
 //! Provides the [`ChannelAdapter`] trait and concrete adapter implementations
 //! for stdin, Tauri IPC, and Telegram. A [`ChannelAdapter`] bridges an external
@@ -13,9 +13,25 @@
 
 pub mod adapter;
 pub mod group_context;
+pub mod http_spine;
 pub mod stdin;
 pub mod tauri_ipc;
 pub mod telegram;
+pub mod threading;
+
+pub mod stdio_spine;
+pub mod telegram_spine;
+
+/// Get the local hostname for cluster display.
+pub(crate) fn cluster_hostname() -> String {
+    std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("COMPUTERNAME"))
+        .unwrap_or_else(|_| {
+            std::fs::read_to_string("/etc/hostname")
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|_| "unknown".to_string())
+        })
+}
 
 /// Validate that the license permits running the given number of channel adapters.
 ///

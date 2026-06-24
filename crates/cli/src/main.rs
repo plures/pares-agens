@@ -608,6 +608,7 @@ impl ModelClient for RouterModelClient {
                                     name: call.name,
                                     arguments: call.arguments.to_string(),
                                 },
+                                index: None,
                             })
                             .collect()
                     }),
@@ -3306,6 +3307,15 @@ async fn main() {
                     match ev {
                         AppEvent::AgentResponse(content) => {
                             app.handle_agent_response(content);
+                        }
+                        AppEvent::StreamChunk(chunk) => {
+                            app.handle_stream_chunk(chunk);
+                        }
+                        AppEvent::SessionsLoaded(sessions) => {
+                            app.handle_sessions_loaded(sessions);
+                        }
+                        AppEvent::SessionMessagesLoaded(name, turns) => {
+                            app.handle_session_messages_loaded(name, turns);
                         }
                         AppEvent::Quit => {
                             break 'main_loop Ok(());

@@ -28,14 +28,14 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use pares_agens_core::event::Event;
 use pares_agens_core::headroom::HeadroomActionHandler;
 use pares_agens_core::headroom_bridge::{count_message_tokens, HeadroomHook};
-use pares_agens_core::model::{
+use pares_agens_core::{Agent, InMemory};
+use pares_radix_core::event::Event;
+use pares_radix_core::model::{
     ChatMessage, ChatOptions, ModelClient, ModelCompletion, ToolDefinition, ToolDispatcher,
 };
-use pares_agens_core::state::{PluresDbStateStore, StateStore};
-use pares_agens_core::{Agent, InMemory};
+use pares_radix_core::state::{PluresDbStateStore, StateStore};
 use serde_json::Value;
 
 /// A `ModelClient` that records every `messages` slice it is asked to complete
@@ -72,6 +72,7 @@ impl ModelClient for CapturingModelClient {
             content: Some("ack".to_string()),
             tool_calls: vec![],
             logprobs: None,
+            model: None,
         })
     }
 }

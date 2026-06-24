@@ -1,4 +1,4 @@
-//! `pares-models` — OpenAI-compatible model router for Pares Agens.
+//! `pares-models` — OpenAI-compatible model router for Pares Radix.
 //!
 //! ## Quick start
 //!

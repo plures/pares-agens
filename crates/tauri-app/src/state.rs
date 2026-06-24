@@ -4,8 +4,6 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 
-use mcp_client::protocol::Tool as McpTool;
-use mcp_client::McpClient;
 use pares_agens_channels::tauri_ipc::TauriIpcHandle;
 use pares_radix_core::license::License;
 use pares_agens_core::memory::store::MemoryStore;
@@ -14,6 +12,10 @@ use pares_radix_core::praxis::GuidanceService;
 use pares_radix_core::secrets::{provider_api_key, SecretStore};
 use pares_models::config::{ProviderConfig, RouterConfig};
 use pares_models::ModelRouter;
+use mcp_client::protocol::Tool as McpTool;
+use mcp_client::McpClient;
+
+use pares_radix_core::plugins::{PluginCrudExecutor, PluginRuntime};
 
 use crate::procedures::{ProcedureLogEntry, ProcedureRecord};
 use crate::telemetry::TelemetryService;
@@ -159,7 +161,7 @@ pub struct AgentPreferences {
 impl Default for AgentPreferences {
     fn default() -> Self {
         Self {
-            agent_name: "Pares Agens".to_string(),
+            agent_name: "Pares Radix".to_string(),
             personality_notes: String::new(),
             auto_recall: true,
             capture_categories: vec![
@@ -238,24 +240,36 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            model: "gpt-4.1".to_string(),
-            endpoint: "https://api.enterprise.githubcopilot.com".to_string(),
+            model: std::env::var("PARES_MODEL").unwrap_or_else(|_| "claude-opus-4.6".to_string()),
+            endpoint: "https://api.githubcopilot.com".to_string(),
             channel: "tauri".to_string(),
-            system_prompt: "You are Pares Agens, a helpful desktop AI assistant.".to_string(),
+            system_prompt: "You are Pares Radix, a helpful desktop AI assistant.".to_string(),
             api_key: None,
             telegram_token: None,
             auto_start: false,
             activation_hotkey: default_activation_hotkey(),
-            providers: vec![ProviderEntry {
-                name: "copilot".to_string(),
-                base_url: "https://api.enterprise.githubcopilot.com".to_string(),
-                api_key: None,
-                models: vec!["gpt-4.1".to_string(), "claude-opus-4.6".to_string()],
-            }],
+            providers: vec![
+                ProviderEntry {
+                    name: "anthropic".to_string(),
+                    base_url: "https://api.anthropic.com/v1".to_string(),
+                    api_key: None,
+                    models: vec![
+                        "claude-sonnet-4-20250514".to_string(),
+                        "claude-opus-4-20250514".to_string(),
+                    ],
+                },
+                ProviderEntry {
+                    name: "copilot".to_string(),
+                    base_url: "https://api.enterprise.githubcopilot.com".to_string(),
+                    api_key: None,
+                    models: vec!["gpt-4.1".to_string(), "claude-opus-4.6".to_string()],
+                },
+            ],
             routing: RoutingPrefs {
                 interactive: Some(ModelRef {
                     provider: "copilot".to_string(),
-                    model: "gpt-4.1".to_string(),
+                    model: std::env::var("PARES_MODEL")
+                        .unwrap_or_else(|_| "claude-opus-4.6".to_string()),
                 }),
                 background: None,
                 coding: None,
@@ -348,6 +362,10 @@ pub struct AppState {
     pub license: Mutex<License>,
     /// Anonymous telemetry aggregator backed by PluresDB state.
     pub telemetry_service: Arc<TelemetryService>,
+    /// Plugin runtime — manages installed plugins.
+    pub plugin_runtime: Arc<PluginRuntime>,
+    /// Plugin CRUD executor — performs entity operations against PluresDB.
+    pub plugin_executor: Option<Arc<PluginCrudExecutor>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -482,9 +500,10 @@ mod tests {
         let settings = Settings::default();
         let config = build_router_config(&settings);
 
-        // Default settings have one provider: "copilot".
-        assert_eq!(config.providers.len(), 1);
+        // Default settings have two providers: "anthropic" and "copilot".
+        assert_eq!(config.providers.len(), 2);
         assert!(config.providers.contains_key("copilot"));
+        assert!(config.providers.contains_key("anthropic"));
         assert_eq!(config.default_provider, "copilot");
     }
 
@@ -505,7 +524,7 @@ mod tests {
         let config = build_router_config(&settings);
 
         assert_eq!(config.default_provider, "openai");
-        assert_eq!(config.providers.len(), 2);
+        assert_eq!(config.providers.len(), 3);
     }
 
     #[test]
@@ -581,6 +600,8 @@ mod tests {
             telemetry_service: Arc::new(TelemetryService::new(Arc::new(
                 pares_radix_core::InMemoryStateStore::new(),
             ))),
+            plugin_runtime: Arc::new(pares_radix_core::plugins::PluginRuntime::new()),
+            plugin_executor: None,
         };
 
         rebuild_model_router(&state).await;

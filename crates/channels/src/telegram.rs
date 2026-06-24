@@ -35,10 +35,11 @@ use uuid::Uuid;
 
 use crate::adapter::{ChannelAdapter, ChannelError};
 use crate::group_context::{GroupContextBuffer, GroupMessage};
+use pares_agens_agenda::scheduler::Scheduler;
 use pares_radix_core::channel_contract::{ChannelContract, GroupChatPolicy};
 use pares_radix_core::event_spine::EventSpineHandle;
 use pares_radix_core::renderers::telegram as html_renderer;
-use pares_agens_agenda::scheduler::Scheduler;
+use pares_radix_core::task_manager::TaskManager;
 
 const PARES_MODULUS_INDEX_URL: &str =
     "https://raw.githubusercontent.com/plures/pares-modulus/main/index.json";
@@ -46,13 +47,19 @@ const DEFAULT_MARKETPLACE_INSTALL_DIR: &str = "/skills";
 const MAX_INDEX_LISTING_ITEMS: usize = 10;
 const DEFAULT_NIX_FLAKE_DIR: &str = "nixos-config";
 const DEFAULT_NIX_HOST: &str = "praxisbot";
+/// Directory containing the pares-radix source for rebuilding the binary.
+#[allow(dead_code)]
+const DEFAULT_PARES_RADIX_DIR: &str = "pares-radix";
+/// Subdirectory under $HOME/projects for defaults, or override with env vars.
+#[allow(dead_code)]
+const PROJECTS_SUBDIR: &str = "projects";
 const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
 /// Internal prefix added by the Telegram adapter when `/verbose` is enabled.
 ///
 /// The runtime strips this marker before model processing and uses it only to
 /// decide whether to append tool execution details to the Telegram reply.
 pub const TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER: &str = "__PARES_VERBOSE_TOOL_DETAILS__:";
-const TELEGRAM_HELP_COMMANDS: [(&str, &str); 22] = [
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 32] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
     ("/status", "status + health snapshot"),
@@ -77,15 +84,14 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 22] = [
     ("/config log-level <level>", "set runtime log level"),
     ("/reset", "full runtime reset (new session + config reload)"),
     ("/clear", "start a fresh conversation session"),
-    (
-        "/version",
-        "show version and build info",
-    ),
-    ("/logs [n]", "tail recent pares-agens service logs"),
+    ("/resume", "resume last session (or /resume list)"),
+    ("/sessions", "list recent sessions (alias for /resume list)"),
+    ("/version", "show version and build info"),
+    ("/logs [n]", "tail recent pares-radix service logs"),
     ("/tools", "show tool governance policies"),
     (
         "/update",
-        "run NixOS self-update and rebuild if pares-agens changed",
+        "run NixOS self-update and rebuild if pares-radix changed",
     ),
     (
         "/personality",
@@ -99,6 +105,23 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 22] = [
         "/plugin",
         "manage plugins (list, install <path>, uninstall <name>, schema <name>)",
     ),
+    (
+        "/praxis",
+        "write gate: constraints, log [n], violations [n]",
+    ),
+    (
+        "/tasks",
+        "list open tasks (or /tasks all to include completed)",
+    ),
+    (
+        "/task <id>",
+        "show task details, complete, or cancel (/task <id> complete|cancel)",
+    ),
+    ("/cluster status", "show cluster state"),
+    ("/cluster nodes", "list discovered nodes with capabilities"),
+    ("/cluster info", "show local node capabilities"),
+    ("/cluster deploy <file>", "deploy workloads from a .px file"),
+    ("/cluster workloads", "list running workloads"),
 ];
 const DEFAULT_LOG_TAIL_LINES: usize = 80;
 const MAX_LOG_TAIL_LINES: usize = 400;
@@ -250,10 +273,25 @@ fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-/// Delegate to the canonical self-update command builder in `pares_agens_agenda`.
-/// See ADR-0010: no duplicated operational logic across crates.
-fn build_nixos_update_command(flake_dir: &str, host: &str) -> String {
-    pares_agens_agenda::self_update::build_update_command(flake_dir, host)
+fn build_nixos_update_command(_flake_dir: &str, _host: &str) -> String {
+    // Self-update = pull latest config then nixos-rebuild from local checkout.
+    // Uses the local git repo (SSH access) instead of github: URI
+    // because the repo may be private (no GitHub API token for Nix).
+    let host = std::env::var("PARES_NIX_HOST").unwrap_or_else(|_| "praxisbot".into());
+    let flake_dir = std::env::var("PARES_NIX_FLAKE_DIR").unwrap_or_else(|_| "/etc/nixos".into());
+    let flake_dir_q = shell_single_quote(&flake_dir);
+    let host_q = shell_single_quote(&host);
+    format!(
+        "set -eu; \
+         cd {flake_dir_q}; \
+         echo 'Pulling latest config...'; \
+         git fetch origin && git pull --ff-only; \
+         echo 'Updating flake inputs...'; \
+         sudo nix flake update pares-radix pares-arca; \
+         echo 'Rebuilding NixOS...'; \
+         sudo nixos-rebuild switch --flake .#{host_q} --refresh; \
+         echo 'Self-update complete.'"
+    )
 }
 
 fn truncate_telegram_message(content: String) -> String {
@@ -334,7 +372,7 @@ fn format_update_command_output(output: &std::process::Output) -> String {
 }
 
 fn telegram_help_text() -> String {
-    let mut lines = vec!["Pares Agens commands:".to_string()];
+    let mut lines = vec!["Pares Radix commands:".to_string()];
     lines.extend(
         TELEGRAM_HELP_COMMANDS
             .iter()
@@ -416,6 +454,14 @@ pub struct TelegramConfig {
     pub plugin_runtime: Option<Arc<pares_radix_core::plugins::PluginRuntime>>,
     /// Optional plugin CRUD executor for entity counts.
     pub plugin_executor: Option<Arc<pares_radix_core::plugins::PluginCrudExecutor>>,
+    /// Optional praxis write gate for `/praxis` command.
+    pub write_gate: Option<Arc<pares_radix_core::praxis::write_gate::PraxisWriteGate>>,
+    /// Optional task manager for `/tasks` and `/task` commands.
+    pub task_manager: Option<Arc<TaskManager>>,
+    /// Number of registered tools/procedures (for `/status` display).
+    pub tool_count: Option<usize>,
+    /// Optional pool-aware model control (replaces model_control when set).
+    pub pool_control: Option<Arc<dyn pares_radix_core::model_pool::PoolControl>>,
 }
 
 impl TelegramConfig {
@@ -433,6 +479,10 @@ impl TelegramConfig {
             group_chat_policy: GroupChatPolicy::default(),
             plugin_runtime: None,
             plugin_executor: None,
+            write_gate: None,
+            task_manager: None,
+            tool_count: None,
+            pool_control: None,
         }
     }
 
@@ -457,6 +507,13 @@ impl TelegramConfig {
         self
     }
 
+    /// Enable pool-aware `/model` commands (replaces legacy model_control).
+    #[must_use]
+    pub fn with_pool_control(mut self, pool_control: Arc<dyn pares_radix_core::model_pool::PoolControl>) -> Self {
+        self.pool_control = Some(pool_control);
+        self
+    }
+
     /// Enable `/reset` runtime reset support.
     #[must_use]
     pub fn with_runtime_control(
@@ -476,7 +533,10 @@ impl TelegramConfig {
 
     /// Enable `/personality` runtime personality control.
     #[must_use]
-    pub fn with_personality_control(mut self, control: Arc<dyn TelegramPersonalityControl>) -> Self {
+    pub fn with_personality_control(
+        mut self,
+        control: Arc<dyn TelegramPersonalityControl>,
+    ) -> Self {
         self.personality_control = Some(control);
         self
     }
@@ -485,6 +545,13 @@ impl TelegramConfig {
     #[must_use]
     pub fn with_scheduler(mut self, scheduler: Arc<Scheduler>) -> Self {
         self.scheduler = Some(scheduler);
+        self
+    }
+
+    /// Enable `/tasks` and `/task` commands.
+    #[must_use]
+    pub fn with_task_manager(mut self, task_manager: Arc<TaskManager>) -> Self {
+        self.task_manager = Some(task_manager);
         self
     }
 
@@ -580,7 +647,12 @@ pub struct TelegramRuntimeConfig {
 /// Telegram messages.
 pub struct TelegramAdapter {
     config: TelegramConfig,
-    event_spine: Option<EventSpineHandle>,
+    /// Handle to the event spine for spine-driven message delivery.
+    pub event_spine: Option<EventSpineHandle>,
+    /// Broadcast sender for model streaming deltas.
+    /// Channel handlers subscribe to receive progressive token delivery.
+    /// When None, progressive editing is disabled (placeholder → full edit).
+    pub stream_tx: Option<tokio::sync::broadcast::Sender<pares_radix_core::model::StreamDelta>>,
 }
 
 #[derive(Debug)]
@@ -601,17 +673,20 @@ enum ConfigCommand {
 impl TelegramAdapter {
     /// Create a new [`TelegramAdapter`] with the given configuration.
     pub fn new(config: TelegramConfig) -> Self {
-        Self { config, event_spine: None }
+        Self {
+            config,
+            event_spine: None,
+            stream_tx: None,
+        }
     }
 
     /// Create a new [`TelegramAdapter`] with an event spine handle.
     pub fn with_event_spine(config: TelegramConfig, spine: EventSpineHandle) -> Self {
-        Self { config, event_spine: Some(spine) }
-    }
-
-    /// Get a reference to the event spine handle, if configured.
-    pub fn event_spine(&self) -> Option<&EventSpineHandle> {
-        self.event_spine.as_ref()
+        Self {
+            config,
+            event_spine: Some(spine),
+            stream_tx: None,
+        }
     }
 
     fn parse_model_command(args: Vec<&str>) -> Result<ModelCommand, &'static str> {
@@ -811,7 +886,8 @@ impl TelegramAdapter {
 
             // Find a split point: prefer double-newline (paragraph), then single newline, then space
             let search_range = &remaining[..max_len];
-            let split_at = search_range.rfind("\n\n")
+            let split_at = search_range
+                .rfind("\n\n")
                 .map(|i| i + 2)
                 .or_else(|| search_range.rfind('\n').map(|i| i + 1))
                 .or_else(|| search_range.rfind(' ').map(|i| i + 1))
@@ -878,7 +954,8 @@ impl TelegramAdapter {
 
         // Try editing placeholder with first HTML chunk
         let first_html = html_chunks.first()?;
-        let mut edit_req = bot.edit_message_text(chat_id, placeholder_id, first_html.clone())
+        let mut edit_req = bot
+            .edit_message_text(chat_id, placeholder_id, first_html.clone())
             .parse_mode(ParseMode::Html);
         if html_chunks.len() == 1 {
             if let Some(ref markup) = reply_markup {
@@ -889,7 +966,8 @@ impl TelegramAdapter {
             Ok(_) => {
                 // Send remaining HTML chunks as new messages
                 for (i, chunk) in html_chunks.iter().skip(1).enumerate() {
-                    let mut req = bot.send_message(chat_id, chunk.clone())
+                    let mut req = bot
+                        .send_message(chat_id, chunk.clone())
                         .parse_mode(ParseMode::Html);
                     if i == html_chunks.len() - 2 {
                         if let Some(ref markup) = reply_markup {
@@ -910,7 +988,8 @@ impl TelegramAdapter {
                 debug!(error = %e, "HTML edit of placeholder failed, trying plain text");
                 // Try plain text edit
                 let first_plain = plain_chunks.first()?;
-                let mut plain_edit = bot.edit_message_text(chat_id, placeholder_id, first_plain.clone());
+                let mut plain_edit =
+                    bot.edit_message_text(chat_id, placeholder_id, first_plain.clone());
                 if plain_chunks.len() == 1 {
                     if let Some(ref markup) = reply_markup {
                         plain_edit = plain_edit.reply_markup(markup.clone());
@@ -1115,11 +1194,7 @@ impl TelegramAdapter {
     #[allow(dead_code)]
     async fn react_contextually(bot: &Bot, msg: &Message) {
         let text = msg.text().unwrap_or_default().to_lowercase();
-        let emoji = if text.contains('?') {
-            "🤔"
-        } else {
-            "👀"
-        };
+        let emoji = if text.contains('?') { "🤔" } else { "👀" };
         if let Err(e) = bot
             .set_message_reaction(msg.chat.id, msg.id)
             .reaction(vec![ReactionType::Emoji {
@@ -1149,25 +1224,38 @@ impl ChannelAdapter for TelegramAdapter {
         let bot = Bot::new(self.config.token.clone());
 
         // Fetch bot username for group mention detection
-        let bot_me = bot.get_me().await.map_err(|e| ChannelError::Telegram(format!("failed to get bot info: {e}")))?;
+        let bot_me = bot
+            .get_me()
+            .await
+            .map_err(|e| ChannelError::Telegram(format!("failed to get bot info: {e}")))?;
         let bot_username: Arc<str> = Arc::from(
-            bot_me.username.as_deref().unwrap_or("bot").to_string().into_boxed_str()
+            bot_me
+                .username
+                .as_deref()
+                .unwrap_or("bot")
+                .to_string()
+                .into_boxed_str(),
         );
 
         let group_policy = Arc::new(self.config.group_chat_policy.clone());
-        let group_context = Arc::new(TokioMutex::new(
-            GroupContextBuffer::new(self.config.group_chat_policy.context_window),
-        ));
+        let group_context = Arc::new(TokioMutex::new(GroupContextBuffer::new(
+            self.config.group_chat_policy.context_window,
+        )));
 
         let index_url = self.config.marketplace_index_url.clone();
         let model_control = self.config.model_control.clone();
+        let pool_control = self.config.pool_control.clone();
         let runtime_control = self.config.runtime_control.clone();
         let config_control = self.config.config_control.clone();
         let personality_control = self.config.personality_control.clone();
         let scheduler = self.config.scheduler.clone();
         let plugin_runtime = self.config.plugin_runtime.clone();
         let plugin_executor = self.config.plugin_executor.clone();
+        let write_gate = self.config.write_gate.clone();
+        let task_manager = self.config.task_manager.clone();
+        let tool_count = self.config.tool_count;
         let event_spine = self.event_spine.clone();
+        let stream_tx = self.stream_tx.clone();
         let verbose_by_chat = Arc::new(TokioMutex::new(HashMap::<i64, bool>::new()));
         let installer = std::sync::Arc::new(TokioMutex::new(
             Installer::new(&self.config.marketplace_install_dir)
@@ -1181,14 +1269,18 @@ impl ChannelAdapter for TelegramAdapter {
             let installer = installer.clone();
             let index_url = index_url.clone();
             let model_control = model_control.clone();
+            let pool_control = pool_control.clone();
             let runtime_control = runtime_control.clone();
             let config_control = config_control.clone();
             let personality_control = personality_control.clone();
             let scheduler = scheduler.clone();
             let plugin_runtime = plugin_runtime.clone();
             let plugin_executor = plugin_executor.clone();
+            let write_gate = write_gate.clone();
+            let task_manager = task_manager.clone();
             let verbose_by_chat = verbose_by_chat.clone();
             let event_spine = event_spine.clone();
+            let stream_tx = stream_tx.clone();
             let bot_username = bot_username.clone();
             let group_policy = group_policy.clone();
             let group_context = group_context.clone();
@@ -1213,10 +1305,20 @@ impl ChannelAdapter for TelegramAdapter {
                                 return respond(());
                             }
                             "status" | "health" => {
+                                // Show subsystem health from PluresDB if available
+                                let health_section = if cmd == "health" {
+                                    event_spine.as_ref().and_then(|es| {
+                                        pares_radix_core::health::SystemHealth::load_from_store(es.store())
+                                    }).map(|h| h.telegram_report())
+                                } else {
+                                    None
+                                };
                                 let memory = current_process_rss_kib()
                                     .map(|rss| format!("{rss} KiB"))
                                     .unwrap_or_else(|| "n/a".to_string());
-                                let model_line = if let Some(control) = &model_control {
+                                let model_line = if let Some(pc) = &pool_control {
+                                    pc.status_line().await
+                                } else if let Some(control) = &model_control {
                                     let (primary, deep) = control.current_models().await;
                                     format!("{primary} + {deep}")
                                 } else {
@@ -1226,32 +1328,54 @@ impl ChannelAdapter for TelegramAdapter {
                                 let commit = option_env!("GIT_COMMIT_HASH").unwrap_or("unknown");
                                 let event_spine_status = if event_spine.is_some() { "active" } else { "disabled" };
                                 let uptime = {
-                                    use std::time::SystemTime;
-                                    let secs = SystemTime::now()
-                                        .duration_since(SystemTime::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                        .as_secs();
-                                    let pid_start = std::fs::read_to_string(format!("/proc/{}/stat", std::process::id()))
+                                    // /proc/<pid>/stat field 22 = starttime in clock ticks since boot
+                                    // /proc/uptime first field = seconds since boot
+                                    let system_uptime = std::fs::read_to_string("/proc/uptime")
+                                        .ok()
+                                        .and_then(|s| s.split_whitespace().next().and_then(|t| t.parse::<f64>().ok()))
+                                        .unwrap_or(0.0);
+                                    let clk_tck: u64 = 100; // sysconf(_SC_CLK_TCK), almost always 100 on Linux
+                                    let proc_start_ticks = std::fs::read_to_string(format!("/proc/{}/stat", std::process::id()))
                                         .ok()
                                         .and_then(|s| s.split_whitespace().nth(21).and_then(|t| t.parse::<u64>().ok()))
-                                        .map(|ticks| secs.saturating_sub(ticks / 100))
                                         .unwrap_or(0);
-                                    let hours = pid_start / 3600;
-                                    let mins = (pid_start % 3600) / 60;
+                                    let proc_start_secs = proc_start_ticks / clk_tck;
+                                    let proc_uptime = (system_uptime as u64).saturating_sub(proc_start_secs);
+                                    let hours = proc_uptime / 3600;
+                                    let mins = (proc_uptime % 3600) / 60;
                                     format!("{hours}h {mins}m")
                                 };
                                 let home = std::env::var("HOME").unwrap_or_else(|_| "~".into());
+                                let tools_line = if let Some(count) = tool_count {
+                                    format!("Tools: {count} registered")
+                                } else {
+                                    "Tools: unknown".to_string()
+                                };
+                                let cerebellum_line = if std::path::Path::new(&format!("{home}/.pares-radix/models/bitnet")).exists() {
+                                    "Cerebellum: BitNet (local)"
+                                } else {
+                                    "Cerebellum: heuristic"
+                                };
+                                let hostname = std::fs::read_to_string("/etc/hostname")
+                                    .unwrap_or_else(|_| "unknown".into())
+                                    .trim().to_string();
                                 let status = format!(
-                                    "Pares Agens v{version} ({commit})\n\
-                                     PID: {} | RSS: {memory} | Uptime: {uptime}\n\
-                                     Model: {model_line}\n\
-                                     Event Spine: {event_spine_status}\n\
-                                     Rendering: HTML + plain text fallback\n\
-                                     Tool Governance: active (30s timeout)\n\
-                                     PluresDB: {home}/.pares-agens/memory/",
+                                    "🤖 <b>Pares Radix v{version}</b> (<code>{commit}</code>)\n\
+                                     ⏱️ Uptime: {uptime} · PID: {} · RSS: {memory}\n\
+                                     🧠 Model: <code>{model_line}</code>\n\
+                                     🔑 {cerebellum_line}\n\
+                                     ⚡️ Event Spine: {event_spine_status}\n\
+                                     🔧 {tools_line}\n\
+                                     🗄 PluresDB: <code>{home}/.pares-radix/memory/</code>\n\
+                                     🖥 Host: <code>{hostname}</code>",
                                     std::process::id(),
                                 );
-                                Self::send_reply_with_fallback(&bot, &msg, &status, None, event_spine.as_ref()).await;
+                                let full_status = if let Some(health) = health_section {
+                                    format!("{}\n\n{}", status, health)
+                                } else {
+                                    status
+                                };
+                                Self::send_reply_with_fallback(&bot, &msg, &full_status, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
@@ -1311,7 +1435,7 @@ impl ChannelAdapter for TelegramAdapter {
                                             }
                                         }
                                         Err(e) => {
-                                            format!("Failed to update deep model escalation: {e}")
+                                            format!("⚠️ Failed to update deep model escalation: {e}")
                                         }
                                     },
                                     Err(usage) => usage.to_string(),
@@ -1320,7 +1444,39 @@ impl ChannelAdapter for TelegramAdapter {
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
-                            "model" | "models" => {
+                            "model" => {
+                                // Pool-aware model commands (new)
+                                if let Some(pc) = &pool_control {
+                                    let args: Vec<&str> = cmd_parts.collect();
+                                    let reply = match args.as_slice() {
+                                        [] | ["list"] => pc.model_list().await,
+                                        ["stats"] => pc.stats(None).await,
+                                        ["stats", id] => pc.stats(Some(id)).await,
+                                        ["disable", id] => {
+                                            pc.disable(id, None).await.unwrap_or_else(|e| format!("⚠️ {e}"))
+                                        }
+                                        ["disable", id, rest @ ..] => {
+                                            let reason = rest.join(" ");
+                                            pc.disable(id, Some(&reason)).await.unwrap_or_else(|e| format!("⚠️ {e}"))
+                                        }
+                                        ["enable", id] => {
+                                            pc.enable(id).await.unwrap_or_else(|e| format!("⚠️ {e}"))
+                                        }
+                                        ["prefer", id] => {
+                                            pc.prefer(id).await.unwrap_or_else(|e| format!("⚠️ {e}"))
+                                        }
+                                        ["reset"] => {
+                                            pc.reset().await.unwrap_or_else(|e| format!("⚠️ {e}"))
+                                        }
+                                        ["refresh"] => pc.refresh().await,
+                                        _ => "Usage: /model [list|disable <id> [reason]|enable <id>|prefer <id>|stats [id]|reset|refresh]".to_string(),
+                                    };
+                                    Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                    Self::acknowledge_message(&bot, &msg).await;
+                                    return respond(());
+                                }
+
+                                // Legacy fallback (old model_control trait)
                                 let Some(control) = &model_control else {
                                     Self::send_reply_with_fallback(
                                         &bot,
@@ -1334,21 +1490,7 @@ impl ChannelAdapter for TelegramAdapter {
                                 let reply = match Self::parse_model_command(cmd_parts.collect()) {
                                     Ok(ModelCommand::Show) => {
                                         let (primary, deep) = control.current_models().await;
-                                        format!(
-                                            "Current models:\n\
-                                             • Primary: {primary}\n\
-                                             • Deep: {deep}\n\
-                                             \n\
-                                             Available (Copilot):\n\
-                                             • gpt-4.1 — fast, tool-capable\n\
-                                             • gpt-5.2 — deep reasoning\n\
-                                             • claude-sonnet-4.5 — balanced\n\
-                                             • claude-opus-4.6 — strongest\n\
-                                             • o3 — reasoning specialist\n\
-                                             \n\
-                                             Switch: /model <name>\n\
-                                             Switch deep: /model deep <name>"
-                                        )
+                                        format!("Current models\nPrimary: {primary}\nDeep: {deep}")
                                     }
                                     Ok(ModelCommand::SetPrimary(model)) => {
                                         match control.set_primary_model(&model).await {
@@ -1356,7 +1498,7 @@ impl ChannelAdapter for TelegramAdapter {
                                                 let (_, deep) = control.current_models().await;
                                                 format!("Updated primary model to {model}\nDeep: {deep}")
                                             }
-                                            Err(e) => format!("Failed to update primary model: {e}"),
+                                            Err(e) => format!("⚠️ Failed to update primary model: {e}"),
                                         }
                                     }
                                     Ok(ModelCommand::SetDeep(model)) => {
@@ -1365,7 +1507,7 @@ impl ChannelAdapter for TelegramAdapter {
                                                 let (primary, _) = control.current_models().await;
                                                 format!("Updated deep model to {model}\nPrimary: {primary}")
                                             }
-                                            Err(e) => format!("Failed to update deep model: {e}"),
+                                            Err(e) => format!("⚠️ Failed to update deep model: {e}"),
                                         }
                                     }
                                     Err(e) => e.to_string(),
@@ -1415,7 +1557,7 @@ impl ChannelAdapter for TelegramAdapter {
                                     Ok(ConfigCommand::SetModel(model)) => {
                                         match control.set_model(&model).await {
                                             Ok(()) => format!("Updated runtime model to {model}"),
-                                            Err(e) => format!("Failed to update model: {e}"),
+                                            Err(e) => format!("⚠️ Failed to update model: {e}"),
                                         }
                                     }
                                     Ok(ConfigCommand::SetEndpoint(endpoint)) => {
@@ -1423,7 +1565,7 @@ impl ChannelAdapter for TelegramAdapter {
                                             Ok(()) => {
                                                 format!("Updated runtime endpoint to {endpoint}")
                                             }
-                                            Err(e) => format!("Failed to update endpoint: {e}"),
+                                            Err(e) => format!("⚠️ Failed to update endpoint: {e}"),
                                         }
                                     }
                                     Ok(ConfigCommand::SetLogLevel(log_level)) => {
@@ -1431,7 +1573,7 @@ impl ChannelAdapter for TelegramAdapter {
                                             Ok(()) => {
                                                 format!("Updated runtime log level to {log_level}")
                                             }
-                                            Err(e) => format!("Failed to update log level: {e}"),
+                                            Err(e) => format!("⚠️ Failed to update log level: {e}"),
                                         }
                                     }
                                     Err(e) => e.to_string(),
@@ -1519,11 +1661,11 @@ impl ChannelAdapter for TelegramAdapter {
 
                                 info!(
                                     tail_lines,
-                                    "telegram /logs requested for pares-agens service"
+                                    "telegram /logs requested for pares-radix service"
                                 );
                                 let reply = match tokio::process::Command::new("journalctl")
                                     .arg("-u")
-                                    .arg("pares-agens")
+                                    .arg("pares-radix")
                                     .arg("-n")
                                     .arg(tail_lines.to_string())
                                     .arg("--no-pager")
@@ -1539,7 +1681,7 @@ impl ChannelAdapter for TelegramAdapter {
                                             "telegram /logs command completed"
                                         );
                                         truncate_telegram_message(format!(
-                                            "Recent pares-agens logs (last {tail_lines} lines):\n{}",
+                                            "Recent pares-radix logs (last {tail_lines} lines):\n{}",
                                             format_service_logs_output(&output)
                                         ))
                                     }
@@ -1555,6 +1697,28 @@ impl ChannelAdapter for TelegramAdapter {
                                         &bot,
                                         &msg,
                                         "Update denied. Configure PARES_TELEGRAM_UPDATE_ALLOWED_USERS with approved Telegram usernames or numeric IDs.",
+                                        None, event_spine.as_ref(),).await;
+                                    return respond(());
+                                }
+                                // Preflight: check if sudo is available for nixos-rebuild
+                                let sudo_check = tokio::process::Command::new("sudo")
+                                    .args(["-n", "/run/current-system/sw/bin/nixos-rebuild", "--help"])
+                                    .stdout(std::process::Stdio::null())
+                                    .stderr(std::process::Stdio::null())
+                                    .output()
+                                    .await;
+                                let has_sudo = sudo_check.map(|o| o.status.success()).unwrap_or(false);
+                                if !has_sudo {
+                                    Self::send_reply_with_fallback(
+                                        &bot,
+                                        &msg,
+                                        "⚠️ Cannot update: `sudo` access is not configured for this user.\n\n\
+                                        The `/update` command requires passwordless sudo for `nixos-rebuild` and `nix`.\n\n\
+                                        To enable, add to your NixOS config:\n```nix\nsecurity.sudo.extraRules = [{\n  users = [ \"<your-user>\" ];\n  commands = [\n    { command = \"/run/current-system/sw/bin/nixos-rebuild\"; options = [ \"NOPASSWD\" ]; }\n    { command = \"/run/current-system/sw/bin/nix\"; options = [ \"NOPASSWD\" ]; }\n  ];\n}];\n```\n\n\
+                                        ⚠️ **Security note:** This grants the pares-radix service user the ability to \
+                                        rebuild and activate system configurations. Only enable this on machines you trust \
+                                        and where the Telegram update users list (PARES_TELEGRAM_UPDATE_ALLOWED_USERS) is \
+                                        properly restricted.",
                                         None, event_spine.as_ref(),).await;
                                     return respond(());
                                 }
@@ -1705,7 +1869,7 @@ impl ChannelAdapter for TelegramAdapter {
                                                 sched.add(task).await;
                                                 reply
                                             }
-                                            Err(e) => format!("Error: {e}\nUsage: /cron add '<schedule>' '<command>'"),
+                                            Err(e) => format!("⚠️ {e}\nUsage: /cron add '<schedule>' '<command>'"),
                                         }
                                     }
                                     Some("remove") | Some("rm") | Some("delete") => {
@@ -1841,7 +2005,257 @@ impl ChannelAdapter for TelegramAdapter {
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
-                            _ => {} // fall through to agent
+                            "tasks" => {
+                                let Some(mgr) = &task_manager else {
+                                    Self::send_reply_with_fallback(&bot, &msg, "Task manager is unavailable.", None, event_spine.as_ref()).await;
+                                    Self::acknowledge_message(&bot, &msg).await;
+                                    return respond(());
+                                };
+                                let args: Vec<&str> = cmd_parts.collect();
+                                let include_all = args.first().copied() == Some("all");
+                                let chat_id_str = msg.chat.id.0.to_string();
+                                let tasks = mgr.tasks_for_chat(&chat_id_str, include_all);
+                                let reply = if tasks.is_empty() {
+                                    if include_all { "No tasks found.".to_string() } else { "No open tasks.".to_string() }
+                                } else {
+                                    let mut out = String::new();
+                                    for t in &tasks {
+                                        let status = match &t.status {
+                                            pares_radix_core::task::TaskStatus::Open => "⏳",
+                                            pares_radix_core::task::TaskStatus::InProgress => "🔄",
+                                            pares_radix_core::task::TaskStatus::Blocked => "🚫",
+                                            pares_radix_core::task::TaskStatus::Delegated => "👥",
+                                            pares_radix_core::task::TaskStatus::Completed => "✅",
+                                            pares_radix_core::task::TaskStatus::Failed => "❌",
+                                            pares_radix_core::task::TaskStatus::Cancelled => "🚮",
+                                        };
+                                        let short_id = &t.id[..8.min(t.id.len())];
+                                        let conds = t.completion_conditions.len();
+                                        let satisfied = t.completion_conditions.iter().filter(|c| c.satisfied).count();
+                                        if !out.is_empty() { out.push('\n'); }
+                                        out.push_str(&format!("{status} {short_id} — {} [{satisfied}/{conds}]", t.description));
+                                    }
+                                    out
+                                };
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            "task" => {
+                                let Some(mgr) = &task_manager else {
+                                    Self::send_reply_with_fallback(&bot, &msg, "Task manager is unavailable.", None, event_spine.as_ref()).await;
+                                    Self::acknowledge_message(&bot, &msg).await;
+                                    return respond(());
+                                };
+                                let args: Vec<&str> = cmd_parts.collect();
+                                let reply = if args.is_empty() {
+                                    "Usage: /task <id> [complete|cancel]".to_string()
+                                } else {
+                                    let id_prefix = args[0];
+                                    // Find task by prefix match
+                                    let chat_id_str = msg.chat.id.0.to_string();
+                                    let all_tasks = mgr.tasks_for_chat(&chat_id_str, true);
+                                    let matched: Vec<_> = all_tasks.iter().filter(|t| t.id.starts_with(id_prefix)).collect();
+                                    if matched.is_empty() {
+                                        format!("No task found matching '{id_prefix}'.")
+                                    } else if matched.len() > 1 {
+                                        format!("Ambiguous prefix '{id_prefix}' — matches {} tasks. Be more specific.", matched.len())
+                                    } else {
+                                        let task = matched[0];
+                                        match args.get(1).copied() {
+                                            Some("complete") => {
+                                                // Satisfy RequesterAck conditions and check completion
+                                                for (i, cond) in task.completion_conditions.iter().enumerate() {
+                                                    if matches!(cond.condition_type, pares_radix_core::task::ConditionType::RequesterAck) && !cond.satisfied {
+                                                        mgr.satisfy_condition(&task.id, i);
+                                                    }
+                                                }
+                                                let completed = mgr.check_completion(&task.id);
+                                                if completed {
+                                                    format!("✅ Task {} completed.", &task.id[..8.min(task.id.len())])
+                                                } else {
+                                                    format!("👍 RequesterAck satisfied for {}. Other conditions still pending.", &task.id[..8.min(task.id.len())])
+                                                }
+                                            }
+                                            Some("cancel") => {
+                                                mgr.cancel_task(&task.id);
+                                                format!("🚮 Task {} cancelled.", &task.id[..8.min(task.id.len())])
+                                            }
+                                            None => {
+                                                // Show task details
+                                                let status = format!("{:?}", task.status);
+                                                let short_id = &task.id[..8.min(task.id.len())];
+                                                let mut out = format!("Task {short_id}\nStatus: {status}\nDescription: {}\nPriority: {}\nAttempts: {}",
+                                                    task.description, task.priority, task.attempts);
+                                                if let Some(ref parent) = task.parent_task {
+                                                    out.push_str(&format!("\nParent: {}", &parent[..8.min(parent.len())]));
+                                                }
+                                                if !task.subtasks.is_empty() {
+                                                    out.push_str(&format!("\nSubtasks: {}", task.subtasks.len()));
+                                                }
+                                                match &task.assigned_to {
+                                                    pares_radix_core::task::Assignment::Self_ => out.push_str("\nAssigned: self"),
+                                                    pares_radix_core::task::Assignment::Subagent(name) => out.push_str(&format!("\nAssigned: subagent({name})")),
+                                                    pares_radix_core::task::Assignment::User => out.push_str("\nAssigned: user"),
+                                                    pares_radix_core::task::Assignment::Unassigned => out.push_str("\nAssigned: unassigned"),
+                                                }
+                                                if !task.completion_conditions.is_empty() {
+                                                    out.push_str("\n\nConditions:");
+                                                    for cond in &task.completion_conditions {
+                                                        let icon = if cond.satisfied { "✅" } else { "⬜" };
+                                                        out.push_str(&format!("\n  {icon} {}", cond.description));
+                                                    }
+                                                }
+                                                out
+                                            }
+                                            Some(other) => format!("Unknown subcommand '{other}'. Usage: /task <id> [complete|cancel]"),
+                                        }
+                                    }
+                                };
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            "praxis" => {
+                                let args: Vec<&str> = cmd_parts.collect();
+                                let reply = match args.first().copied() {
+                                    Some("constraints") => {
+                                        if let Some(gate) = &write_gate {
+                                            let cs = gate.list_constraints();
+                                            if cs.is_empty() {
+                                                "No write constraints registered.".to_string()
+                                            } else {
+                                                cs.iter().map(|c| {
+                                                    let sev = match c.severity {
+                                                        pares_radix_core::praxis::write_gate::WriteSeverity::Error => "error",
+                                                        pares_radix_core::praxis::write_gate::WriteSeverity::Warning => "warn",
+                                                    };
+                                                    let en = if c.enabled { "✓" } else { "✗" };
+                                                    format!("{en} [{sev}] {} — {}", c.name, c.description)
+                                                }).collect::<Vec<_>>().join("\n")
+                                            }
+                                        } else {
+                                            "Write gate not initialized.".to_string()
+                                        }
+                                    }
+                                    Some("log") => {
+                                        let n: usize = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(10);
+                                        if let Some(gate) = &write_gate {
+                                            let entries = gate.recent_decisions(n);
+                                            if entries.is_empty() {
+                                                "No decisions logged yet.".to_string()
+                                            } else {
+                                                entries.iter().map(|e| {
+                                                    let icon = if e.passed { "✓" } else { "✗" };
+                                                    let reason = e.reason.as_deref().unwrap_or("");
+                                                    format!("{icon} {} [{}] {reason}", e.key, e.constraint_id)
+                                                }).collect::<Vec<_>>().join("\n")
+                                            }
+                                        } else {
+                                            "Write gate not initialized.".to_string()
+                                        }
+                                    }
+                                    Some("violations") => {
+                                        let n: usize = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(10);
+                                        if let Some(gate) = &write_gate {
+                                            let entries = gate.violations(n);
+                                            if entries.is_empty() {
+                                                "No violations recorded.".to_string()
+                                            } else {
+                                                entries.iter().map(|e| {
+                                                    let reason = e.reason.as_deref().unwrap_or("");
+                                                    format!("✗ {} [{}] {reason}", e.key, e.constraint_id)
+                                                }).collect::<Vec<_>>().join("\n")
+                                            }
+                                        } else {
+                                            "Write gate not initialized.".to_string()
+                                        }
+                                    }
+                                    _ => "Usage: /praxis constraints | log [n] | violations [n]".to_string(),
+                                };
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            "cluster" => {
+                                let args: Vec<&str> = cmd_parts.collect();
+                                let reply = match args.first().copied() {
+                                    None | Some("status") => {
+                                        // Detect local capabilities as a single-node fallback
+                                        let caps = pares_rector::discovery::PluresDbDiscovery::detect_local_capabilities();
+                                        let local_node = pares_rector::node::ClusterNode {
+                                            id: "local".to_string(),
+                                            hostname: crate::cluster_hostname(),
+                                            addresses: vec![],
+                                            capabilities: caps,
+                                            status: pares_rector::node::NodeStatus::Online,
+                                            workloads: vec![],
+                                            last_seen: 0,
+                                            cpu_usage: 0.0,
+                                        };
+                                        let summary = pares_rector::cluster::ClusterSummary::from_nodes(&[local_node]);
+                                        pares_rector::cluster::format_cluster_status(&summary)
+                                    }
+                                    Some("nodes") => {
+                                        let caps = pares_rector::discovery::PluresDbDiscovery::detect_local_capabilities();
+                                        let local_node = pares_rector::node::ClusterNode {
+                                            id: "local".to_string(),
+                                            hostname: crate::cluster_hostname(),
+                                            addresses: vec![],
+                                            capabilities: caps,
+                                            status: pares_rector::node::NodeStatus::Online,
+                                            workloads: vec![],
+                                            last_seen: 0,
+                                            cpu_usage: 0.0,
+                                        };
+                                        pares_rector::cluster::format_cluster_nodes(&[local_node])
+                                    }
+                                    Some("info") => {
+                                        let caps = pares_rector::discovery::PluresDbDiscovery::detect_local_capabilities();
+                                        pares_rector::cluster::format_node_info(&caps)
+                                    }
+                                    Some("deploy") => {
+                                        if let Some(px_path) = args.get(1) {
+                                            match std::fs::read_to_string(px_path) {
+                                                Ok(content) => {
+                                                    let caps = pares_rector::discovery::PluresDbDiscovery::detect_local_capabilities();
+                                                    let local_node = pares_rector::node::ClusterNode {
+                                                        id: "local".to_string(),
+                                                        hostname: crate::cluster_hostname(),
+                                                        addresses: vec![],
+                                                        capabilities: caps,
+                                                        status: pares_rector::node::NodeStatus::Online,
+                                                        workloads: vec![],
+                                                        last_seen: 0,
+                                                        cpu_usage: 0.0,
+                                                    };
+                                                    pares_rector::cluster::format_deploy_result(&content, &[local_node])
+                                                }
+                                                Err(e) => format!("Failed to read .px file: {e}"),
+                                            }
+                                        } else {
+                                            "Usage: /cluster deploy <px-file>".to_string()
+                                        }
+                                    }
+                                    Some("workloads") => {
+                                        "No active workloads.".to_string()
+                                    }
+                                    _ => "Usage: /cluster [status | nodes | info | deploy <file> | workloads]".to_string(),
+                                };
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            _ => {
+                                // Unknown slash command — respond immediately
+                                // instead of falling through to model
+                                let reply = format!(
+                                    "Unknown command: /{cmd}\nType /help for available commands."
+                                );
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
                         }
                     }
                 }
@@ -1877,8 +2291,8 @@ impl ChannelAdapter for TelegramAdapter {
                         if group_policy.passive_observe {
                             if let Event::Message { content, .. } = &mut event {
                                 let ctx_lock = group_context.lock().await;
-                                if let Some(context_str) = ctx_lock.format_context(msg.chat.id.0) {
-                                    *content = format!("{context_str}\n\n---\nTriggered message: {content}");
+                                if let Some(context_str) = ctx_lock.format_context(msg.chat.id.0, Some(&bot_username)) {
+                                    *content = format!("{context_str}\n\n---\nTriggered message (respond to THIS): {content}");
                                 }
                             }
                         }
@@ -1926,11 +2340,56 @@ impl ChannelAdapter for TelegramAdapter {
                         }
                     });
 
+                    // Progressive streaming: subscribe to model deltas and
+                    // debounce edit_message_text calls every ~500ms.
+                    let progressive_cancel = tokio_util::sync::CancellationToken::new();
+                    let progressive_token = progressive_cancel.clone();
+                    if let (Some(ref stx), Some(pid)) = (&stream_tx, placeholder_id) {
+                        let mut stream_rx = stx.subscribe();
+                        let edit_bot = bot.clone();
+                        let edit_chat_id = msg.chat.id;
+                        tokio::spawn(async move {
+                            let mut accumulated = String::new();
+                            let mut last_edit = tokio::time::Instant::now();
+                            let debounce = std::time::Duration::from_millis(500);
+                            let min_chars = 20; // Don't edit for tiny fragments
+
+                            loop {
+                                tokio::select! {
+                                    delta = stream_rx.recv() => {
+                                        match delta {
+                                            Ok(pares_radix_core::model::StreamDelta::Content(chunk)) => {
+                                                accumulated.push_str(&chunk);
+                                                // Debounce: only edit if enough time passed AND enough content
+                                                if last_edit.elapsed() >= debounce && accumulated.len() >= min_chars {
+                                                    let display = format!("{}\u{25cf}", &accumulated); // ● = cursor
+                                                    let _ = edit_bot
+                                                        .edit_message_text(edit_chat_id, pid, &display)
+                                                        .await;
+                                                    last_edit = tokio::time::Instant::now();
+                                                }
+                                            }
+                                            Ok(pares_radix_core::model::StreamDelta::Done) => break,
+                                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                                                // Missed some deltas — skip to latest
+                                                continue;
+                                            }
+                                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                                            _ => {} // ToolCallStart/Delta — ignore for progressive text
+                                        }
+                                    }
+                                    _ = progressive_token.cancelled() => break,
+                                }
+                            }
+                        });
+                    }
+
                     if let Some(Event::ModelResponse {
                         request_id, content, ..
                     }) = on_event(event).await
                     {
                         typing_cancel.cancel();
+                        progressive_cancel.cancel(); // Stop progressive editor before final edit
 
                         // Emit model response to event spine
                         if let Some(ref spine) = event_spine {
@@ -2318,11 +2777,15 @@ mod tests {
     }
 
     #[test]
-    fn build_nixos_update_command_delegates_to_agenda() {
-        // The function is a thin delegate to pares_agens_agenda::self_update.
-        // Full behavioral tests live in the agenda crate (ADR-0010).
+    fn build_nixos_update_command_contains_required_steps() {
         let command = build_nixos_update_command("/etc/nixos", "praxisbot");
-        assert!(command.contains("nixos-rebuild switch"), "must delegate to shared impl");
+        assert!(command.contains("git pull --ff-only"), "must pull latest");
+        assert!(command.contains("nix flake update"), "must update inputs");
+        assert!(
+            command.contains("nixos-rebuild switch --flake"),
+            "must rebuild"
+        );
+        assert!(command.contains("--refresh"), "must refresh");
     }
 
     #[test]
