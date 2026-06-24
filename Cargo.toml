@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client", "crates/cli", "crates/privacy", "crates/marketplace", "crates/agenda", "crates/praxis", "crates/sync", "crates/audit", "crates/tauri-app", "crates/tui", "crates/agens-plugin"]
+members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client", "crates/cli", "crates/privacy", "crates/marketplace", "crates/agenda", "crates/praxis", "crates/sync", "crates/audit", "crates/tauri-app", "crates/tui", "crates/agens-plugin", "crates/bitnet-sys", "crates/bitnet", "crates/mcp-server"]
 # Keep the Tauri desktop app crates in the workspace so their dependency graph
 # is captured in the root Cargo.lock. They may still be built separately by
 # installer workflows via `cargo tauri build --locked`, but the lockfile must
@@ -40,4 +40,11 @@ clap = { version = "4", features = ["derive", "env"] }
 [patch."https://github.com/plures/pares-radix.git"]
 pares-radix-core   = { path = "C:/Projects/pares-radix/crates/radix-core" }
 pares-radix-praxis = { path = "C:/Projects/pares-radix/crates/praxis" }
+# Stage S-D: the bitnet crates are now ported into THIS (pares-agens) workspace.
+# Redirect the git references (pulled transitively + by agens-plugin's S-F pin)
+# to the local ported copies so there is a single `links = "bitnet"` package and
+# agens-plugin resolves against the import-flipped local bitnet. (Does not edit
+# agens-plugin's pins — [patch] swaps the source transparently.)
+pares-agens-bitnet-sys = { path = "C:/Projects/pares-agens/crates/bitnet-sys" }
+pares-agens-bitnet     = { path = "C:/Projects/pares-agens/crates/bitnet" }
 

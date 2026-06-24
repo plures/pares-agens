@@ -60,7 +60,7 @@ dependencies = [
  "pares-models 1.47.2",
  "pares-radix-cli-api",
  "pares-radix-cli-runtime",
- "pares-radix-praxis 1.47.2",
+ "pares-radix-praxis",
  "pares-radix-tui",
  "pluresdb 2.9.10",
  "pluresdb-px",
@@ -3191,7 +3191,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -4063,6 +4063,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "pares-agens-core 1.14.0",
+ "pares-radix-core",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -4858,7 +4859,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.45.0",
 ]
 
 [[package]]
@@ -4979,11 +4980,10 @@ dependencies = [
 [[package]]
 name = "pares-agens-bitnet"
 version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "async-trait",
  "pares-agens-bitnet-sys",
- "pares-agens-core 1.47.2",
+ "pares-radix-core",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -4992,7 +4992,6 @@ dependencies = [
 [[package]]
 name = "pares-agens-bitnet-sys"
 version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "cc",
 ]
@@ -5005,6 +5004,7 @@ dependencies = [
  "pares-agens-agenda 1.14.0",
  "pares-agens-core 1.14.0",
  "pares-agens-marketplace",
+ "pares-radix-core",
  "pluresdb 2.9.10",
  "reqwest 0.12.28",
  "serde_json",
@@ -5053,6 +5053,7 @@ dependencies = [
  "pares-agens-core 1.14.0",
  "pares-agens-tui",
  "pares-models 1.14.0",
+ "pares-radix-core",
  "ratatui",
  "reqwest 0.12.28",
  "serde",
@@ -5082,7 +5083,7 @@ dependencies = [
  "pares-agens-audit 1.14.0",
  "pares-agens-privacy 1.14.0",
  "pares-radix-core",
- "pares-radix-praxis 1.49.1",
+ "pares-radix-praxis",
  "pluresdb 2.9.10",
  "pluresdb-procedures",
  "pluresdb-sea",
@@ -5120,7 +5121,7 @@ dependencies = [
  "hostname",
  "pares-agens-audit 1.47.2",
  "pares-agens-privacy 1.47.2",
- "pares-radix-praxis 1.47.2",
+ "pares-radix-praxis",
  "pluresdb 2.9.10",
  "pluresdb-procedures",
  "pluresdb-sea",
@@ -5218,6 +5219,7 @@ dependencies = [
  "pares-agens-cli",
  "pares-agens-core 1.14.0",
  "pares-models 1.14.0",
+ "pares-radix-core",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -5240,6 +5242,7 @@ dependencies = [
  "chrono",
  "crossterm",
  "pares-agens-core 1.14.0",
+ "pares-radix-core",
  "ratatui",
  "serde",
  "serde_json",
@@ -5255,6 +5258,7 @@ dependencies = [
  "async-trait",
  "futures-util",
  "pares-agens-core 1.14.0",
+ "pares-radix-core",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -5321,8 +5325,8 @@ dependencies = [
  "pares-models 1.47.2",
  "pares-radix-cli",
  "pares-radix-cli-api",
- "pares-radix-mcp-server",
- "pares-radix-praxis 1.47.2",
+ "pares-radix-mcp-server 1.47.2",
+ "pares-radix-praxis",
  "pares-radix-tui",
  "pares-rector",
  "ratatui",
@@ -5349,7 +5353,7 @@ dependencies = [
  "hostname",
  "pares-agens-audit 1.49.1",
  "pares-agens-privacy 1.49.1",
- "pares-radix-praxis 1.49.1",
+ "pares-radix-praxis",
  "pluresdb 2.9.10",
  "pluresdb-procedures",
  "pluresdb-sea",
@@ -5398,8 +5402,7 @@ dependencies = [
 
 [[package]]
 name = "pares-radix-mcp-server"
-version = "1.47.2"
-source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
+version = "1.14.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -5407,11 +5410,13 @@ dependencies = [
  "futures-util",
  "html2text",
  "libc",
+ "mcp-client",
  "opentelemetry",
- "pares-agens-agenda 1.47.2",
- "pares-agens-core 1.47.2",
- "pares-radix-mcp-client",
- "pares-radix-praxis 1.47.2",
+ "pares-agens-agenda 1.14.0",
+ "pares-agens-core 1.14.0",
+ "pares-radix-core",
+ "pares-radix-praxis",
+ "pluresdb 2.9.10",
  "praxis-native",
  "reqwest 0.12.28",
  "serde",
@@ -5425,18 +5430,30 @@ dependencies = [
 ]
 
 [[package]]
-name = "pares-radix-praxis"
+name = "pares-radix-mcp-server"
 version = "1.47.2"
 source = "git+https://github.com/plures/pares-radix.git?rev=61b151bcbddc35995e10e1f35ef2dccc672a4171#61b151bcbddc35995e10e1f35ef2dccc672a4171"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "chrono",
- "pluresdb-px",
+ "futures-util",
+ "html2text",
+ "libc",
+ "opentelemetry",
+ "pares-agens-agenda 1.47.2",
+ "pares-agens-core 1.47.2",
+ "pares-radix-mcp-client",
+ "pares-radix-praxis",
+ "praxis-native",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-tungstenite 0.26.2",
  "tracing",
+ "urlencoding",
  "uuid",
 ]
 
@@ -6452,7 +6469,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.2",
  "rustls",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -6489,7 +6506,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]

@@ -7,11 +7,11 @@ use tokio::sync::{Mutex, RwLock};
 use mcp_client::protocol::Tool as McpTool;
 use mcp_client::McpClient;
 use pares_agens_channels::tauri_ipc::TauriIpcHandle;
-use pares_agens_core::license::License;
+use pares_radix_core::license::License;
 use pares_agens_core::memory::store::MemoryStore;
-use pares_agens_core::optimization::OptimizationSafetyGate;
-use pares_agens_core::praxis::GuidanceService;
-use pares_agens_core::secrets::{provider_api_key, SecretStore};
+use pares_radix_core::optimization::OptimizationSafetyGate;
+use pares_radix_core::praxis::GuidanceService;
+use pares_radix_core::secrets::{provider_api_key, SecretStore};
 use pares_models::config::{ProviderConfig, RouterConfig};
 use pares_models::ModelRouter;
 
@@ -37,7 +37,7 @@ pub struct ProviderEntry {
     /// written to the [`AppState::secret_store`] vault and then this field is
     /// cleared to `None`.  The vault key is
     /// `provider:<name>:api_key` (see
-    /// [`pares_agens_core::secrets::provider_api_key`]).
+    /// [`pares_radix_core::secrets::provider_api_key`]).
     #[serde(skip_serializing, default)]
     pub api_key: Option<String>,
     /// Model IDs known to be available through this provider.
@@ -475,7 +475,7 @@ pub async fn rebuild_model_router(state: &AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pares_agens_core::secrets::InMemorySecretStore;
+    use pares_radix_core::secrets::InMemorySecretStore;
 
     #[test]
     fn build_router_config_default_settings() {
@@ -577,9 +577,9 @@ mod tests {
             optimization_safety_gate: OptimizationSafetyGate::new(),
             mcp_clients: Arc::new(Mutex::new(HashMap::new())),
             mcp_tools: Arc::new(RwLock::new(Vec::new())),
-            license: Mutex::new(pares_agens_core::license::License::free()),
+            license: Mutex::new(pares_radix_core::license::License::free()),
             telemetry_service: Arc::new(TelemetryService::new(Arc::new(
-                pares_agens_core::InMemoryStateStore::new(),
+                pares_radix_core::InMemoryStateStore::new(),
             ))),
         };
 

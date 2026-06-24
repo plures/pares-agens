@@ -13,14 +13,14 @@ use pares_agens_core::memory::embed::MockEmbedder;
 use pares_agens_core::memory::store::PluresDbStore;
 use pares_agens_core::memory::store::{InMemoryStore, MemoryStore};
 use pares_agens_core::memory::PluresLm;
-use pares_agens_core::model::{
+use pares_radix_core::model::{
     ChatMessage, ChatOptions, ModelClient, ModelCompletion, ToolDefinition, ToolDispatcher,
 };
-use pares_agens_core::optimization::OptimizationSafetyGate;
-use pares_agens_core::praxis::GuidanceService;
-use pares_agens_core::secrets::InMemorySecretStore;
-use pares_agens_core::Event;
-use pares_agens_core::{PluresDbStateStore, StateStore};
+use pares_radix_core::optimization::OptimizationSafetyGate;
+use pares_radix_core::praxis::GuidanceService;
+use pares_radix_core::secrets::InMemorySecretStore;
+use pares_radix_core::Event;
+use pares_radix_core::{PluresDbStateStore, StateStore};
 use pares_models::types::{ChatCompletionRequest, Role, Tool};
 use pares_models::ModelRouter;
 
@@ -212,7 +212,7 @@ impl ModelClient for AppModelClient {
             .into_iter()
             .map(|call| {
                 let args = call.function.arguments;
-                pares_agens_core::model::ToolCall {
+                pares_radix_core::model::ToolCall {
                     id: call.id,
                     name: call.function.name,
                     arguments: serde_json::from_str(&args)
@@ -232,6 +232,7 @@ impl ModelClient for AppModelClient {
             content: choice.message.content.clone(),
             tool_calls,
             logprobs,
+            model: Some(response.model.clone()),
         })
     }
 }
@@ -523,7 +524,7 @@ pub fn run() {
                 optimization_safety_gate,
                 mcp_clients: Arc::clone(&mcp_clients),
                 mcp_tools: Arc::clone(&mcp_tools),
-                license: Mutex::new(pares_agens_core::license::License::free()),
+                license: Mutex::new(pares_radix_core::license::License::free()),
                 telemetry_service: Arc::clone(&telemetry_service),
             });
 

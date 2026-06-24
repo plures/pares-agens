@@ -66,16 +66,16 @@ impl ModelRouter {
     ///
     /// Use this constructor when `config` contains more than one provider or
     /// at least one routing rule — both are Pro features.  Returns
-    /// [`pares_agens_core::license::LicenseError`] if the license check fails.
+    /// [`pares_radix_core::license::LicenseError`] if the license check fails.
     ///
     /// Single-provider configs (no rules) are always permitted regardless of
     /// tier; use the plain [`ModelRouter::new`] for those cases.
     pub fn new_multi(
         config: RouterConfig,
-        license: &pares_agens_core::license::License,
-    ) -> Result<Self, pares_agens_core::license::LicenseError> {
+        license: &pares_radix_core::license::License,
+    ) -> Result<Self, pares_radix_core::license::LicenseError> {
         if config.providers.len() > 1 || !config.rules.is_empty() {
-            license.check_feature(pares_agens_core::license::Feature::MultipleModelProviders)?;
+            license.check_feature(pares_radix_core::license::Feature::MultipleModelProviders)?;
         }
         Ok(Self::new(config))
     }

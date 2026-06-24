@@ -32,7 +32,7 @@ use pares_agens_channels::telegram::{
     TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER,
 };
 use pares_agens_core::agent::{Agent, Memory};
-use pares_agens_core::auth::copilot::{CopilotAuth, CopilotModelClient};
+use pares_radix_core::auth::copilot::{CopilotAuth, CopilotModelClient};
 use pares_agens_core::cerebellum::{Cerebellum, CerebellumConfig};
 use pares_agens_core::delegation::{broker::DelegationBroker, registry::AgentRegistry};
 use pares_agens_core::memory::{
@@ -41,14 +41,14 @@ use pares_agens_core::memory::{
     store::{HostAdapterConfig, HostAdapterRecord, PluresDbStore},
     PluresLm,
 };
-use pares_agens_core::model::{
+use pares_radix_core::model::{
     ChatMessage as CoreChatMessage, ChatOptions, ModelClient, ToolDefinition, ToolDispatcher,
 };
-use pares_agens_core::procedure::{Procedure, ProcedureRegistry};
-use pares_agens_core::plugins::{PluginCrudExecutor, PluginRuntime};
-use pares_agens_core::tool_governance::{GovernanceVerdict, ToolGovernor};
-use pares_agens_core::Event;
-use pares_agens_core::{PluresDbStateStore, StateStore};
+use pares_radix_core::procedure::{Procedure, ProcedureRegistry};
+use pares_radix_core::plugins::{PluginCrudExecutor, PluginRuntime};
+use pares_radix_core::tool_governance::{GovernanceVerdict, ToolGovernor};
+use pares_radix_core::Event;
+use pares_radix_core::{PluresDbStateStore, StateStore};
 use pares_agens_migrate::{migrate, openclaw};
 use pares_models::config::{ProviderConfig, RouterConfig};
 use pares_models::router::ModelRouter;
@@ -584,7 +584,7 @@ impl ModelClient for RouterModelClient {
         messages: &[CoreChatMessage],
         tools: &[ToolDefinition],
         options: &ChatOptions,
-    ) -> Result<pares_agens_core::model::ModelCompletion, String> {
+    ) -> Result<pares_radix_core::model::ModelCompletion, String> {
         let converted_messages = messages
             .iter()
             .map(|m| {
@@ -656,7 +656,7 @@ impl ModelClient for RouterModelClient {
             .clone()
             .unwrap_or_default()
             .into_iter()
-            .map(|call| pares_agens_core::model::ToolCall {
+            .map(|call| pares_radix_core::model::ToolCall {
                 id: call.id,
                 name: call.function.name,
                 arguments: serde_json::from_str(&call.function.arguments)
@@ -671,10 +671,11 @@ impl ModelClient for RouterModelClient {
             .map(|tokens| tokens.iter().filter_map(|t| t.logprob).collect::<Vec<_>>())
             .filter(|vals| !vals.is_empty());
 
-        Ok(pares_agens_core::model::ModelCompletion {
+        Ok(pares_radix_core::model::ModelCompletion {
             content: choice.message.content.clone(),
             tool_calls,
             logprobs,
+            model: Some(response.model.clone()),
         })
     }
 }
@@ -686,7 +687,7 @@ impl ModelClient for ToggleableModelClient {
         messages: &[CoreChatMessage],
         tools: &[ToolDefinition],
         options: &ChatOptions,
-    ) -> Result<pares_agens_core::model::ModelCompletion, String> {
+    ) -> Result<pares_radix_core::model::ModelCompletion, String> {
         if !*self.enabled.read().await {
             return Err("deep model escalation is disabled".to_string());
         }
@@ -2817,7 +2818,7 @@ async fn main() {
             {
                 let manifests = plugin_executor.load_persisted_manifests();
                 for manifest_json in manifests {
-                    if let Ok(manifest) = serde_json::from_value::<pares_agens_core::plugins::PluginManifest>(manifest_json) {
+                    if let Ok(manifest) = serde_json::from_value::<pares_radix_core::plugins::PluginManifest>(manifest_json) {
                         let name = manifest.name.clone();
                         if let Err(e) = plugin_runtime.install(manifest).await {
                             tracing::warn!(plugin = %name, error = %e, "failed to restore persisted plugin");
@@ -2913,10 +2914,10 @@ async fn main() {
             // channel contracts, and event tracking all depend on it.
             let event_spine_handle = {
                 let crdt = store.crdt_store();
-                let spine = pares_agens_core::event_spine::EventSpine::new(crdt, "pares-agens");
+                let spine = pares_radix_core::event_spine::EventSpine::new(crdt, "pares-agens");
                 spine.seed_contracts();
                 spine.register_core_procedures();
-                let handle = pares_agens_core::event_spine::EventSpineHandle::from_arc_store(
+                let handle = pares_radix_core::event_spine::EventSpineHandle::from_arc_store(
                     store.crdt_store_arc(),
                     "pares-agens",
                 );
@@ -3332,7 +3333,7 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pares_agens_core::model::{ModelCompletion, ToolCall, ToolDefinition};
+    use pares_radix_core::model::{ModelCompletion, ToolCall, ToolDefinition};
 
     struct TestModelClient;
 
@@ -3542,7 +3543,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_model_control_persists_primary_model_override() {
         let state_store: Arc<dyn StateStore> =
-            Arc::new(pares_agens_core::InMemoryStateStore::new());
+            Arc::new(pares_radix_core::InMemoryStateStore::new());
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4.1".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
@@ -3569,7 +3570,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_model_control_persists_deep_model_override() {
         let state_store: Arc<dyn StateStore> =
-            Arc::new(pares_agens_core::InMemoryStateStore::new());
+            Arc::new(pares_radix_core::InMemoryStateStore::new());
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
@@ -3596,7 +3597,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_model_control_persists_deep_escalation_toggle() {
         let state_store: Arc<dyn StateStore> =
-            Arc::new(pares_agens_core::InMemoryStateStore::new());
+            Arc::new(pares_radix_core::InMemoryStateStore::new());
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
@@ -3631,7 +3632,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_config_control_persists_model_endpoint_and_log_level() {
         let state_store: Arc<dyn StateStore> =
-            Arc::new(pares_agens_core::InMemoryStateStore::new());
+            Arc::new(pares_radix_core::InMemoryStateStore::new());
         let runtime_model_control = Arc::new(RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),

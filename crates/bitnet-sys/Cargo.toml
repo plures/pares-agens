@@ -1,0 +1,23 @@
+[package]
+name = "pares-agens-bitnet-sys"
+description = "Raw C FFI bindings for bitnet.cpp — unsafe, auto-generated layer"
+# Stage S-D: pinned to match the version agens-plugin's git pin resolves to
+# (1.47.2) so the root [patch] redirect from git -> this local crate applies.
+version = "1.47.2"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+links = "bitnet"
+
+[features]
+# Enable the actual C FFI linkage against bitnet.cpp.
+# Requires the bitnet.cpp submodule at third_party/bitnet and CMake ≥ 3.21.
+# `cargo check --features native` type-checks without linking.
+native = []
+# GPU acceleration backends (each implies `native`).
+rocm = ["native"]
+cuda = ["native"]
+vulkan = ["native"]
+
+[build-dependencies]
+cc = "1"

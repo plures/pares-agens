@@ -17,6 +17,7 @@ teloxide.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true
 pares-agens-core = { path = "../core" }
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", rev = "61b151b" }
 pares-agens-marketplace = { path = "../marketplace" }
 pares-agens-agenda = { path = "../agenda" }
 

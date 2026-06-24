@@ -1,12 +1,12 @@
 use tauri::State;
 
 use pares_agens_channels::tauri_ipc::TauriIpcMessage;
-use pares_agens_core::license::{
+use pares_radix_core::license::{
     FixedKeyValidator, LicenseStatus, LicenseValidator, PolarValidator,
 };
-use pares_agens_core::optimization::{EvidenceRequest, OptimizationSafety, OptimizationTelemetry};
-use pares_agens_core::praxis::{AnalysisEvent, GuidanceCategory, GuidanceEntry, SourceSpan};
-use pares_agens_core::telemetry::TelemetrySnapshot;
+use pares_radix_core::optimization::{EvidenceRequest, OptimizationSafety, OptimizationTelemetry};
+use pares_radix_core::praxis::{AnalysisEvent, GuidanceCategory, GuidanceEntry, SourceSpan};
+use pares_radix_core::telemetry::TelemetrySnapshot;
 
 use crate::apply_activation_hotkey;
 use crate::state::{rebuild_model_router, sanitize_activation_hotkey, AppState, Settings};
@@ -58,8 +58,8 @@ pub async fn send_message(
     }
 
     match response {
-        Some(pares_agens_core::Event::ModelResponse { content, .. }) => Ok(content),
-        Some(pares_agens_core::Event::Message { content, .. }) => Ok(content),
+        Some(pares_radix_core::Event::ModelResponse { content, .. }) => Ok(content),
+        Some(pares_radix_core::Event::Message { content, .. }) => Ok(content),
         _ => Ok(String::new()),
     }
 }

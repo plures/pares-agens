@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tokio::sync::{oneshot, Mutex};
 
-use pares_agens_core::Event;
+use pares_radix_core::Event;
 
 use crate::adapter::{ChannelAdapter, ChannelError};
 

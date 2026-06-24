@@ -17,7 +17,7 @@
 //! ```
 
 use async_trait::async_trait;
-use pares_agens_core::Event;
+use pares_radix_core::Event;
 use pares_agens_marketplace::{installer::Installer, SkillCategory, SkillMetadata};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -35,9 +35,9 @@ use uuid::Uuid;
 
 use crate::adapter::{ChannelAdapter, ChannelError};
 use crate::group_context::{GroupContextBuffer, GroupMessage};
-use pares_agens_core::channel_contract::{ChannelContract, GroupChatPolicy};
-use pares_agens_core::event_spine::EventSpineHandle;
-use pares_agens_core::renderers::telegram as html_renderer;
+use pares_radix_core::channel_contract::{ChannelContract, GroupChatPolicy};
+use pares_radix_core::event_spine::EventSpineHandle;
+use pares_radix_core::renderers::telegram as html_renderer;
 use pares_agens_agenda::scheduler::Scheduler;
 
 const PARES_MODULUS_INDEX_URL: &str =
@@ -413,9 +413,9 @@ pub struct TelegramConfig {
     /// Policy for group chat participation.
     pub group_chat_policy: GroupChatPolicy,
     /// Optional plugin runtime for `/plugin` commands.
-    pub plugin_runtime: Option<Arc<pares_agens_core::plugins::PluginRuntime>>,
+    pub plugin_runtime: Option<Arc<pares_radix_core::plugins::PluginRuntime>>,
     /// Optional plugin CRUD executor for entity counts.
-    pub plugin_executor: Option<Arc<pares_agens_core::plugins::PluginCrudExecutor>>,
+    pub plugin_executor: Option<Arc<pares_radix_core::plugins::PluginCrudExecutor>>,
 }
 
 impl TelegramConfig {
@@ -499,8 +499,8 @@ impl TelegramConfig {
     #[must_use]
     pub fn with_plugin_runtime(
         mut self,
-        runtime: Arc<pares_agens_core::plugins::PluginRuntime>,
-        executor: Arc<pares_agens_core::plugins::PluginCrudExecutor>,
+        runtime: Arc<pares_radix_core::plugins::PluginRuntime>,
+        executor: Arc<pares_radix_core::plugins::PluginCrudExecutor>,
     ) -> Self {
         self.plugin_runtime = Some(runtime);
         self.plugin_executor = Some(executor);
@@ -1491,7 +1491,7 @@ impl ChannelAdapter for TelegramAdapter {
                                 return respond(());
                             }
                             "tools" => {
-                                use pares_agens_core::tool_governance::ToolGovernor;
+                                use pares_radix_core::tool_governance::ToolGovernor;
                                 let gov = ToolGovernor::with_defaults();
                                 let reply = gov.format_policies();
                                 Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
@@ -2398,8 +2398,8 @@ mod tests {
 
     #[test]
     fn html_render_typical_model_output() {
-        use pares_agens_core::channel_contract::ChannelContract;
-        use pares_agens_core::renderers::telegram as renderer;
+        use pares_radix_core::channel_contract::ChannelContract;
+        use pares_radix_core::renderers::telegram as renderer;
 
         let contract = ChannelContract::telegram();
         let content = "**Bold text** and *italic* with `code` and a [link](https://example.com)\n\n```rust\nfn main() {}\n```";
@@ -2416,8 +2416,8 @@ mod tests {
 
     #[test]
     fn html_render_chunking_long_message() {
-        use pares_agens_core::channel_contract::ChannelContract;
-        use pares_agens_core::renderers::telegram as renderer;
+        use pares_radix_core::channel_contract::ChannelContract;
+        use pares_radix_core::renderers::telegram as renderer;
 
         let contract = ChannelContract::telegram();
         // Create a message that's definitely > 4096 chars
@@ -2433,8 +2433,8 @@ mod tests {
 
     #[test]
     fn html_render_html_entities_escaped() {
-        use pares_agens_core::channel_contract::ChannelContract;
-        use pares_agens_core::renderers::telegram as renderer;
+        use pares_radix_core::channel_contract::ChannelContract;
+        use pares_radix_core::renderers::telegram as renderer;
 
         let contract = ChannelContract::telegram();
         let content = "Use a < b && c > d for comparison";
@@ -2446,7 +2446,7 @@ mod tests {
 
     #[test]
     fn telegram_adapter_with_event_spine() {
-        use pares_agens_core::event_spine::EventSpineHandle;
+        use pares_radix_core::event_spine::EventSpineHandle;
         use pluresdb::CrdtStore;
 
         let store = std::sync::Arc::new(CrdtStore::default());

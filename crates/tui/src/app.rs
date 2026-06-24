@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use pares_agens_core::agent::Agent;
-use pares_agens_core::Event;
+use pares_radix_core::Event;
 
 /// A single chat message displayed in the TUI.
 #[derive(Clone, Debug)]
