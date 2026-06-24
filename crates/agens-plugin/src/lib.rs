@@ -1,14 +1,21 @@
-//! `agens-plugin` - Pares Agens as a thin plugin over `pares-radix` as a library.
+//! `agens-plugin` - Pares Agens as the host runtime + cognition composition.
 //!
-//! This crate is the entire agens product after the Stage-4 collapse:
+//! This crate is the entire agens product after the Stage-4 collapse, and after
+//! Stage R3a it IS the host (Option A): it owns the `run_with_providers` host
+//! composition seam directly (see [`host_runtime`]) rather than depending on
+//! `pares-radix-cli-runtime`.
 //!
-//! - It depends on `pares-radix-cli-runtime` (the host runtime + `run_with_providers`
-//!   composition seam) and the radix-presented capability crates
-//!   (`pares-agens-core` spine/agent, `pares-agens-channels`, `pares-models`,
-//!   `pares-agens-bitnet`).
+//! - It path-deps the agens HOST/COGNITION crates (`pares-agens-core`
+//!   spine/agent, `pares-agens-channels`, `pares-agens-models`,
+//!   `pares-agens-bitnet`, `pares-agens-agenda`, `pares-agens-tui`) — the LOCAL
+//!   agens copies (Stage R3a pin-flip), so there is exactly ONE
+//!   `pares-agens-core` in the graph.
+//! - It git-pins the radix PLATFORM crates it composes (`pares-radix-cli-api`,
+//!   `pares-radix-praxis`, `pares-radix-core`, `pares-radix-cli`/migrate,
+//!   `pares-radix-mcp-server`, `pares-rector`).
 //! - It implements [`pares_radix_cli_api::CommandProvider`] ([`AgensProvider`]) to
 //!   contribute the agent subcommands (`serve-spine`, `serve`, `tui`, `ask`,
-//!   `classify`) to the host CLI without the host depending on agens.
+//!   `classify`) to its own host CLI.
 //! - It brings its own agent IP: the [`headroom`] context-compression capability
 //!   (carved out of the deleted agens-core fork) and the agens model/bitnet wiring.
 //!
@@ -17,5 +24,7 @@
 
 pub mod agent_commands;
 pub mod headroom;
+pub mod host_runtime;
+pub mod self_update;
 
 pub use agent_commands::AgensProvider;

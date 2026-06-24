@@ -89,7 +89,7 @@ pub enum InvokeError {
 /// use std::sync::Arc;
 /// use pares_agens_core::cerebellum::invoke::{AgentInvoke, InvokeConfig};
 ///
-/// # async fn example(client: Arc<dyn pares_agens_core::model::ModelClient>) {
+/// # async fn example(client: Arc<dyn pares_radix_core::model::ModelClient>) {
 /// let invoker = AgentInvoke::with_config(
 ///     client,
 ///     InvokeConfig { max_tokens: 256, max_invocations: 2, timeout_ms: 5_000 },

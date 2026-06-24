@@ -43,8 +43,8 @@ use serde_json::Value;
 use tracing::{info, warn};
 
 use crate::headroom::handler::HeadroomActionHandler;
-use pares_agens_core::model::ChatMessage;
-use pares_agens_core::state::StateStore;
+use pares_radix_core::model::ChatMessage;
+use pares_radix_core::state::StateStore;
 
 /// Default minimum estimated token count below which compression is skipped.
 ///
@@ -453,7 +453,7 @@ fn collapse_whitespace(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pares_agens_core::state::PluresDbStateStore;
+    use pares_radix_core::state::PluresDbStateStore;
     use pluresdb::CrdtStore;
 
     fn make_hook(min_tokens: usize) -> HeadroomHook {

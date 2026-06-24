@@ -21,7 +21,7 @@ pub use handler::HeadroomActionHandler;
 
 use std::sync::Arc;
 
-use pares_agens_core::state::{PluresDbStateStore, StateStore};
+use pares_radix_core::state::{PluresDbStateStore, StateStore};
 use pluresdb::CrdtStore;
 
 /// Build an enabled in-memory [`HeadroomHook`] (the agens-brought compression

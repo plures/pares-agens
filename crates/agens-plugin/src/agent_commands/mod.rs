@@ -20,8 +20,9 @@ use pares_radix_cli_api::{CommandProvider, ProviderOutcome};
 use std::path::PathBuf;
 
 /// The agens [`CommandProvider`]. Register it on the host's
-/// [`pares_radix_cli_runtime::ProviderRegistry`] to contribute the agent
-/// subcommands.
+/// [`crate::host_runtime::ProviderRegistry`] to contribute the agent
+/// subcommands. (The host composition seam was relocated into this crate at
+/// Stage R3a; it was formerly `pares_radix_cli_runtime::ProviderRegistry`.)
 pub struct AgensProvider;
 
 impl AgensProvider {

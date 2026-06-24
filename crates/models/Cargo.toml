@@ -1,5 +1,5 @@
 [package]
-name = "pares-models"
+name = "pares-agens-models"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

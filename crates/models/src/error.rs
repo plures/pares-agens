@@ -1,8 +1,8 @@
-//! Typed error variants for `pares-models`.
+//! Typed error variants for `pares-agens-models`.
 
 use thiserror::Error;
 
-/// All errors that can arise when using the `pares-models` client.
+/// All errors that can arise when using the `pares-agens-models` client.
 #[derive(Debug, Error)]
 pub enum Error {
     /// An underlying HTTP transport error from `reqwest`.

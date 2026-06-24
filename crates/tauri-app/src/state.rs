@@ -10,8 +10,8 @@ use pares_agens_core::memory::store::MemoryStore;
 use pares_radix_core::optimization::OptimizationSafetyGate;
 use pares_radix_core::praxis::GuidanceService;
 use pares_radix_core::secrets::{provider_api_key, SecretStore};
-use pares_models::config::{ProviderConfig, RouterConfig};
-use pares_models::ModelRouter;
+use pares_agens_models::config::{ProviderConfig, RouterConfig};
+use pares_agens_models::ModelRouter;
 use mcp_client::protocol::Tool as McpTool;
 use mcp_client::McpClient;
 

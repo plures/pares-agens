@@ -23,8 +23,8 @@ use pares_radix_core::praxis::GuidanceService;
 use pares_radix_core::secrets::{provider_api_key, InMemorySecretStore, SecretStore};
 use pares_radix_core::Event;
 use pares_radix_core::{PluresDbStateStore, StateStore};
-use pares_models::types::{ChatCompletionRequest, Role, Tool};
-use pares_models::ModelRouter;
+use pares_agens_models::types::{ChatCompletionRequest, Role, Tool};
+use pares_agens_models::ModelRouter;
 
 use crate::state::{
     build_router_config, rebuild_model_router, sanitize_activation_hotkey, AppState, Settings,
@@ -155,16 +155,16 @@ impl ModelClient for AppModelClient {
                     "tool" => Role::Tool,
                     _ => Role::User,
                 };
-                pares_models::types::ChatMessage {
+                pares_agens_models::types::ChatMessage {
                     role,
                     content: Some(m.content.clone()),
                     tool_calls: m.tool_calls.clone().map(|calls| {
                         calls
                             .into_iter()
-                            .map(|call| pares_models::types::ToolCall {
+                            .map(|call| pares_agens_models::types::ToolCall {
                                 id: call.id,
                                 kind: "function".into(),
-                                function: pares_models::types::FunctionCall {
+                                function: pares_agens_models::types::FunctionCall {
                                     name: call.name,
                                     arguments: call.arguments.to_string(),
                                 },
@@ -271,7 +271,7 @@ impl ModelClient for AppModelClient {
         };
         tracing::Span::current().record("model", model.as_str());
 
-        let converted_messages: Vec<pares_models::types::ChatMessage> = messages
+        let converted_messages: Vec<pares_agens_models::types::ChatMessage> = messages
             .iter()
             .map(|m| {
                 let role = match m.role.as_str() {
@@ -281,16 +281,16 @@ impl ModelClient for AppModelClient {
                     "tool" => Role::Tool,
                     _ => Role::User,
                 };
-                pares_models::types::ChatMessage {
+                pares_agens_models::types::ChatMessage {
                     role,
                     content: Some(m.content.clone()),
                     tool_calls: m.tool_calls.clone().map(|calls| {
                         calls
                             .into_iter()
-                            .map(|call| pares_models::types::ToolCall {
+                            .map(|call| pares_agens_models::types::ToolCall {
                                 id: call.id,
                                 kind: "function".into(),
-                                function: pares_models::types::FunctionCall {
+                                function: pares_agens_models::types::FunctionCall {
                                     name: call.name,
                                     arguments: call.arguments.to_string(),
                                 },

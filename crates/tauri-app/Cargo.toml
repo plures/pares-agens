@@ -27,7 +27,7 @@ pares-radix-core = { git = "https://github.com/plures/pares-radix.git", rev = "6
 async-trait = "0.1"
 pares-agens-channels = { path = "../channels" }
 pares-agens-migrate = { path = "../cli", package = "pares-agens-cli" }
-pares-models = { path = "../models" }
+pares-agens-models = { path = "../models" }
 mcp-client = { path = "../mcp-client" }
 
 [dependencies.tauri-plugin-tui]

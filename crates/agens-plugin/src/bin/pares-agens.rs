@@ -1,12 +1,13 @@
 //! `pares-agens` - the agens plugin binary (praxisbot).
 //!
-//! Composes the host runtime (`pares-radix-cli-runtime::run_with_providers`)
-//! with the agens [`AgensProvider`], which contributes the agent subcommands
-//! (`serve-spine`, `serve`, `tui`, `ask`, `classify`). The host owns the
-//! command surface; this binary registers the provider into it (decision C1).
+//! Composes the host runtime (`crate::host_runtime::run_with_providers`, the
+//! host composition seam RELOCATED into this crate in Stage R3a) with the agens
+//! [`AgensProvider`], which contributes the agent subcommands (`serve-spine`,
+//! `serve`, `tui`, `ask`, `classify`). The host owns the command surface; this
+//! binary registers the provider into it (decision C1).
 
+use agens_plugin::host_runtime::{run_with_providers, ProviderRegistry};
 use agens_plugin::AgensProvider;
-use pares_radix_cli_runtime::{run_with_providers, ProviderRegistry};
 
 #[tokio::main]
 async fn main() {

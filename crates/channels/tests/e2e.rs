@@ -2,8 +2,9 @@ use pares_agens_channels::adapter::ChannelAdapter;
 use pares_agens_channels::stdin::StdinAdapter;
 use pares_agens_channels::telegram::{TelegramAdapter, TelegramConfig};
 use pares_agens_core::agent::Memory;
-use pares_agens_core::model::{ChatMessage, ChatOptions, ModelClient, ModelCompletion, ToolDefinition, ToolDispatcher};
-use pares_agens_core::{Agent, Event, InMemory};
+use pares_radix_core::model::{ChatMessage, ChatOptions, ModelClient, ModelCompletion, ToolDefinition, ToolDispatcher};
+use pares_agens_core::{Agent, InMemory};
+use pares_radix_core::Event;
 use std::sync::Arc;
 use uuid::Uuid;
 

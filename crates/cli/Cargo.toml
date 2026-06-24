@@ -31,7 +31,7 @@ tokio-tungstenite = { version = "0.28", default-features = false, features = ["c
 pares-agens-core = { path = "../core", features = ["embeddings"] }
 pares-radix-core = { git = "https://github.com/plures/pares-radix.git", rev = "61b151b" }
 pares-agens-channels = { path = "../channels" }
-pares-models = { path = "../models" }
+pares-agens-models = { path = "../models" }
 pares-agens-agenda = { path = "../agenda" }
 pares-agens-tui = { path = "../tui" }
 crossterm = "0.28"

@@ -22,13 +22,13 @@ use crate::{
 /// # Example
 /// ```no_run
 /// use std::collections::HashMap;
-/// use pares_models::{
+/// use pares_agens_models::{
 ///     config::{ProviderConfig, RouterConfig},
 ///     router::ModelRouter,
 ///     types::{ChatCompletionRequest, ChatMessage, Role},
 /// };
 ///
-/// # async fn example() -> Result<(), pares_models::error::Error> {
+/// # async fn example() -> Result<(), pares_agens_models::error::Error> {
 /// let config = RouterConfig::single(
 ///     "local",
 ///     ProviderConfig::new("http://localhost:12434", None),

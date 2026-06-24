@@ -39,7 +39,7 @@ use pares_agens_channels::telegram::{
     TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER,
 };
 use pares_agens_core::agent::{Agent, Memory};
-use pares_agens_core::auth::copilot::{CopilotAuth, CopilotModelClient};
+use pares_radix_core::auth::copilot::{CopilotAuth, CopilotModelClient};
 use pares_agens_core::cerebellum::px_bridge::PxBridge;
 use pares_agens_core::cerebellum::{Cerebellum, CerebellumConfig};
 use pares_agens_core::delegation::{broker::DelegationBroker, registry::AgentRegistry};
@@ -49,18 +49,18 @@ use pares_agens_core::memory::{
     store::{HostAdapterConfig, HostAdapterRecord, PluresDbStore},
     PluresLm,
 };
-use pares_agens_core::model::{
+use pares_radix_core::model::{
     ChatMessage as CoreChatMessage, ChatOptions, ModelClient, ToolDefinition, ToolDispatcher,
 };
-use pares_agens_core::plugins::{PluginCrudExecutor, PluginRuntime};
-use pares_agens_core::procedure::{Procedure, ProcedureRegistry};
-use pares_agens_core::shell_executor::{ExecRequest, ShellExecutor};
-use pares_agens_core::tool_governance::{GovernanceVerdict, ToolGovernor};
-use pares_agens_core::Event;
-use pares_agens_core::{PluresDbStateStore, StateStore};
-use pares_models::config::{ProviderConfig, RouterConfig};
-use pares_models::router::ModelRouter;
-use pares_models::types::{ChatCompletionRequest, ChatMessage, Role, Tool};
+use pares_radix_core::plugins::{PluginCrudExecutor, PluginRuntime};
+use pares_radix_core::procedure::{Procedure, ProcedureRegistry};
+use pares_radix_core::shell_executor::{ExecRequest, ShellExecutor};
+use pares_radix_core::tool_governance::{GovernanceVerdict, ToolGovernor};
+use pares_radix_core::Event;
+use pares_radix_core::{PluresDbStateStore, StateStore};
+use pares_agens_models::config::{ProviderConfig, RouterConfig};
+use pares_agens_models::router::ModelRouter;
+use pares_agens_models::types::{ChatCompletionRequest, ChatMessage, Role, Tool};
 
 struct RouterModelClient {
     router: Arc<RwLock<Arc<ModelRouter>>>,
@@ -383,7 +383,7 @@ impl RuntimeAgentFactory {
 
             let mut df_bridge = DataflowBridge::new(Arc::new(
                 pares_agens_core::cerebellum::dataflow_bridge::DataflowActionAdapter::new(
-                    Arc::clone(&action_handler_for_df) as Arc<dyn pares_agens_core::px_adapter::AsyncActionHandler>,
+                    Arc::clone(&action_handler_for_df) as Arc<dyn pares_radix_core::px_adapter::AsyncActionHandler>,
                 ),
             ));
             let mut df_count = 0usize;
@@ -452,7 +452,7 @@ impl RuntimeAgentFactory {
                 .with_turn_store(turn_store)
                 .with_personality(personality)
                 .with_chronos({
-                    let chronos = pares_agens_core::chronos::ChronosTimeline::with_jsonl_from_env(
+                    let chronos = pares_radix_core::chronos::ChronosTimeline::with_jsonl_from_env(
                         self.store.crdt_store_arc(),
                     );
                     Arc::new(chronos)
@@ -715,7 +715,7 @@ impl ModelClient for RouterModelClient {
         messages: &[CoreChatMessage],
         tools: &[ToolDefinition],
         options: &ChatOptions,
-    ) -> Result<pares_agens_core::model::ModelCompletion, String> {
+    ) -> Result<pares_radix_core::model::ModelCompletion, String> {
         let converted_messages = messages
             .iter()
             .map(|m| {
@@ -732,10 +732,10 @@ impl ModelClient for RouterModelClient {
                     tool_calls: m.tool_calls.clone().map(|calls| {
                         calls
                             .into_iter()
-                            .map(|call| pares_models::types::ToolCall {
+                            .map(|call| pares_agens_models::types::ToolCall {
                                 id: call.id,
                                 kind: "function".into(),
-                                function: pares_models::types::FunctionCall {
+                                function: pares_agens_models::types::FunctionCall {
                                     name: call.name,
                                     arguments: call.arguments.to_string(),
                                 },
@@ -786,7 +786,7 @@ impl ModelClient for RouterModelClient {
             .clone()
             .unwrap_or_default()
             .into_iter()
-            .map(|call| pares_agens_core::model::ToolCall {
+            .map(|call| pares_radix_core::model::ToolCall {
                 id: call.id,
                 name: call.function.name,
                 arguments: serde_json::from_str(&call.function.arguments)
@@ -801,7 +801,7 @@ impl ModelClient for RouterModelClient {
             .map(|tokens| tokens.iter().filter_map(|t| t.logprob).collect::<Vec<_>>())
             .filter(|vals| !vals.is_empty());
 
-        Ok(pares_agens_core::model::ModelCompletion {
+        Ok(pares_radix_core::model::ModelCompletion {
             content: choice.message.content.clone(),
             tool_calls,
             logprobs,
@@ -814,31 +814,31 @@ impl ModelClient for RouterModelClient {
         messages: &[CoreChatMessage],
         tools: &[ToolDefinition],
         options: &ChatOptions,
-        tx: pares_agens_core::model::StreamSender,
-    ) -> Result<pares_agens_core::model::ModelCompletion, String> {
+        tx: pares_radix_core::model::StreamSender,
+    ) -> Result<pares_radix_core::model::ModelCompletion, String> {
         use futures_util::StreamExt as _;
-        use pares_agens_core::model::StreamDelta;
+        use pares_radix_core::model::StreamDelta;
 
-        let converted_messages: Vec<pares_models::types::ChatMessage> = messages
+        let converted_messages: Vec<pares_agens_models::types::ChatMessage> = messages
             .iter()
             .map(|m| {
                 let role = match m.role.as_str() {
-                    "system" => pares_models::types::Role::System,
-                    "user" => pares_models::types::Role::User,
-                    "assistant" => pares_models::types::Role::Assistant,
-                    "tool" => pares_models::types::Role::Tool,
-                    _ => pares_models::types::Role::User,
+                    "system" => pares_agens_models::types::Role::System,
+                    "user" => pares_agens_models::types::Role::User,
+                    "assistant" => pares_agens_models::types::Role::Assistant,
+                    "tool" => pares_agens_models::types::Role::Tool,
+                    _ => pares_agens_models::types::Role::User,
                 };
-                pares_models::types::ChatMessage {
+                pares_agens_models::types::ChatMessage {
                     role,
                     content: Some(m.content.clone()),
                     tool_calls: m.tool_calls.clone().map(|calls| {
                         calls
                             .into_iter()
-                            .map(|call| pares_models::types::ToolCall {
+                            .map(|call| pares_agens_models::types::ToolCall {
                                 id: call.id,
                                 kind: "function".into(),
-                                function: pares_models::types::FunctionCall {
+                                function: pares_agens_models::types::FunctionCall {
                                     name: call.name,
                                     arguments: call.arguments.to_string(),
                                 },
@@ -854,13 +854,13 @@ impl ModelClient for RouterModelClient {
 
         let model = self.model.read().await.clone();
         let mut request =
-            pares_models::types::ChatCompletionRequest::new(&model, converted_messages);
+            pares_agens_models::types::ChatCompletionRequest::new(&model, converted_messages);
         if !tools.is_empty() {
             request.tools = Some(
                 tools
                     .iter()
                     .map(|tool| {
-                        pares_models::types::Tool::function(
+                        pares_agens_models::types::Tool::function(
                             tool.name.clone(),
                             tool.description.clone(),
                             tool.parameters.clone(),
@@ -932,13 +932,13 @@ impl ModelClient for RouterModelClient {
 
         let _ = tx.send(StreamDelta::Done);
 
-        let tool_calls: Vec<pares_agens_core::model::ToolCall> = {
-            let mut calls: Vec<(usize, pares_agens_core::model::ToolCall)> = tool_calls_map
+        let tool_calls: Vec<pares_radix_core::model::ToolCall> = {
+            let mut calls: Vec<(usize, pares_radix_core::model::ToolCall)> = tool_calls_map
                 .into_iter()
                 .map(|(idx, (id, name, args))| {
                     (
                         idx,
-                        pares_agens_core::model::ToolCall {
+                        pares_radix_core::model::ToolCall {
                             id,
                             name,
                             arguments: serde_json::from_str(&args)
@@ -957,7 +957,7 @@ impl ModelClient for RouterModelClient {
             Some(full_content)
         };
 
-        Ok(pares_agens_core::model::ModelCompletion {
+        Ok(pares_radix_core::model::ModelCompletion {
             content,
             tool_calls,
             logprobs: None,
@@ -973,7 +973,7 @@ impl ModelClient for ToggleableModelClient {
         messages: &[CoreChatMessage],
         tools: &[ToolDefinition],
         options: &ChatOptions,
-    ) -> Result<pares_agens_core::model::ModelCompletion, String> {
+    ) -> Result<pares_radix_core::model::ModelCompletion, String> {
         if !*self.enabled.read().await {
             return Err("deep model escalation is disabled".to_string());
         }
@@ -2811,9 +2811,6 @@ const TELEGRAM_RECONNECT_MAX_ATTEMPTS: u32 = 8;
 const TELEGRAM_RECONNECT_BASE_DELAY_SECS: u64 = 2;
 const TELEGRAM_RECONNECT_MAX_DELAY_SECS: u64 = 30;
 const MEMORY_MONITOR_INTERVAL_SECS: u64 = 60;
-const DEFAULT_NIX_FLAKE_DIR: &str = ".";
-const DEFAULT_NIX_HOST: &str = "praxisbot";
-const DEFAULT_SELF_UPDATE_INTERVAL_SECS: u64 = 3600;
 const MANUS_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MANUS_RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -2873,48 +2870,10 @@ fn current_hostname() -> String {
     "unknown-host".to_string()
 }
 
-fn shell_single_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
-}
-
-fn build_nixos_update_command(flake_dir: &str, host: &str) -> String {
-    let flake_dir_q = shell_single_quote(flake_dir);
-    let host_q = shell_single_quote(host);
-    format!(
-        "set -eu; cd {flake_dir_q}; git fetch origin && git pull --ff-only; sudo nix flake update pares-radix pares-arca; sudo nixos-rebuild switch --flake .#{host_q} --refresh; echo 'Self-update applied'"
-    )
-}
-
-fn build_self_update_task(
-    flake_dir: &str,
-    host: &str,
-    interval_secs: u64,
-) -> pares_agens_agenda::scheduler::Task {
-    pares_agens_agenda::scheduler::Task {
-        id: "self-update.nixos-rebuild".to_string(),
-        name: "Self-update via NixOS rebuild".to_string(),
-        schedule: pares_agens_agenda::scheduler::Schedule::Interval {
-            every_secs: interval_secs,
-        },
-        command: build_nixos_update_command(flake_dir, host),
-        enabled: true,
-        last_run: None,
-        last_result: None,
-    }
-}
-
-fn self_update_task_from_env() -> pares_agens_agenda::scheduler::Task {
-    let flake_dir =
-        std::env::var("PARES_NIX_FLAKE_DIR").unwrap_or_else(|_| DEFAULT_NIX_FLAKE_DIR.into());
-    let host = std::env::var("PARES_NIX_HOST").unwrap_or_else(|_| DEFAULT_NIX_HOST.into());
-    let interval = std::env::var("PARES_SELF_UPDATE_INTERVAL_SECS")
-        .ok()
-        .and_then(|raw| raw.parse::<u64>().ok())
-        .filter(|secs| *secs > 0)
-        .unwrap_or(DEFAULT_SELF_UPDATE_INTERVAL_SECS);
-
-    build_self_update_task(&flake_dir, &host, interval)
-}
+// NOTE (B1 Option A, Stage R2): the self-update command/task builders that used
+// to live inline here have been RELOCATED into `crate::self_update` (the host now
+// owns its self-update behavior, single source of truth — ADR-0010). Callers in
+// this module use `crate::self_update::*`.
 
 #[allow(dead_code)] // Used on Linux only (/proc/self/status)
 fn parse_vm_rss_kib(contents: &str) -> Option<u64> {
@@ -3014,7 +2973,7 @@ async fn run_adapter_with_recovery(
     adapter: &TelegramAdapter,
     agent: Arc<RwLock<Arc<Agent>>>,
     trace_store: ToolTraceStore,
-    stream_broadcast_tx: Option<tokio::sync::broadcast::Sender<pares_agens_core::model::StreamDelta>>,
+    stream_broadcast_tx: Option<tokio::sync::broadcast::Sender<pares_radix_core::model::StreamDelta>>,
 ) -> Result<(), String> {
     let mut attempts = 0u32;
     loop {
@@ -3225,18 +3184,18 @@ pub(crate) async fn run_serve_spine(
 
             use pares_agens_channels::stdio_spine::StdioSpineChannel;
             use pares_agens_channels::telegram_spine::{TelegramSpineChannel, TelegramSpineConfig};
-            use pares_agens_core::spine::channel::SpineChannel;
-            use pares_agens_core::spine::conversation::{
+            use pares_radix_core::spine::channel::SpineChannel;
+            use pares_radix_core::spine::conversation::{
                 ConversationStore, PluresConversationStore,
             };
-            use pares_agens_core::spine::pipeline::Pipeline;
-            use pares_agens_core::spine::procedures::history_recorder::HistoryRecorder;
-            use pares_agens_core::spine::procedures::inbound_router::InboundRouter;
-            use pares_agens_core::spine::procedures::model_invoker::ModelInvoker;
-            use pares_agens_core::spine::procedures::response_router::ResponseRouter;
-            use pares_agens_core::spine::procedures::tool_executor::ToolExecutor;
-            use pares_agens_core::spine::reactive::ReactiveRegistry;
-            use pares_agens_core::spine::bootstrap;
+            use pares_radix_core::spine::pipeline::Pipeline;
+            use pares_radix_core::spine::procedures::history_recorder::HistoryRecorder;
+            use pares_radix_core::spine::procedures::inbound_router::InboundRouter;
+            use pares_radix_core::spine::procedures::model_invoker::ModelInvoker;
+            use pares_radix_core::spine::procedures::response_router::ResponseRouter;
+            use pares_radix_core::spine::procedures::tool_executor::ToolExecutor;
+            use pares_radix_core::spine::reactive::ReactiveRegistry;
+            use pares_radix_core::spine::bootstrap;
 
             // Load .px config (CLI flags override config file values)
             let px_cfg = px_config::load_config(config.as_deref()).unwrap_or_default();
@@ -3341,7 +3300,7 @@ pub(crate) async fn run_serve_spine(
             info!(model = %model, copilot = use_copilot, "Model client initialized for spine mode");
 
             // 2. Set up tool dispatcher via SpineProcedureDispatcher (full procedure registry)
-            use pares_agens_core::spine::dispatcher::SpineProcedureDispatcher;
+            use pares_radix_core::spine::dispatcher::SpineProcedureDispatcher;
 
             let shell_executor = Arc::new(ShellExecutor::new());
             let mut spine_registry = ProcedureRegistry::new();
@@ -3604,7 +3563,7 @@ pub(crate) async fn run_serve_spine(
             reactive_registry.set_emitter(pipeline.emitter()).await;
 
             // 3.5. Open THE shared PluresDB instance — all state goes here
-            use pares_agens_core::{CrdtStore, SledStorage, StorageEngine};
+            use pares_radix_core::{CrdtStore, SledStorage, StorageEngine};
             let pluresdb_dir = PathBuf::from(&home).join(".pares-radix/runtime-state");
             std::fs::create_dir_all(&pluresdb_dir).ok();
             let shared_store: Arc<CrdtStore> = match SledStorage::open(&pluresdb_dir) {
@@ -3627,13 +3586,13 @@ pub(crate) async fn run_serve_spine(
             // TaskManager uses the shared CrdtStore for task CRUD.
             // Heartbeat state (config, counters) uses a separate in-memory store.
             let spine_task_manager =
-                Arc::new(pares_agens_core::task_manager::TaskManager::new(Arc::clone(&shared_store)));
-            let spine_heartbeat_state: Arc<dyn pares_agens_core::state::StateStore> =
-                Arc::new(pares_agens_core::state::InMemoryStateStore::default());
+                Arc::new(pares_radix_core::task_manager::TaskManager::new(Arc::clone(&shared_store)));
+            let spine_heartbeat_state: Arc<dyn pares_radix_core::state::StateStore> =
+                Arc::new(pares_radix_core::state::InMemoryStateStore::default());
             info!("TaskManager + StateStore initialized for ServeSpine");
 
             // 3.8. Finalize tool dispatcher with task registry
-            use pares_agens_core::tools::TaskRegistryTool;
+            use pares_radix_core::tools::TaskRegistryTool;
             let task_registry = Arc::new(TaskRegistryTool::new(Arc::clone(&spine_task_manager)));
             let spine_tool_dispatcher: Arc<dyn ToolDispatcher> = Arc::new(
                 spine_tool_dispatcher_builder.with_task_registry(Arc::clone(&task_registry)),
@@ -3729,7 +3688,7 @@ pub(crate) async fn run_serve_spine(
             // 4. Register procedures (full pipeline: inbound → history → model → tools → response)
             // Create the streaming broadcast channel FIRST — ModelInvoker sends deltas here,
             // channel handlers (Telegram) subscribe. Zero overhead if unused.
-            let (stream_broadcast_tx, _) = tokio::sync::broadcast::channel::<pares_agens_core::model::StreamDelta>(256);
+            let (stream_broadcast_tx, _) = tokio::sync::broadcast::channel::<pares_radix_core::model::StreamDelta>(256);
 
             pipeline.register(Arc::new(InboundRouter::with_reactive(Arc::clone(&reactive_registry)))).await;
             pipeline
@@ -3757,7 +3716,7 @@ pub(crate) async fn run_serve_spine(
             // responses — tool_call responses are handled by ToolExecutor and never reach here).
             pipeline
                 .register(Arc::new(
-                    pares_agens_core::spine::procedures::commitment_detector::CommitmentDetector::new(
+                    pares_radix_core::spine::procedures::commitment_detector::CommitmentDetector::new(
                         Arc::clone(&spine_task_manager),
                     ),
                 ))
@@ -3766,8 +3725,8 @@ pub(crate) async fn run_serve_spine(
 
             // 4.5. Load .px procedures into the ReactiveRegistry via bootstrap
             {
-                use pares_agens_core::px_adapter::{AsyncActionHandler, ToolDispatchActionHandler};
-                use pares_agens_core::spine::actions::CompositeActionHandler;
+                use pares_radix_core::px_adapter::{AsyncActionHandler, ToolDispatchActionHandler};
+                use pares_radix_core::spine::actions::CompositeActionHandler;
 
                 let tool_handler = Arc::new(ToolDispatchActionHandler::new_lazy());
                 let px_action_handler: Arc<dyn AsyncActionHandler> =
@@ -3818,7 +3777,7 @@ pub(crate) async fn run_serve_spine(
 
             // 5.5. Periodic task evaluation timer (60s)
             {
-                use pares_agens_core::spine::event::SpineEvent;
+                use pares_radix_core::spine::event::SpineEvent;
                 let timer_emitter = pipeline.emitter();
                 tokio::spawn(async move {
                     let mut interval = tokio::time::interval(Duration::from_secs(60));
@@ -3850,8 +3809,8 @@ pub(crate) async fn run_serve_spine(
                     let (_heartbeat_shutdown_tx, heartbeat_shutdown_rx) =
                         tokio::sync::watch::channel(false);
                     {
-                        let heartbeat_store: Arc<dyn pares_agens_core::state::StateStore> =
-                            Arc::new(pares_agens_core::state::InMemoryStateStore::default());
+                        let heartbeat_store: Arc<dyn pares_radix_core::state::StateStore> =
+                            Arc::new(pares_radix_core::state::InMemoryStateStore::default());
                         let mut heartbeat =
                             pares_agens_core::heartbeat::HeartbeatRunner::new(heartbeat_store);
                         heartbeat.load_config().await;
@@ -4186,12 +4145,12 @@ pub(crate) async fn run_serve(
 
                     // Smart model discovery: if model or deep_model is "auto",
                     // probe the Copilot API for available models and select the best.
-                    let mut discovered_fallbacks: Option<pares_agens_core::auth::copilot::ModelFallbacks> = None;
+                    let mut discovered_fallbacks: Option<pares_radix_core::auth::copilot::ModelFallbacks> = None;
                     if model == "auto" || deep_model == "auto" || fast_model == "auto" {
                         tracing::info!("auto-detecting available models...");
                         match auth.list_models().await {
                             Ok(available) if !available.is_empty() => {
-                                let selection = pares_agens_core::auth::copilot::select_models(&available);
+                                let selection = pares_radix_core::auth::copilot::select_models(&available);
                                 if model == "auto" {
                                     tracing::info!(selected = %selection.primary, "auto-selected primary model");
                                     model = selection.primary;
@@ -4538,7 +4497,7 @@ pub(crate) async fn run_serve(
             }));
 
             // Initialize praxis write gate
-            let write_gate = Arc::new(pares_agens_core::praxis::PraxisWriteGate::new());
+            let write_gate = Arc::new(pares_radix_core::praxis::PraxisWriteGate::new());
 
             // Initialize plugin framework
             let plugin_runtime = Arc::new(PluginRuntime::new());
@@ -4552,7 +4511,7 @@ pub(crate) async fn run_serve(
                 let manifests = plugin_executor.load_persisted_manifests();
                 for manifest_json in manifests {
                     if let Ok(manifest) = serde_json::from_value::<
-                        pares_agens_core::plugins::PluginManifest,
+                        pares_radix_core::plugins::PluginManifest,
                     >(manifest_json)
                     {
                         let name = manifest.name.clone();
@@ -4585,7 +4544,7 @@ pub(crate) async fn run_serve(
                                                     }
                                                 }
                                             }
-                                            Err(pares_agens_core::plugins::PluginError::AlreadyInstalled(_)) => {
+                                            Err(pares_radix_core::plugins::PluginError::AlreadyInstalled(_)) => {
                                                 // Already loaded from PluresDB persistence — skip
                                             }
                                             Err(e) => {
@@ -4626,15 +4585,15 @@ pub(crate) async fn run_serve(
             // must NOT enter the live procedure registry. They are loaded separately,
             // inert, into the ShadowProcedures holder immediately below.
             let px_action_handler =
-                Arc::new(pares_agens_core::px_adapter::ToolDispatchActionHandler::new_lazy());
+                Arc::new(pares_radix_core::px_adapter::ToolDispatchActionHandler::new_lazy());
             {
                 let praxis_dir = std::path::Path::new("praxis");
                 if praxis_dir.is_dir() {
-                    let adapters = pares_agens_core::px_adapter::load_px_directory_excluding(
+                    let adapters = pares_radix_core::px_adapter::load_px_directory_excluding(
                         praxis_dir,
                         &["shadow"],
                         px_action_handler.clone()
-                            as Arc<dyn pares_agens_core::px_adapter::AsyncActionHandler>,
+                            as Arc<dyn pares_radix_core::px_adapter::AsyncActionHandler>,
                     );
                     if !adapters.is_empty() {
                         tracing::info!(
@@ -4656,13 +4615,13 @@ pub(crate) async fn run_serve(
             // ship to praxisbot and accumulate fitness for promotion, but never serve
             // live output. See crates/core/src/spine/shadow.rs + praxis/shadow/README.md.
             let _shadow_procedures = {
-                use pares_agens_core::spine::shadow::ShadowProcedures;
+                use pares_radix_core::spine::shadow::ShadowProcedures;
                 let shadow_dir = std::path::Path::new("praxis/shadow");
                 let mut shadow = ShadowProcedures::new();
                 let loaded = shadow.load_dir(
                     shadow_dir,
                     px_action_handler.clone()
-                        as Arc<dyn pares_agens_core::px_adapter::AsyncActionHandler>,
+                        as Arc<dyn pares_radix_core::px_adapter::AsyncActionHandler>,
                 );
                 if loaded > 0 {
                     tracing::info!(
@@ -4737,7 +4696,7 @@ pub(crate) async fn run_serve(
             let cerebellum_model_path = if cerebellum_model_path.is_some() {
                 cerebellum_model_path
             } else {
-                let model_manager = pares_agens_core::model_download::ModelManager::new();
+                let model_manager = pares_radix_core::model_download::ModelManager::new();
                 match model_manager.ensure_bitnet_model().await {
                     Ok(path) => {
                         tracing::info!(path = %path.display(), "Auto-downloaded BitNet model for cerebellum");
@@ -4790,7 +4749,7 @@ pub(crate) async fn run_serve(
 
                 if !no_event_spine {
                     let crdt = store.crdt_store();
-                    let spine = pares_agens_core::event_spine::EventSpine::new(crdt, "pares-radix");
+                    let spine = pares_radix_core::event_spine::EventSpine::new(crdt, "pares-radix");
                     spine.seed_contracts();
                     spine.register_core_procedures();
                     tracing::info!("Event spine initialized");
@@ -4834,7 +4793,7 @@ pub(crate) async fn run_serve(
             config.write_gate = Some(Arc::clone(&write_gate));
 
             // Task manager for /tasks and /task commands
-            let task_manager = Arc::new(pares_agens_core::task_manager::TaskManager::new(
+            let task_manager = Arc::new(pares_radix_core::task_manager::TaskManager::new(
                 store.crdt_store_arc(),
             ));
             config = config.with_task_manager(Arc::clone(&task_manager));
@@ -4872,7 +4831,7 @@ pub(crate) async fn run_serve(
                 target
             });
             if models_toml.exists() {
-                match pares_agens_core::model_pool::ModelPool::from_config(&models_toml) {
+                match pares_radix_core::model_pool::ModelPool::from_config(&models_toml) {
                     Ok(pool) => {
                         let pool = Arc::new(pool);
                         let pool_for_discovery = Arc::clone(&pool);
@@ -4889,9 +4848,9 @@ pub(crate) async fn run_serve(
                             }
                         });
                         let adapter_ctrl = Arc::new(
-                            pares_agens_core::model_pool::PoolControlAdapter::new(Arc::clone(&pool)),
+                            pares_radix_core::model_pool::PoolControlAdapter::new(Arc::clone(&pool)),
                         );
-                        config = config.with_pool_control(adapter_ctrl as Arc<dyn pares_agens_core::model_pool::PoolControl>);
+                        config = config.with_pool_control(adapter_ctrl as Arc<dyn pares_radix_core::model_pool::PoolControl>);
                         tracing::info!(config = %models_toml.display(), "ModelPool initialized (hourly refresh enabled)");
                     }
                     Err(e) => {
@@ -4906,24 +4865,24 @@ pub(crate) async fn run_serve(
 
             // Create streaming broadcast channel — ModelInvoker sends deltas here,
             // TelegramAdapter subscribes for progressive editing. Zero overhead if unused.
-            let (stream_broadcast_tx, _) = tokio::sync::broadcast::channel::<pares_agens_core::model::StreamDelta>(256);
+            let (stream_broadcast_tx, _) = tokio::sync::broadcast::channel::<pares_radix_core::model::StreamDelta>(256);
 
             // Initialize the event spine if enabled
             let mut adapter = adapter;
             adapter.stream_tx = Some(stream_broadcast_tx.clone());
-            let mut heartbeat_spine_handle: Option<pares_agens_core::event_spine::EventSpineHandle> = None;
+            let mut heartbeat_spine_handle: Option<pares_radix_core::event_spine::EventSpineHandle> = None;
             if !no_event_spine {
                 let crdt = store.crdt_store();
-                let spine = pares_agens_core::event_spine::EventSpine::new(crdt, "pares-radix");
+                let spine = pares_radix_core::event_spine::EventSpine::new(crdt, "pares-radix");
                 spine.seed_contracts();
                 spine.register_core_procedures();
-                let handle = pares_agens_core::event_spine::EventSpineHandle::from_arc_store(
+                let handle = pares_radix_core::event_spine::EventSpineHandle::from_arc_store(
                     store.crdt_store_arc(),
                     "pares-radix",
                 );
                 // Create a second handle for the heartbeat
                 heartbeat_spine_handle = Some(
-                    pares_agens_core::event_spine::EventSpineHandle::from_arc_store(
+                    pares_radix_core::event_spine::EventSpineHandle::from_arc_store(
                         store.crdt_store_arc(),
                         "pares-radix-heartbeat",
                     ),
@@ -4981,7 +4940,7 @@ pub(crate) async fn run_serve(
                 }
             }
 
-            scheduler.add(self_update_task_from_env()).await;
+            scheduler.add(crate::self_update::self_update_task_from_env()).await;
             tracing::info!("Registered scheduled NixOS self-update task");
 
             // Spawn scheduler loop
@@ -4994,8 +4953,8 @@ pub(crate) async fn run_serve(
             // Spawn heartbeat runner
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
             {
-                let heartbeat_store: Arc<dyn pares_agens_core::state::StateStore> =
-                    Arc::new(pares_agens_core::state::InMemoryStateStore::default());
+                let heartbeat_store: Arc<dyn pares_radix_core::state::StateStore> =
+                    Arc::new(pares_radix_core::state::InMemoryStateStore::default());
                 let mut heartbeat =
                     pares_agens_core::heartbeat::HeartbeatRunner::new(Arc::clone(&heartbeat_store))
                         .with_task_manager(Arc::clone(&task_manager), Arc::clone(&heartbeat_store));
@@ -5096,7 +5055,7 @@ pub(crate) async fn run_serve(
                                 );
 
                                 // IO boundary: inject as internal event (channel-agnostic)
-                                let event = pares_agens_core::event::Event::Message {
+                                let event = pares_radix_core::event::Event::Message {
                                     id: format!("task-dispatch-{}", task.id),
                                     channel: "internal".into(),
                                     content: prompt,
@@ -5106,7 +5065,7 @@ pub(crate) async fn run_serve(
                                 let task_id = task.id.clone();
                                 let agent = agent_for_tasks.read().await.clone();
                                 if let Some(response) = agent.handle_event(event).await {
-                                    if let pares_agens_core::event::Event::Message { content, .. } = &response {
+                                    if let pares_radix_core::event::Event::Message { content, .. } = &response {
                                         tracing::info!(
                                             task_id = %task_id,
                                             response_len = content.len(),
@@ -5186,7 +5145,7 @@ pub(crate) async fn run_tui(
                     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
                 },
             };
-            use pares_radix_tui::app::{App, AppEvent};
+            use pares_agens_tui::app::{App, AppEvent};
             use ratatui::backend::CrosstermBackend;
             use ratatui::Terminal;
 
@@ -5400,14 +5359,14 @@ pub(crate) async fn run_tui(
 
             // Load .px procedures from praxis/ directory (TUI mode)
             let px_action_handler =
-                Arc::new(pares_agens_core::px_adapter::ToolDispatchActionHandler::new_lazy());
+                Arc::new(pares_radix_core::px_adapter::ToolDispatchActionHandler::new_lazy());
             {
                 let praxis_dir = std::path::Path::new("praxis");
                 if praxis_dir.is_dir() {
-                    let adapters = pares_agens_core::px_adapter::load_px_directory(
+                    let adapters = pares_radix_core::px_adapter::load_px_directory(
                         praxis_dir,
                         px_action_handler.clone()
-                            as Arc<dyn pares_agens_core::px_adapter::AsyncActionHandler>,
+                            as Arc<dyn pares_radix_core::px_adapter::AsyncActionHandler>,
                     );
                     if !adapters.is_empty() {
                         tracing::info!(
@@ -5464,7 +5423,7 @@ pub(crate) async fn run_tui(
             let _cerebellum_model_path = if cerebellum_model_path.is_some() {
                 cerebellum_model_path.clone()
             } else {
-                let model_manager = pares_agens_core::model_download::ModelManager::new();
+                let model_manager = pares_radix_core::model_download::ModelManager::new();
                 match model_manager.ensure_bitnet_model().await {
                     Ok(path) => {
                         tracing::info!(path = %path.display(), "Auto-downloaded BitNet model for cerebellum (TUI)");
@@ -5615,7 +5574,7 @@ pub(crate) async fn run_tui(
                     )
                     .with_chronos({
                         let chronos =
-                            pares_agens_core::chronos::ChronosTimeline::with_jsonl_from_env(
+                            pares_radix_core::chronos::ChronosTimeline::with_jsonl_from_env(
                                 store.crdt_store_arc(),
                             );
                         Arc::new(chronos)
@@ -5628,13 +5587,13 @@ pub(crate) async fn run_tui(
             // Wire session persistence via PluresDbStateStore
             {
                 let state_path = PathBuf::from(&home).join(".pares-radix/state");
-                let state_store: Arc<dyn pares_agens_core::StateStore> =
+                let state_store: Arc<dyn pares_radix_core::StateStore> =
                     match PluresDbStateStore::open(&state_path) {
                         Ok(s) => Arc::new(s),
-                        Err(_) => Arc::new(pares_agens_core::InMemoryStateStore::new()),
+                        Err(_) => Arc::new(pares_radix_core::InMemoryStateStore::new()),
                     };
                 let session_mgr =
-                    Arc::new(pares_agens_core::session::SessionManager::new(state_store));
+                    Arc::new(pares_radix_core::session::SessionManager::new(state_store));
                 app = app.with_session_manager(session_mgr);
                 app.load_persisted_sessions();
             }
@@ -5680,7 +5639,7 @@ pub(crate) async fn run_tui(
                     .size()
                     .map(|r| r.height.saturating_sub(6))
                     .unwrap_or(35);
-                match terminal.draw(|f| pares_radix_tui::ui::draw(f, &app)) {
+                match terminal.draw(|f| pares_agens_tui::ui::draw(f, &app)) {
                     Ok(_) => {}
                     Err(e) => break 'main_loop Err(e.into()),
                 }
@@ -5863,7 +5822,7 @@ pub(crate) async fn run_ask(
                 .and_then(|p| std::fs::read_to_string(p).ok())
                 .unwrap_or_else(|| "You are a helpful assistant. Be concise.".into());
 
-            type CM = pares_agens_core::model::ChatMessage;
+            type CM = pares_radix_core::model::ChatMessage;
             let messages: Vec<CM> = vec![
                 CM {
                     role: "system".into(),
@@ -5887,7 +5846,7 @@ pub(crate) async fn run_ask(
                     .complete(
                         &messages[..],
                         &[],
-                        &pares_agens_core::model::ChatOptions::default(),
+                        &pares_radix_core::model::ChatOptions::default(),
                     )
                     .await
                 {
@@ -5927,7 +5886,7 @@ pub(crate) async fn run_ask(
                     .complete(
                         &messages[..],
                         &[],
-                        &pares_agens_core::model::ChatOptions::default(),
+                        &pares_radix_core::model::ChatOptions::default(),
                     )
                     .await
                 {
@@ -5990,7 +5949,7 @@ pub(crate) async fn run_classify(message: String, bitnet_model_path: std::path::
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pares_agens_core::model::{ModelCompletion, ToolCall, ToolDefinition};
+    use pares_radix_core::model::{ModelCompletion, ToolCall, ToolDefinition};
 
     struct TestModelClient;
 
@@ -6102,30 +6061,24 @@ mod tests {
     }
 
     #[test]
-    fn build_nixos_update_command_includes_required_commands() {
-        let command = build_nixos_update_command("/etc/nixos", "praxisbot");
-        assert!(command.contains("git pull --ff-only"), "must pull latest");
-        assert!(command.contains("nix flake update"), "must update inputs");
-        assert!(
-            command.contains("nixos-rebuild switch --flake"),
-            "must rebuild"
+    fn relocated_self_update_task_from_env_builds_interval_task() {
+        // The self-update command/task builders were relocated into
+        // `crate::self_update` (Stage R2). Verify the host wiring still resolves
+        // and produces a valid interval task via the relocated module. The
+        // command-shape assertions live in `crate::self_update`'s own tests.
+        let task = crate::self_update::build_self_update_task(
+            ".",
+            "praxisbot",
+            crate::self_update::DEFAULT_SELF_UPDATE_INTERVAL_SECS,
         );
-        assert!(command.contains("praxisbot"), "must target praxisbot");
-        assert!(command.contains("--refresh"), "must refresh");
-    }
-
-    #[test]
-    fn self_update_task_defaults_are_applied() {
-        let task = build_self_update_task(
-            DEFAULT_NIX_FLAKE_DIR,
-            DEFAULT_NIX_HOST,
-            DEFAULT_SELF_UPDATE_INTERVAL_SECS,
-        );
-        assert_eq!(task.id, "self-update.nixos-rebuild");
+        assert_eq!(task.id, "self-update.rebuild");
         assert!(task.enabled);
         match task.schedule {
             pares_agens_agenda::scheduler::Schedule::Interval { every_secs } => {
-                assert_eq!(every_secs, DEFAULT_SELF_UPDATE_INTERVAL_SECS);
+                assert_eq!(
+                    every_secs,
+                    crate::self_update::DEFAULT_SELF_UPDATE_INTERVAL_SECS
+                );
             }
             _ => panic!("expected interval schedule"),
         }
@@ -6208,7 +6161,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_model_control_persists_primary_model_override() {
         let state_store: Arc<dyn StateStore> =
-            Arc::new(pares_agens_core::InMemoryStateStore::new());
+            Arc::new(pares_radix_core::InMemoryStateStore::new());
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4.1".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
@@ -6235,7 +6188,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_model_control_persists_deep_model_override() {
         let state_store: Arc<dyn StateStore> =
-            Arc::new(pares_agens_core::InMemoryStateStore::new());
+            Arc::new(pares_radix_core::InMemoryStateStore::new());
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
@@ -6262,7 +6215,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_model_control_persists_deep_escalation_toggle() {
         let state_store: Arc<dyn StateStore> =
-            Arc::new(pares_agens_core::InMemoryStateStore::new());
+            Arc::new(pares_radix_core::InMemoryStateStore::new());
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
@@ -6297,7 +6250,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_config_control_persists_model_endpoint_and_log_level() {
         let state_store: Arc<dyn StateStore> =
-            Arc::new(pares_agens_core::InMemoryStateStore::new());
+            Arc::new(pares_radix_core::InMemoryStateStore::new());
         let runtime_model_control = Arc::new(RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),

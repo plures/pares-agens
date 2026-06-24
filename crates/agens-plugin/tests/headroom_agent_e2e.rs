@@ -28,7 +28,7 @@
 use agens_plugin::headroom::{
     count_message_tokens, in_memory_hook, in_memory_hook_disabled, HeadroomHook,
 };
-use pares_agens_core::model::ChatMessage;
+use pares_radix_core::model::ChatMessage;
 
 /// A multi-thousand-token user message built from large prose + a big code
 /// block, guaranteed to blow past the 500-token (chars/4) gate.

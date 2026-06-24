@@ -1,0 +1,37 @@
+B1 taskdef-S-D: leaf relocation + Headroom regression restore (agens workspace green except S-F-gated agens-plugin)
+
+LEAF RELOCATION (canonical radix -> agens, replacing stale copies; platform aliases
+flipped to pares_radix_core::, cognition kept as pares_agens_core::):
+- models: 7 canon files (router/types/lib/...); license -> pares_radix_core.
+- tui: real 44.5kb app.rs (was a 5.2kb stub) + ui/lib; platform flipped, Agent kept.
+- tauri-app: 13 canon files (+plugins.rs); 45 platform refs flipped; agent/cerebellum/memory kept.
+- channels: 16 canon files (+threading/, telegram.rs 140kb, *_spine.rs); 14 platform syms flipped.
+  Added pares-rector git dep (rev 61b151b) for telegram cluster-status commands (real peer crate, not a stub).
+
+HEADROOM REGRESSION RESTORE (reverses an accidental deletion in S-C b0b74b9):
+- S-C replaced agens crates/core with radix-canonical agent.rs, which silently dropped the
+  agens-only Headroom-in-Agent feature (added in 10abc2c, never present in radix). Restored:
+  - crates/core/src/headroom.rs (912L) + headroom_bridge.rs (492L) verbatim from 10abc2c;
+    headroom_bridge platform imports flipped crate::{model,state} -> pares_radix_core::{model,state}.
+  - agent.rs: MERGED (not overwrote) the headroom field + with_headroom() builder + the
+    run_model_loop compression seam (compresses the PII-redacted transient clone; canonical
+    history stays lossless; mints a per-call uuid for audit keying) + both constructors init None.
+  - lib.rs: re-export pub mod headroom/headroom_bridge + HeadroomActionHandler/HeadroomHook.
+  - core/Cargo.toml: +pluresdb-px (rev 195c67b, proven lock-compatible) +tiktoken-rs +unicode-segmentation.
+
+CLI FIXES (post-relocation drift, all real, no stubs):
+- ToolCall literal: +index: None (canonical models added the field).
+- HeadroomActionHandler wiring now resolves against the restored core Headroom (was the 11-error blocker).
+- AppEvent match: +3 real arms delegating to the canonical App handlers (handle_stream_chunk/
+  handle_sessions_loaded/handle_session_messages_loaded) for the new relocated TUI variants.
+
+VERIFICATION (own re-runs, not subagent self-report):
+- cargo build --workspace: only agens-plugin fails, with the single S-F-gated
+  `BitnetModelClient: ModelClient` trait-identity error (resolves at the S-F git->local-path pin flip).
+  Every other crate builds green.
+- cargo test -p pares-agens-core: headroom_agent_e2e 5/5, headroom_e2e 32/32, --lib 538/538. All green.
+- NO STUBS across all touched files; restored headroom files complete (912/492 lines).
+
+NOTE: depends on a companion radix-core change (PluresDbStateStore::crdt_store() accessor) that is
+committed separately in pares-radix and resolves here via the temporary [patch] local-path override.
+The [patch] block + the git pins remain TEMPORARY scaffolding reverted at S-F. LOCAL checkpoint; not pushed.

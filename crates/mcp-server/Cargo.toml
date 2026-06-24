@@ -1,5 +1,5 @@
 [package]
-name = "pares-radix-mcp-server"
+name = "pares-agens-mcp-server"
 description = "MCP (Model Context Protocol) server — expose pares-radix tools to external agents"
 version.workspace = true
 edition.workspace = true

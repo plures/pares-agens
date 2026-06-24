@@ -50,9 +50,9 @@ use pares_radix_core::tool_governance::{GovernanceVerdict, ToolGovernor};
 use pares_radix_core::Event;
 use pares_radix_core::{PluresDbStateStore, StateStore};
 use pares_agens_migrate::{migrate, openclaw};
-use pares_models::config::{ProviderConfig, RouterConfig};
-use pares_models::router::ModelRouter;
-use pares_models::types::{ChatCompletionRequest, ChatMessage, Role, Tool};
+use pares_agens_models::config::{ProviderConfig, RouterConfig};
+use pares_agens_models::router::ModelRouter;
+use pares_agens_models::types::{ChatCompletionRequest, ChatMessage, Role, Tool};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -601,10 +601,10 @@ impl ModelClient for RouterModelClient {
                     tool_calls: m.tool_calls.clone().map(|calls| {
                         calls
                             .into_iter()
-                            .map(|call| pares_models::types::ToolCall {
+                            .map(|call| pares_agens_models::types::ToolCall {
                                 id: call.id,
                                 kind: "function".into(),
-                                function: pares_models::types::FunctionCall {
+                                function: pares_agens_models::types::FunctionCall {
                                     name: call.name,
                                     arguments: call.arguments.to_string(),
                                 },

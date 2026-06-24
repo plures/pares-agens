@@ -11,17 +11,44 @@ name = "pares-agens"
 path = "src/bin/pares-agens.rs"
 
 [dependencies]
-# --- radix-as-a-library (the host runtime + capability surface) ---
-# Pinned to the PUSHED radix branch SHA so the cross-repo dep resolves in CI.
-pares-radix-cli-runtime = { git = "https://github.com/plures/pares-radix.git", rev = "61b151bcbddc35995e10e1f35ef2dccc672a4171" }
-pares-radix-cli-api     = { git = "https://github.com/plures/pares-radix.git", rev = "61b151bcbddc35995e10e1f35ef2dccc672a4171" }
-pares-agens-core        = { git = "https://github.com/plures/pares-radix.git", rev = "61b151bcbddc35995e10e1f35ef2dccc672a4171", features = ["embeddings"] }
-pares-agens-channels    = { git = "https://github.com/plures/pares-radix.git", rev = "61b151bcbddc35995e10e1f35ef2dccc672a4171" }
-pares-models            = { git = "https://github.com/plures/pares-radix.git", rev = "61b151bcbddc35995e10e1f35ef2dccc672a4171" }
-pares-agens-bitnet      = { git = "https://github.com/plures/pares-radix.git", rev = "61b151bcbddc35995e10e1f35ef2dccc672a4171", features = ["model-client"] }
-pares-agens-agenda      = { git = "https://github.com/plures/pares-radix.git", rev = "61b151bcbddc35995e10e1f35ef2dccc672a4171" }
-pares-radix-tui         = { git = "https://github.com/plures/pares-radix.git", rev = "61b151bcbddc35995e10e1f35ef2dccc672a4171" }
-pares-radix-praxis      = { git = "https://github.com/plures/pares-radix.git", rev = "61b151bcbddc35995e10e1f35ef2dccc672a4171" }
+# --- radix-as-a-library (PLATFORM capability surface) ---
+# Platform crates STAY in radix. They are pinned to the LOCAL radix checkout
+# (path deps) so the ENTIRE platform graph — core + mcp-server + cli/migrate +
+# rector — compiles against the SINGLE local `pares_radix_core` (post-S-C
+# split). Git-pinning these to rev 61b151b instead pulls the PRE-SPLIT snapshot
+# (where ShellExecutor/StateStore/ChronosTimeline still lived in the old
+# `crates/core` = pares-agens-core), which clashes with the local core's copies
+# of those types (E0308 "similar names, distinct types"). Using local paths is
+# consistent with the root [patch] that already redirects pares-radix-core /
+# pares-radix-praxis -> the local radix checkout. (Real published pin bump is
+# Stage S-F; at that point these revert to git pins against a PUSHED post-split
+# radix.)
+# NOTE: the host-composition runtime (run_with_providers) was RELOCATED into
+# this crate (src/host_runtime/, Stage R3a) — pares-radix-cli-runtime is no
+# longer a dependency.
+pares-radix-cli-api     = { path = "C:/Projects/pares-radix/crates/cli-api" }
+pares-radix-praxis      = { path = "C:/Projects/pares-radix/crates/praxis" }
+# Platform crates pulled in by the relocated run_with_providers host machinery
+# (Migrate -> pares_radix_migrate, Cluster -> pares_rector, McpServe ->
+# pares_radix_mcp_server + pares_radix_core). LOCAL paths so they unify on the
+# local pares_radix_core (see note above).
+pares-radix-core        = { path = "C:/Projects/pares-radix/crates/radix-core" }
+pares-radix-cli         = { path = "C:/Projects/pares-radix/crates/cli" }
+pares-agens-mcp-server  = { path = "../mcp-server" }
+pares-rector            = { path = "C:/Projects/pares-radix/crates/rector" }
+
+# --- HOST / COGNITION crates (Option A: agens OWNS these) ---
+# Stage R3a: flipped from radix git-pins (rev 61b151b) to the LOCAL agens copies.
+# This collapses the two-`pares-agens-core` clash: previously these were git-pinned
+# to the OLD radix copies while pares-agens-tui -> ../tui -> ../core dragged in the
+# LOCAL core, yielding two distinct Agent/SessionManager/ModelClient types. With
+# local paths there is exactly ONE pares-agens-core in the graph.
+pares-agens-core        = { path = "../core", features = ["embeddings"] }
+pares-agens-channels    = { path = "../channels" }
+pares-agens-models      = { path = "../models" }
+pares-agens-bitnet      = { path = "../bitnet", features = ["model-client"] }
+pares-agens-agenda      = { path = "../agenda" }
+pares-agens-tui         = { path = "../tui" }
 
 # --- pluresdb (headroom + px executor types; pinned to the SAME revs radix core uses
 #     so the ActionHandler/CrdtStore types unify across the graph) ---

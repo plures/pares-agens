@@ -8,7 +8,7 @@
 //!
 //! ```rust
 //! use pares_agens_core::features;
-//! use pares_agens_core::license::{Feature, License};
+//! use pares_radix_core::license::{Feature, License};
 //!
 //! let free = License::free();
 //! assert!(!features::is_available(&free, Feature::MultipleChannels));
