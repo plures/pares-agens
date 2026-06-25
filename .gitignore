@@ -14,3 +14,6 @@ target/
 
 # fastembed model cache (downloaded at runtime by the embeddings feature)
 .fastembed_cache/
+
+# Dev scratch artifacts — never ship to main
+scratch/
