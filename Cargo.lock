@@ -4934,21 +4934,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pares-agens-audit"
-version = "1.49.1"
-dependencies = [
- "async-trait",
- "chrono",
- "pluresdb 2.9.10",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "pares-agens-bitnet"
 version = "1.47.2"
 dependencies = [
@@ -5032,8 +5017,8 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry-semantic-conventions",
  "opentelemetry_sdk",
- "pares-agens-audit 1.14.0",
- "pares-agens-privacy 1.14.0",
+ "pares-agens-audit",
+ "pares-agens-privacy",
  "pares-radix-core",
  "pares-radix-praxis",
  "pluresdb 2.9.10",
@@ -5145,16 +5130,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pares-agens-privacy"
-version = "1.49.1"
-dependencies = [
- "regex",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "pares-agens-sync"
 version = "1.14.0"
 dependencies = [
@@ -5210,6 +5185,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "pares-radix-audit"
+version = "1.49.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "pluresdb 2.9.10",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "pares-radix-cli"
 version = "1.49.1"
 dependencies = [
@@ -5239,9 +5229,9 @@ dependencies = [
  "chrono",
  "futures-util",
  "hostname",
- "pares-agens-audit 1.49.1",
- "pares-agens-privacy 1.49.1",
+ "pares-radix-audit",
  "pares-radix-praxis",
+ "pares-radix-privacy",
  "pluresdb 2.9.10",
  "pluresdb-procedures",
  "pluresdb-sea",
@@ -5275,6 +5265,16 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "pares-radix-privacy"
+version = "1.49.1"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
