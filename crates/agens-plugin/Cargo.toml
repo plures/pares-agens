@@ -12,37 +12,30 @@ path = "src/bin/pares-agens.rs"
 
 [dependencies]
 # --- radix-as-a-library (PLATFORM capability surface) ---
-# Platform crates STAY in radix. They are pinned to the LOCAL radix checkout
-# (path deps) so the ENTIRE platform graph — core + mcp-server + cli/migrate +
-# rector — compiles against the SINGLE local `pares_radix_core` (post-S-C
-# split). Git-pinning these to rev 61b151b instead pulls the PRE-SPLIT snapshot
-# (where ShellExecutor/StateStore/ChronosTimeline still lived in the old
-# `crates/core` = pares-agens-core), which clashes with the local core's copies
-# of those types (E0308 "similar names, distinct types"). Using local paths is
-# consistent with the root [patch] that already redirects pares-radix-core /
-# pares-radix-praxis -> the local radix checkout. (Real published pin bump is
-# Stage S-F; at that point these revert to git pins against a PUSHED post-split
-# radix.)
+# Platform crates STAY in radix. They are git-pinned to the post-split pares-radix
+# commit (rev f8eada7 == origin/main) so the ENTIRE platform graph — core +
+# cli/migrate + cli-api + praxis + rector — resolves against the SINGLE published
+# `pares_radix_core`. A single shared rev across every radix edge (here and in the
+# member crates) is what lets Cargo unify them into one source per crate (no
+# duplicate `pares_radix_core` -> no E0308 "similar names, distinct types").
 # NOTE: the host-composition runtime (run_with_providers) was RELOCATED into
 # this crate (src/host_runtime/, Stage R3a) — pares-radix-cli-runtime is no
 # longer a dependency.
-pares-radix-cli-api     = { path = "C:/Projects/pares-radix/crates/cli-api" }
-pares-radix-praxis      = { path = "C:/Projects/pares-radix/crates/praxis" }
+pares-radix-cli-api     = { git = "https://github.com/plures/pares-radix.git", rev = "f8eada76408d859392aa48a1b078309c381294f3" }
+pares-radix-praxis      = { git = "https://github.com/plures/pares-radix.git", rev = "f8eada76408d859392aa48a1b078309c381294f3" }
 # Platform crates pulled in by the relocated run_with_providers host machinery
 # (Migrate -> pares_radix_migrate, Cluster -> pares_rector, McpServe ->
 # pares_radix_mcp_server + pares_radix_core). LOCAL paths so they unify on the
 # local pares_radix_core (see note above).
-pares-radix-core        = { path = "C:/Projects/pares-radix/crates/radix-core" }
-pares-radix-cli         = { path = "C:/Projects/pares-radix/crates/cli" }
+pares-radix-core        = { git = "https://github.com/plures/pares-radix.git", rev = "f8eada76408d859392aa48a1b078309c381294f3" }
+pares-radix-cli         = { git = "https://github.com/plures/pares-radix.git", rev = "f8eada76408d859392aa48a1b078309c381294f3" }
 pares-agens-mcp-server  = { path = "../mcp-server" }
-pares-rector            = { path = "C:/Projects/pares-radix/crates/rector" }
+pares-rector            = { git = "https://github.com/plures/pares-radix.git", rev = "f8eada76408d859392aa48a1b078309c381294f3" }
 
 # --- HOST / COGNITION crates (Option A: agens OWNS these) ---
-# Stage R3a: flipped from radix git-pins (rev 61b151b) to the LOCAL agens copies.
-# This collapses the two-`pares-agens-core` clash: previously these were git-pinned
-# to the OLD radix copies while pares-agens-tui -> ../tui -> ../core dragged in the
-# LOCAL core, yielding two distinct Agent/SessionManager/ModelClient types. With
-# local paths there is exactly ONE pares-agens-core in the graph.
+# Stage R3a: the cognition/host crates are the LOCAL agens copies (path deps).
+# This collapses the two-`pares-agens-core` clash: with local paths there is
+# exactly ONE pares-agens-core in the graph (Agent/SessionManager/ModelClient).
 pares-agens-core        = { path = "../core", features = ["embeddings"] }
 pares-agens-channels    = { path = "../channels" }
 pares-agens-models      = { path = "../models" }
