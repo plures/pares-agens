@@ -34,12 +34,12 @@ pares-agens-core = { path = "../core" }
 # PLATFORM layer (chronos, event, plugins, shell_executor, spine, StateStore) —
 # referenced via git+[patch] redirect to the local pares-radix checkout (same
 # pattern as crates/core; Stage S-C/S-D scaffolding).
-pares-radix-core = { git = "https://github.com/plures/pares-radix.git", rev = "f8eada76408d859392aa48a1b078309c381294f3" }
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.49.2" }
 pares-agens-agenda = { path = "../agenda" }
 # Praxis (PraxisModule, px compiler/executor) — git+[patch] redirect to local
 # pares-radix crates/praxis (the agens crates/praxis is a different crate,
 # `pares-agens-praxis`; the radix_handler imports `pares_radix_praxis::`).
-pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", rev = "f8eada76408d859392aa48a1b078309c381294f3" }
+pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", tag = "v1.49.2" }
 praxis-native = { git = "https://github.com/plures/praxis.git", rev = "ff2a2bb", default-features = false }
 
 [dev-dependencies]

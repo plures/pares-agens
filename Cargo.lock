@@ -273,7 +273,7 @@ dependencies = [
  "objc2-foundation",
  "parking_lot 0.12.5",
  "percent-encoding",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
  "wl-clipboard-rs",
  "x11rb",
 ]
@@ -1178,7 +1178,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -1815,7 +1815,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2147,7 +2147,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3208,7 +3208,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -3228,7 +3228,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core",
 ]
 
 [[package]]
@@ -4350,7 +4350,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4875,7 +4875,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.45.0",
 ]
 
 [[package]]
@@ -5199,8 +5199,8 @@ dependencies = [
 
 [[package]]
 name = "pares-radix-audit"
-version = "1.49.1"
-source = "git+https://github.com/plures/pares-radix.git?rev=f8eada76408d859392aa48a1b078309c381294f3#f8eada76408d859392aa48a1b078309c381294f3"
+version = "1.49.2"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.49.2#bf765f722cebb8aa1f70b4a9fffddc3f7a2b518d"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5215,8 +5215,8 @@ dependencies = [
 
 [[package]]
 name = "pares-radix-cli"
-version = "1.49.1"
-source = "git+https://github.com/plures/pares-radix.git?rev=f8eada76408d859392aa48a1b078309c381294f3#f8eada76408d859392aa48a1b078309c381294f3"
+version = "1.49.2"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.49.2#bf765f722cebb8aa1f70b4a9fffddc3f7a2b518d"
 dependencies = [
  "chrono",
  "pares-radix-core",
@@ -5228,8 +5228,8 @@ dependencies = [
 
 [[package]]
 name = "pares-radix-cli-api"
-version = "1.49.1"
-source = "git+https://github.com/plures/pares-radix.git?rev=f8eada76408d859392aa48a1b078309c381294f3#f8eada76408d859392aa48a1b078309c381294f3"
+version = "1.49.2"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.49.2#bf765f722cebb8aa1f70b4a9fffddc3f7a2b518d"
 dependencies = [
  "async-trait",
  "clap",
@@ -5238,8 +5238,8 @@ dependencies = [
 
 [[package]]
 name = "pares-radix-core"
-version = "1.49.1"
-source = "git+https://github.com/plures/pares-radix.git?rev=f8eada76408d859392aa48a1b078309c381294f3#f8eada76408d859392aa48a1b078309c381294f3"
+version = "1.49.2"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.49.2#bf765f722cebb8aa1f70b4a9fffddc3f7a2b518d"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -5271,8 +5271,8 @@ dependencies = [
 
 [[package]]
 name = "pares-radix-praxis"
-version = "1.49.1"
-source = "git+https://github.com/plures/pares-radix.git?rev=f8eada76408d859392aa48a1b078309c381294f3#f8eada76408d859392aa48a1b078309c381294f3"
+version = "1.49.2"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.49.2#bf765f722cebb8aa1f70b4a9fffddc3f7a2b518d"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5287,8 +5287,8 @@ dependencies = [
 
 [[package]]
 name = "pares-radix-privacy"
-version = "1.49.1"
-source = "git+https://github.com/plures/pares-radix.git?rev=f8eada76408d859392aa48a1b078309c381294f3#f8eada76408d859392aa48a1b078309c381294f3"
+version = "1.49.2"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.49.2#bf765f722cebb8aa1f70b4a9fffddc3f7a2b518d"
 dependencies = [
  "regex",
  "serde",
@@ -5298,8 +5298,8 @@ dependencies = [
 
 [[package]]
 name = "pares-rector"
-version = "1.49.1"
-source = "git+https://github.com/plures/pares-radix.git?rev=f8eada76408d859392aa48a1b078309c381294f3#f8eada76408d859392aa48a1b078309c381294f3"
+version = "1.49.2"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.49.2#bf765f722cebb8aa1f70b4a9fffddc3f7a2b518d"
 dependencies = [
  "hostname",
  "num_cpus",
@@ -6050,7 +6050,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.118",
@@ -6118,7 +6118,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.2",
  "rustls",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -6155,9 +6155,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6618,7 +6618,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7490,7 +7490,7 @@ dependencies = [
  "unicode-segmentation",
  "url",
  "windows 0.61.3",
- "windows-core 0.61.2",
+ "windows-core",
  "windows-version",
  "x11-dl",
 ]
@@ -7927,7 +7927,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -9263,7 +9263,7 @@ dependencies = [
  "webview2-com-macros",
  "webview2-com-sys",
  "windows 0.61.3",
- "windows-core 0.61.2",
+ "windows-core",
  "windows-implement",
  "windows-interface",
 ]
@@ -9287,7 +9287,7 @@ checksum = "381336cfffd772377d291702245447a5251a2ffa5bad679c99e61bc48bacbf9c"
 dependencies = [
  "thiserror 2.0.18",
  "windows 0.61.3",
- "windows-core 0.61.2",
+ "windows-core",
 ]
 
 [[package]]
@@ -9324,7 +9324,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -9364,7 +9364,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9babd3a767a4c1aef6900409f85f5d53ce2544ccdfaa86dad48c91782c6d6893"
 dependencies = [
  "windows-collections",
- "windows-core 0.61.2",
+ "windows-core",
  "windows-future",
  "windows-link 0.1.3",
  "windows-numerics",
@@ -9376,7 +9376,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3beeceb5e5cfd9eb1d76b381630e82c4241ccd0d27f1a39ed41b2760b255c5e8"
 dependencies = [
- "windows-core 0.61.2",
+ "windows-core",
 ]
 
 [[package]]
@@ -9393,25 +9393,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "windows-core"
-version = "0.62.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb"
-dependencies = [
- "windows-implement",
- "windows-interface",
- "windows-link 0.2.1",
- "windows-result 0.4.1",
- "windows-strings 0.5.1",
-]
-
-[[package]]
 name = "windows-future"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc6a41e98427b19fe4b73c550f060b59fa592d7d686537eebf9385621bfbad8e"
 dependencies = [
- "windows-core 0.61.2",
+ "windows-core",
  "windows-link 0.1.3",
  "windows-threading",
 ]
@@ -9456,7 +9443,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9150af68066c4c5c07ddc0ce30421554771e528bde427614c61038bc2c92c2b1"
 dependencies = [
- "windows-core 0.61.2",
+ "windows-core",
  "windows-link 0.1.3",
 ]
 
@@ -9957,7 +9944,7 @@ dependencies = [
  "webkit2gtk-sys",
  "webview2-com",
  "windows 0.61.3",
- "windows-core 0.61.2",
+ "windows-core",
  "windows-version",
  "x11-dl",
 ]
