@@ -20,25 +20,28 @@ fn make_handler() -> (HeadroomActionHandler, Arc<CrdtStore>) {
 
 fn load_px(name: &str) -> String {
     // Resolve the headroom-strategies `.px` specs. These are agens-side IP
-    // (preserved at `praxis/headroom-strategies/`). Fall back to the external
-    // headroom-px source tree if present.
+    // (preserved at `praxis/headroom-strategies/`). Resolve relative to this
+    // crate via CARGO_MANIFEST_DIR so the test is hermetic and runs anywhere
+    // (incl. the sandboxed nix build), not just one dev box.
     let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let candidates = [
-        manifest
-            .join("..")
-            .join("..")
-            .join("praxis")
-            .join("headroom-strategies")
-            .join(name),
-        std::path::PathBuf::from(r"C:\Users\kbristol\.openclaw\workspace\repos\plures\headroom-px").join(name),
-        std::path::PathBuf::from(r"C:\Projects\pares-radix\crates\praxis\tests\fixtures\headroom").join(name),
+        manifest.join("../../praxis/headroom-strategies").join(name),
+        manifest.join("../../praxis").join(name), // e.g. headroom.px at praxis/ root
     ];
     for p in &candidates {
         if p.exists() {
-            return std::fs::read_to_string(p).unwrap();
+            return std::fs::read_to_string(p)
+                .unwrap_or_else(|e| panic!("failed reading fixture {}: {}", p.display(), e));
         }
     }
-    panic!("Cannot find fixture {}", name);
+    panic!(
+        "Cannot find fixture {} (looked in {:?})",
+        name,
+        candidates
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+    );
 }
 
 fn compile_procedure(source: &str, proc_name: &str) -> Value {
