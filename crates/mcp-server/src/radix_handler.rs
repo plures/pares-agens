@@ -7392,6 +7392,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "resolves a direct SSH host (192.168.1.1) which behaves differently offline; not available in hermetic Nix build sandbox. Run in CI with --ignored."]
     async fn node_resolve_direct_host() {
         let handler = make_handler_with_state();
         // Direct host format should resolve without state store lookup
@@ -8924,6 +8925,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires network + python3 loopback HTTP server; not available in hermetic Nix build sandbox. Run in CI with --ignored."]
     async fn test_px_http_get() {
         use pares_radix_praxis::px::async_executor::AsyncActionHandler;
         let h = make_shell_handler();
