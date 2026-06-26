@@ -3456,8 +3456,24 @@ mod tests {
 
     #[test]
     fn build_nixos_update_command_delegates_to_agenda() {
+        // Verifies the CLI delegates to the shared flake-driven self-update impl
+        // (pares_agens_agenda::self_update::build_update_command). Under ADR-0010
+        // that impl uses a `nix flake update` + `nixos-rebuild switch` flow with
+        // dynamic flake-input discovery — NOT a `cargo build` binary-swap. Assert
+        // on the actual hallmarks of that shared command (host is single-quoted).
         let command = build_nixos_update_command("/etc/nixos", "praxisbot");
-        assert!(command.contains("cargo build --release -p pares-agens"), "must delegate to shared impl");
+        assert!(
+            command.contains("nix flake update"),
+            "must delegate to shared flake-update impl"
+        );
+        assert!(
+            command.contains("nixos-rebuild switch --flake .#'praxisbot'"),
+            "must rebuild the NixOS config for the given host"
+        );
+        assert!(
+            command.contains("FLAKE_INPUT"),
+            "must use the shared impl's dynamic flake-input discovery"
+        );
     }
 
     #[test]
