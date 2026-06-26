@@ -3359,6 +3359,7 @@ mod tests {
                 content: Some("ok".to_string()),
                 tool_calls: Vec::<ToolCall>::new(),
                 logprobs: None,
+                model: None,
             })
         }
     }
