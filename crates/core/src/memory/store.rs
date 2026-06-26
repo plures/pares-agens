@@ -1379,6 +1379,7 @@ mod tests {
 
     #[cfg(feature = "embeddings")]
     #[tokio::test]
+    #[ignore = "requires network: downloads ONNX embedder model (onnx/model.onnx); cannot run in hermetic nix sandbox"]
     async fn pluresdb_store_open_with_embeddings_works() {
         let dir = tempfile::tempdir().unwrap();
         let store = PluresDbStore::open_with_embeddings(dir.path()).unwrap();
@@ -1398,6 +1399,7 @@ mod tests {
     /// the host_sea_key is None and encryption/decryption behavior differs.
     #[cfg(feature = "embeddings")]
     #[tokio::test]
+    #[ignore = "requires network: downloads ONNX embedder model (onnx/model.onnx); cannot run in hermetic nix sandbox"]
     async fn pluresdb_store_open_with_embeddings_has_host_sea_key() {
         let dir = tempfile::tempdir().unwrap();
         let store = PluresDbStore::open_with_embeddings(dir.path()).unwrap();
