@@ -1,11 +1,19 @@
 use async_trait::async_trait;
-use pares_agens_core::{
+// NOTE: The execution engine (event/executor/procedure/source) and the Praxis
+// constraint store were relocated out of `pares-agens-core` into the
+// `pares-radix-*` platform crates by the B1 cognition relocation
+// (commit b0b74b9, "B1 S-C — relocate canonical cognition radix->agens").
+// `pares-agens-core` is now cognition-only; the runtime primitives this test
+// exercises live in `pares_radix_core`, and the Praxis store types live in
+// `pares_radix_praxis` (which is the store type `Executor::with_praxis_store`
+// expects — they must come from the same crate as the executor).
+use pares_radix_core::{
     event::Event,
     executor::{Executor, NoopPraxisGate, PraxisGate},
     procedure::{Procedure, ProcedureRegistry},
     source::EventSource,
 };
-use pares_agens_praxis::db::{
+use pares_radix_praxis::db::{
     schema::{Condition, Constraint, Severity},
     seed::default_store,
     store::PraxisStore,
