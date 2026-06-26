@@ -1745,7 +1745,7 @@ impl Agent {
             }
 
             // Numbered list items with action verbs
-            if trimmed.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+            if trimmed.chars().next().is_some_and(|c| c.is_ascii_digit()) {
                 if let Some(text) = trimmed.split_once('.').map(|(_, t)| t.trim()) {
                     let lower = text.to_lowercase();
                     if action_verbs.iter().any(|v| lower.starts_with(v)) {

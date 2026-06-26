@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use praxis_native::px::executor::{ActionHandler, ExecutionError};
+use pluresdb_px::px::executor::{ActionHandler, ExecutionError};
 use serde_json::Value;
 use tokio::runtime::Handle;
 
@@ -61,6 +61,6 @@ impl ActionHandler for PxActionBridge {
 
     fn evaluate_condition(&self, expr: &str, vars: &HashMap<String, Value>) -> bool {
         // Delegate to default implementation.
-        praxis_native::px::executor::default_evaluate_condition(expr, vars)
+        pluresdb_px::px::executor::default_evaluate_condition(expr, vars)
     }
 }

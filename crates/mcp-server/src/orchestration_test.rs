@@ -10,8 +10,8 @@ mod tests {
 
     use serde_json::{json, Value};
 
-    use praxis_native::px::executor::{execute, ActionHandler, ExecutionError};
-    use praxis_native::px::{compiler::compile, parse};
+    use pluresdb_px::px::executor::{execute, ActionHandler, ExecutionError};
+    use pluresdb_px::px::{compiler::compile, parse};
 
     // ── Mock ActionHandler for Testing ──────────────────────────────────────────
 
@@ -328,8 +328,8 @@ mod bridge_integration_tests {
 
     use serde_json::json;
 
-    use praxis_native::px::executor::execute;
-    use praxis_native::px::{compiler::compile, parse};
+    use pluresdb_px::px::executor::execute;
+    use pluresdb_px::px::{compiler::compile, parse};
 
     use pares_radix_core::shell_executor::ShellExecutor;
     use pares_radix_core::InMemoryStateStore;

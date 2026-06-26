@@ -611,7 +611,7 @@ impl CerebellumActionHandler {
         let patterns = params.get("patterns").and_then(|v| v.as_array());
         if let Some(pats) = patterns {
             let matched = pats.iter().any(|p| {
-                p.as_str().map_or(false, |s| text.contains(s))
+                p.as_str().is_some_and(|s| text.contains(s))
             });
             Ok(json!(matched))
         } else {
