@@ -10,10 +10,15 @@ use pluresdb_px::px::compiler::compile;
 use pluresdb_px::px::executor::{self, ActionHandler};
 use pluresdb_px::px::parse;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+
+fn shared_store() -> Arc<CrdtStore> {
+    static STORE: OnceLock<Arc<CrdtStore>> = OnceLock::new();
+    STORE.get_or_init(|| Arc::new(CrdtStore::default())).clone()
+}
 
 fn make_handler() -> (HeadroomActionHandler, Arc<CrdtStore>) {
-    let store = Arc::new(CrdtStore::default());
+    let store = shared_store();
     let handler = HeadroomActionHandler::new(store.clone());
     (handler, store)
 }
