@@ -3,8 +3,14 @@ name: Build All
 on:
   push:
     branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**', '.github/ISSUE_TEMPLATE/**', 'LICENSE', '.gitignore']
   pull_request:
     branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**', '.github/ISSUE_TEMPLATE/**', 'LICENSE', '.gitignore']
+
+concurrency:
+  group: build-all-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:

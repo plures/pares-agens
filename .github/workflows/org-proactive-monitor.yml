@@ -1,8 +1,14 @@
+# Schedule reduced from every 6h (0 */6 * * *, 4x/day) to once daily to cut
+# GitHub Actions spend. This workflow paginates the entire plures org via gh api
+# and was the single largest non-Copilot CI cost (~249 min in a sample window at
+# 4x/day; daily run is ~1/4 of that). The human's local assistant already does
+# equivalent proactive org monitoring for free during heartbeats. Monitoring
+# logic is unchanged; only cadence dropped. Use workflow_dispatch to run on demand.
 name: Org Proactive Monitor
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 13 * * *'  # 06:00 PDT — once daily (was '0 */6 * * *')
   workflow_dispatch:
 
 concurrency:

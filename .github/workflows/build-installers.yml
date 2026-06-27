@@ -10,6 +10,11 @@ on:
         description: "Tag to build (e.g. v0.2.0)"
         required: true
 
+# Tag-triggered installer builds publish release assets — do not cancel mid-publish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0

@@ -2,8 +2,33 @@ name: CI
 on:
   push:
     branches: [main, "copilot/**", "feature/**"]
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'package.json'
+      - '**/package.json'
+      - 'pnpm-lock.yaml'
+      - 'package-lock.json'
+      - 'scripts/**'
+      - '.github/workflows/ci.yml'
   pull_request:
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'package.json'
+      - '**/package.json'
+      - 'pnpm-lock.yaml'
+      - 'package-lock.json'
+      - 'scripts/**'
+      - '.github/workflows/ci.yml'
   workflow_dispatch:
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
