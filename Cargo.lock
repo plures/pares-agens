@@ -60,13 +60,11 @@ dependencies = [
  "pares-agens-mcp-server",
  "pares-agens-models",
  "pares-agens-tui",
- "pares-radix-cli",
- "pares-radix-cli-api",
  "pares-radix-core",
  "pares-radix-praxis",
  "pares-rector",
  "pluresdb 2.9.10",
- "pluresdb-px 3.0.1 (git+https://github.com/plures/pluresdb?rev=0ec9523)",
+ "pluresdb-px",
  "ratatui",
  "reqwest 0.12.28",
  "serde",
@@ -273,7 +271,7 @@ dependencies = [
  "objc2-foundation",
  "parking_lot 0.12.5",
  "percent-encoding",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
  "wl-clipboard-rs",
  "x11rb",
 ]
@@ -1178,7 +1176,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -1815,7 +1813,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2147,7 +2145,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4298,7 +4296,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4984,7 +4982,7 @@ dependencies = [
  "pares-radix-praxis",
  "pluresdb 2.9.10",
  "pluresdb-procedures",
- "pluresdb-px 3.0.1 (git+https://github.com/plures/pluresdb?rev=0ec9523)",
+ "pluresdb-px",
  "pluresdb-sea",
  "pluresdb-sync 3.6.0",
  "regex",
@@ -5037,7 +5035,7 @@ dependencies = [
  "pares-radix-core",
  "pares-radix-praxis",
  "pluresdb 2.9.10",
- "pluresdb-px 3.0.1 (git+https://github.com/plures/pluresdb?rev=0ec9523)",
+ "pluresdb-px",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -5147,8 +5145,8 @@ dependencies = [
 
 [[package]]
 name = "pares-radix-audit"
-version = "1.49.2"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.49.2#bf765f722cebb8aa1f70b4a9fffddc3f7a2b518d"
+version = "1.55.13"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.13#78a49366e8baabf09e634e080fda989561ed8fd7"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5162,32 +5160,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "pares-radix-cli"
-version = "1.49.2"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.49.2#bf765f722cebb8aa1f70b4a9fffddc3f7a2b518d"
-dependencies = [
- "chrono",
- "pares-radix-core",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "uuid",
-]
-
-[[package]]
-name = "pares-radix-cli-api"
-version = "1.49.2"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.49.2#bf765f722cebb8aa1f70b4a9fffddc3f7a2b518d"
-dependencies = [
- "async-trait",
- "clap",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "pares-radix-core"
-version = "1.49.2"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.49.2#bf765f722cebb8aa1f70b4a9fffddc3f7a2b518d"
+version = "1.55.13"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.13#78a49366e8baabf09e634e080fda989561ed8fd7"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -5219,12 +5194,12 @@ dependencies = [
 
 [[package]]
 name = "pares-radix-praxis"
-version = "1.49.2"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.49.2#bf765f722cebb8aa1f70b4a9fffddc3f7a2b518d"
+version = "1.55.13"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.13#78a49366e8baabf09e634e080fda989561ed8fd7"
 dependencies = [
  "async-trait",
  "chrono",
- "pluresdb-px 3.0.1 (git+https://github.com/plures/pluresdb?rev=195c67b)",
+ "pluresdb-px",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -5235,8 +5210,8 @@ dependencies = [
 
 [[package]]
 name = "pares-radix-privacy"
-version = "1.49.2"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.49.2#bf765f722cebb8aa1f70b4a9fffddc3f7a2b518d"
+version = "1.55.13"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.13#78a49366e8baabf09e634e080fda989561ed8fd7"
 dependencies = [
  "regex",
  "serde",
@@ -5246,8 +5221,8 @@ dependencies = [
 
 [[package]]
 name = "pares-rector"
-version = "1.49.2"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.49.2#bf765f722cebb8aa1f70b4a9fffddc3f7a2b518d"
+version = "1.55.13"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.13#78a49366e8baabf09e634e080fda989561ed8fd7"
 dependencies = [
  "hostname",
  "num_cpus",
@@ -5635,28 +5610,6 @@ dependencies = [
 name = "pluresdb-px"
 version = "3.0.1"
 source = "git+https://github.com/plures/pluresdb?rev=0ec9523#0ec9523e814beebaa94756a489b195442b616ce1"
-dependencies = [
- "async-trait",
- "chrono",
- "futures",
- "notify",
- "px-ast",
- "px-compiler",
- "px-eval",
- "regex",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
- "walkdir",
-]
-
-[[package]]
-name = "pluresdb-px"
-version = "3.0.1"
-source = "git+https://github.com/plures/pluresdb?rev=195c67b#0ec9523e814beebaa94756a489b195442b616ce1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -6146,7 +6099,7 @@ dependencies = [
  "once_cell",
  "socket2 0.5.10",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6594,7 +6547,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6607,7 +6560,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7916,7 +7869,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -9313,7 +9266,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -9490,6 +9443,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75283be5efb2831d37ea142365f009c02ec203cd29a3ebecbc093d52315b66d0"
 dependencies = [
  "windows-targets 0.42.2",
+]
+
+[[package]]
+name = "windows-sys"
+version = "0.48.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "677d2418bec65e3338edb076e806bc1ec15693c5d0104683f2efe857f61056a9"
+dependencies = [
+ "windows-targets 0.48.5",
 ]
 
 [[package]]

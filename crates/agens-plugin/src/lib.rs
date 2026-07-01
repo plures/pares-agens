@@ -10,12 +10,13 @@
 //!   `pares-agens-bitnet`, `pares-agens-agenda`, `pares-agens-tui`) — the LOCAL
 //!   agens copies (Stage R3a pin-flip), so there is exactly ONE
 //!   `pares-agens-core` in the graph.
-//! - It git-pins the radix PLATFORM crates it composes (`pares-radix-cli-api`,
-//!   `pares-radix-praxis`, `pares-radix-core`, `pares-radix-cli`/migrate,
-//!   `pares-radix-mcp-server`, `pares-rector`).
-//! - It implements [`pares_radix_cli_api::CommandProvider`] ([`AgensProvider`]) to
-//!   contribute the agent subcommands (`serve-spine`, `serve`, `tui`, `ask`,
-//!   `classify`) to its own host CLI.
+//! - It git-pins the radix PLATFORM crates it composes (`pares-radix-praxis`,
+//!   `pares-radix-core`, `pares-rector`). (`pares-radix-cli`/`-cli-api` were
+//!   removed upstream at v1.55.13, breaking commit 3172cfa.)
+//! - It provides the agens agent command surface (`AgensProvider`) consumed by
+//!   the host composition (`host_runtime::run_with_providers`) to contribute the
+//!   agent subcommands (`serve-spine`, `serve`, `tui`, `ask`, `classify`) to its
+//!   own host CLI.
 //! - It brings its own agent IP: the [`headroom`] context-compression capability
 //!   (carved out of the deleted agens-core fork) and the agens model/bitnet wiring.
 //!

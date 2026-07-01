@@ -13,25 +13,24 @@ path = "src/bin/pares-agens.rs"
 [dependencies]
 # --- radix-as-a-library (PLATFORM capability surface) ---
 # Platform crates STAY in radix. They are git-pinned to the published pares-radix
-# release tag (v1.49.2 == bf765f7, a descendant of the post-split f8eada7 carve)
+# release tag (v1.55.13 == 78a4936; breaking commit 3172cfa removed cli/cli-api)
 # so the ENTIRE platform graph — core +
-# cli/migrate + cli-api + praxis + rector — resolves against the SINGLE published
+# praxis + rector — resolves against the SINGLE published
 # `pares_radix_core`. A single shared tag across every radix edge (here and in the
 # member crates) is what lets Cargo unify them into one source per crate (no
 # duplicate `pares_radix_core` -> no E0308 "similar names, distinct types").
 # NOTE: the host-composition runtime (run_with_providers) was RELOCATED into
 # this crate (src/host_runtime/, Stage R3a) — pares-radix-cli-runtime is no
-# longer a dependency.
-pares-radix-cli-api     = { git = "https://github.com/plures/pares-radix.git", tag = "v1.49.2" }
-pares-radix-praxis      = { git = "https://github.com/plures/pares-radix.git", tag = "v1.49.2" }
+# longer a dependency. As of the v1.55.13 bump, pares-radix-cli / -cli-api were
+# removed upstream (breaking commit 3172cfa de-cognition cli-runtime/cli-api);
+# the CommandProvider seam is now agens-local (see host_runtime + agent_commands).
+pares-radix-praxis      = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.13" }
 # Platform crates pulled in by the relocated run_with_providers host machinery
-# (Migrate -> pares_radix_migrate, Cluster -> pares_rector, McpServe ->
-# pares_radix_mcp_server + pares_radix_core). Same release tag so they unify on
-# the single published pares_radix_core (see note above).
-pares-radix-core        = { git = "https://github.com/plures/pares-radix.git", tag = "v1.49.2" }
-pares-radix-cli         = { git = "https://github.com/plures/pares-radix.git", tag = "v1.49.2" }
+# (Cluster -> pares_rector, McpServe -> pares_radix_core + local mcp-server).
+# Same release tag so they unify on the single published pares_radix_core.
+pares-radix-core        = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.13" }
 pares-agens-mcp-server  = { path = "../mcp-server" }
-pares-rector            = { git = "https://github.com/plures/pares-radix.git", tag = "v1.49.2" }
+pares-rector            = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.13" }
 
 # --- HOST / COGNITION crates (Option A: agens OWNS these) ---
 # Stage R3a: the cognition/host crates are the LOCAL agens copies (path deps).
