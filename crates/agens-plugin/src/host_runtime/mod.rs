@@ -541,7 +541,10 @@ pub async fn run_with_providers(registry: command_provider::ProviderRegistry) {
                         }
                     };
 
-                    if doc.scenarios.is_empty() {
+                    let has_scenarios = doc.statements.iter().any(|s| {
+                        matches!(s, pares_radix_praxis::px::Statement::Scenario(_))
+                    });
+                    if !has_scenarios {
                         continue;
                     }
 

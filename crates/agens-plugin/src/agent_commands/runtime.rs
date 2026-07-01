@@ -400,7 +400,12 @@ impl RuntimeAgentFactory {
                         }
                         if let Ok(source) = std::fs::read_to_string(&path) {
                             if let Ok(doc) = parse_px(&source) {
-                                for proc in &doc.dataflow_procedures {
+                                for proc in doc.statements.iter().filter_map(|s| match s {
+                                    pares_radix_praxis::px::Statement::DataflowProcedure(p) => {
+                                        Some(p)
+                                    }
+                                    _ => None,
+                                }) {
                                     let node = ast_to_node(proc);
                                     let name = node.name.clone();
                                     let rt = tokio::runtime::Handle::current();
@@ -5527,7 +5532,12 @@ pub(crate) async fn run_tui(
                             }
                             if let Ok(source) = std::fs::read_to_string(&path) {
                                 if let Ok(doc) = parse_px(&source) {
-                                    for proc in &doc.dataflow_procedures {
+                                    for proc in doc.statements.iter().filter_map(|s| match s {
+                                        pares_radix_praxis::px::Statement::DataflowProcedure(p) => {
+                                            Some(p)
+                                        }
+                                        _ => None,
+                                    }) {
                                         let node = ast_to_node(proc);
                                         let name = node.name.clone();
                                         let rt = tokio::runtime::Handle::current();
