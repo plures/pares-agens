@@ -4,13 +4,14 @@
 //! host composition seam RELOCATED into this crate in Stage R3a) with the agens
 //! [`AgensProvider`], which contributes the agent subcommands (`serve-spine`,
 //! `serve`, `tui`, `ask`, `classify`). The host owns the command surface; this
-//! binary registers the provider into it (decision C1).
+//! binary hands it the single provider (decision C1, Option B — the former
+//! `ProviderRegistry` indirection was dropped when `pares_radix_cli_api` was
+//! removed upstream at v1.55.13).
 
-use agens_plugin::host_runtime::{run_with_providers, ProviderRegistry};
+use agens_plugin::host_runtime::run_with_providers;
 use agens_plugin::AgensProvider;
 
 #[tokio::main]
 async fn main() {
-    let registry = ProviderRegistry::new().register(Box::new(AgensProvider::new()));
-    run_with_providers(registry).await;
+    run_with_providers(AgensProvider::new()).await;
 }

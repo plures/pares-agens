@@ -6,30 +6,26 @@
 //! agent command surface). This module holds the full host command surface and
 //! the [`run_with_providers`] composition entrypoint (decision C1).
 //!
-//! The agens binary (`src/bin/pares-agens.rs`) registers the `AgensProvider`
-//! onto a [`ProviderRegistry`] and calls [`run_with_providers`] with it, exactly
-//! as it previously did against the radix `pares-radix-cli-runtime` crate. The
-//! platform crates this composes (`pares_radix_migrate`, `pares_rector`,
-//! `pares_radix_core`, `pares_radix_praxis`) remain radix platform pins; the
-//! agens-owned MCP server (`pares_agens_mcp_server`) is a local host crate.
-//! Only the host *composition* moved.
+//! The agens binary (`src/bin/pares-agens.rs`) constructs an [`AgensProvider`]
+//! and calls [`run_with_providers`] with it. Option B (agens is the sole host of
+//! a single provider): the host builds the base command, lets the provider
+//! `augment` its subcommands on and gives it first refusal via `handle`, then
+//! falls through to the host's own dispatch. The platform crates this composes
+//! (`pares_rector`, `pares_radix_core`, `pares_radix_praxis`) remain radix
+//! platform pins; the agens-owned MCP server (`pares_agens_mcp_server`) is a
+//! local host crate. Only the host *composition* moved.
 //!
 //! NOTE (deferred follow-up): the data/log directory is still named
 //! `~/.pares-radix` (see [`run_with_providers`] / `migrate_data_dir`). Renaming
 //! the on-disk dir to `pares-agens` is a behavior change deliberately left OUT
 //! of scope for R3a; track it as a follow-up.
-
-// The CommandProvider plugin surface lives in the standalone
-// `pares-radix-cli-api` crate so this host can depend on the trait. Re-export it
-// under the historical `command_provider` module path so in-module references
-// keep working (mirrors the radix original).
-pub(crate) use pares_radix_cli_api as command_provider;
-
-/// Re-export of the plugin command seam so the agens binary can build a registry
-/// (`use crate::host_runtime::{run_with_providers, ProviderRegistry};`).
-pub use pares_radix_cli_api::{
-    CommandError, CommandProvider, CommandResult, ProviderOutcome, ProviderRegistry,
-};
+//!
+//! NOTE (v1.55.13): the former `pares_radix_cli_api` command-plugin seam
+//! (`CommandProvider`/`ProviderRegistry`/`ProviderOutcome`/`CommandError`) was
+//! removed upstream (breaking commit 3172cfa). agens is now the sole host, so
+//! the registry indirection was dropped and the host calls the single
+//! [`AgensProvider`] directly. The `Migrate` subcommand (backed by the deleted
+//! `pares_radix_migrate` crate) was removed with it.
 
 mod config;
 
@@ -41,7 +37,7 @@ use clap::{Parser, Subcommand};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use pares_radix_migrate::{migrate, openclaw};
+use crate::agent_commands::AgensProvider;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -72,21 +68,6 @@ fn build_env_filter(level: &str) -> Result<EnvFilter, String> {
 #[derive(Debug, Subcommand)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
-    /// Migrate data from an existing OpenClaw installation.
-    Migrate {
-        /// Path to the OpenClaw installation directory.
-        #[arg(long, value_name = "PATH")]
-        from: Option<PathBuf>,
-
-        /// Directory to write migrated output files.
-        #[arg(long, value_name = "PATH", default_value = "migration")]
-        output: PathBuf,
-
-        /// Simulate the migration without writing any files.
-        #[arg(long)]
-        dry_run: bool,
-    },
-
     /// Cluster management commands.
     Cluster {
         #[command(subcommand)]
@@ -189,7 +170,7 @@ fn migrate_data_dir(home: &str) {
 /// provider and calls this with it. Plugin subcommands are augmented onto the
 /// host `clap` command before parsing and offered to the registry before the
 /// host's own command dispatch.
-pub async fn run_with_providers(registry: command_provider::ProviderRegistry) {
+pub async fn run_with_providers(provider: AgensProvider) {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
 
     // Migrate data directory from ~/.pares-radix to ~/.pares-radix if needed
@@ -227,23 +208,21 @@ pub async fn run_with_providers(registry: command_provider::ProviderRegistry) {
         )
         .init();
 
-    // Compose the host command surface with any plugin providers (decision C1).
-    // Plugins augment their subcommands onto the derived `Cli` command, then get
-    // first refusal on the matched top-level subcommand before the host's own
-    // dispatch runs. With an empty registry this is exactly `Cli::parse()`.
+    // Compose the host command surface with the agens provider (decision C1,
+    // Option B). The provider augments its subcommands onto the derived `Cli`
+    // command, then gets first refusal on the matched top-level subcommand
+    // before the host's own dispatch runs.
     let base = <Cli as clap::CommandFactory>::command();
-    let augmented = registry.augment_all(base);
+    let augmented = provider.augment(base);
     let matches = augmented.get_matches();
 
-    if !registry.is_empty() {
-        if let Some((name, sub_matches)) = matches.subcommand() {
-            if let Some(result) = registry.dispatch(name, sub_matches).await {
-                match result {
-                    Ok(()) => return,
-                    Err(e) => {
-                        eprintln!("{e}");
-                        std::process::exit(1);
-                    }
+    if let Some((name, sub_matches)) = matches.subcommand() {
+        if let Some(result) = provider.handle(name, sub_matches).await {
+            match result {
+                Ok(()) => return,
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
                 }
             }
         }
@@ -319,31 +298,6 @@ pub async fn run_with_providers(registry: command_provider::ProviderRegistry) {
             }
         }
 
-        Commands::Migrate {
-            from,
-            output,
-            dry_run,
-        } => {
-            let source = match from.or_else(openclaw::auto_detect) {
-                Some(p) => p,
-                None => {
-                    eprintln!(
-                        "No OpenClaw installation found. \
-                         Use --from <PATH> to specify one."
-                    );
-                    std::process::exit(1);
-                }
-            };
-            match migrate::run(&source, &output, dry_run) {
-                Ok(report) => {
-                    report.print();
-                }
-                Err(e) => {
-                    eprintln!("Migration failed: {e}");
-                    std::process::exit(1);
-                }
-            }
-        }
         Commands::McpServe {
             workdir,
             brave_api_key,

@@ -1,28 +1,34 @@
 //! Agent command surface contributed by the agens plugin (Stage 4c).
 //!
-//! [`AgensProvider`] implements [`pares_radix_cli_api::CommandProvider`]: it
-//! augments the host `clap` command with the five agent subcommands
+//! [`AgensProvider`] provides the agens agent command surface consumed by the
+//! host composition ([`crate::host_runtime`]): it augments the host `clap`
+//! command with the five agent subcommands
 //! (`serve-spine`, `serve`, `tui`, `ask`, `classify`) and dispatches each to the
 //! handler fns carved out of `pares-radix-cli-runtime` (see [`handlers`]).
 //!
 //! The host (`pares-radix`) no longer carries any agent command; this module is
 //! the new home. Arg definitions mirror the former derive-`Commands` variants
 //! exactly (long names = kebab-case of the field, same env vars / defaults).
+//!
+//! NOTE: the former `pares_radix_cli_api::CommandProvider` trait was removed
+//! upstream at pares-radix v1.55.13 (breaking commit 3172cfa). `augment`/`handle`
+//! are now inherent methods on [`AgensProvider`] that the agens host calls
+//! directly (Option B — agens is the sole host of a single provider).
 
 mod bitnet_classifier;
 mod config;
 mod px_config;
 mod runtime;
 
-use async_trait::async_trait;
 use clap::{Arg, ArgAction, ArgMatches, Command};
-use pares_radix_cli_api::{CommandProvider, ProviderOutcome};
 use std::path::PathBuf;
 
-/// The agens [`CommandProvider`]. Register it on the host's
-/// [`crate::host_runtime::ProviderRegistry`] to contribute the agent
-/// subcommands. (The host composition seam was relocated into this crate at
-/// Stage R3a; it was formerly `pares_radix_cli_runtime::ProviderRegistry`.)
+/// The agens command provider. The agens host ([`crate::host_runtime::run_with_providers`])
+/// constructs one of these and calls [`AgensProvider::augment`] +
+/// [`AgensProvider::handle`] directly to contribute the agent subcommands.
+/// (The host composition seam was relocated into this crate at Stage R3a; the
+/// former `pares_radix_cli_api::CommandProvider` trait was removed upstream at
+/// v1.55.13, so these are now inherent methods rather than a trait impl.)
 pub struct AgensProvider;
 
 impl AgensProvider {
@@ -78,13 +84,14 @@ fn flag(id: &'static str, env: Option<&'static str>) -> Arg {
     a
 }
 
-#[async_trait]
-impl CommandProvider for AgensProvider {
-    fn name(&self) -> &str {
+impl AgensProvider {
+    /// The provider name (used for logging/diagnostics).
+    pub fn name(&self) -> &str {
         "agens"
     }
 
-    fn augment(&self, cmd: Command) -> Command {
+    /// Augment the host `clap` command with the agens agent subcommands.
+    pub fn augment(&self, cmd: Command) -> Command {
         let serve_spine = Command::new("serve-spine")
             .about("Run the agent using the spine-driven pipeline (ADR-0001).")
             .arg(opt("config", Some("PARES_CONFIG"), None))
@@ -199,7 +206,10 @@ impl CommandProvider for AgensProvider {
         cmd
     }
 
-    async fn handle(&self, name: &str, m: &ArgMatches) -> ProviderOutcome {
+    /// Dispatch a parsed subcommand. Returns `None` if `name` is not an agens
+    /// command (the host should fall through to its own dispatch), or
+    /// `Some(Ok(()))` / `Some(Err(msg))` when handled.
+    pub async fn handle(&self, name: &str, m: &ArgMatches) -> Option<Result<(), String>> {
         // The agent command futures are intentionally `!Send` (they hold
         // tracing `&dyn Value` temporaries across awaits inside the radix spine
         // bootstrap, and drive single-threaded TUI/event loops). `handle` must
@@ -222,12 +232,8 @@ impl CommandProvider for AgensProvider {
                     })
                     .expect("failed to spawn agens command thread");
                 match join.join() {
-                    Ok(()) => ProviderOutcome::Handled(Ok(())),
-                    Err(_) => ProviderOutcome::Handled(Err(
-                        pares_radix_cli_api::CommandError::msg(format!(
-                            "agens command '{name}' panicked"
-                        )),
-                    )),
+                    Ok(()) => Some(Ok(())),
+                    Err(_) => Some(Err(format!("agens command '{name}' panicked"))),
                 }
             }};
         }
@@ -333,7 +339,7 @@ impl CommandProvider for AgensProvider {
                 let bitnet_model_path = op(m, "bitnet_model_path").unwrap_or_default();
                 run_on_local_rt!(runtime::run_classify(message, bitnet_model_path))
             }
-            _ => ProviderOutcome::NotHandled,
+            _ => None,
         }
     }
 }

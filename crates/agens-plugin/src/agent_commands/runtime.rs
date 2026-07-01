@@ -3567,21 +3567,34 @@ pub(crate) async fn run_serve_spine(
             // Set the emitter on the registry so .px procedures can emit back into the pipeline
             reactive_registry.set_emitter(pipeline.emitter()).await;
 
-            // 3.5. Open THE shared PluresDB instance — all state goes here
-            use pares_radix_core::{CrdtStore, SledStorage, StorageEngine};
+            // 3.5. Open THE shared PluresDB instance — all state goes here.
+            // v1.55.13: the durable state store and the conversation store share
+            // ONE CrdtStore. Build the PluresDbStateStore first (single owner of
+            // the sled handle) and derive the shared CrdtStore from it via
+            // `.crdt_store()`, mirroring the upstream canonical wiring
+            // (radix-core spine::runtime `PluresDbStateStore::open` +
+            // `PluresConversationStore::new(pdb.crdt_store())`).
+            use pares_radix_core::state::{PluresDbStateStore, StateStore};
+            use pares_radix_core::CrdtStore;
             let pluresdb_dir = PathBuf::from(&home).join(".pares-radix/runtime-state");
             std::fs::create_dir_all(&pluresdb_dir).ok();
-            let shared_store: Arc<CrdtStore> = match SledStorage::open(&pluresdb_dir) {
-                Ok(storage) => {
-                    let engine: Arc<dyn StorageEngine> = Arc::new(storage);
+            // Build the concrete PluresDbStateStore first so we can extract the
+            // shared CrdtStore (via the inherent `.crdt_store()`) before erasing
+            // it to `dyn StateStore` for the CompositeActionHandler.
+            let pdb = match PluresDbStateStore::open(&pluresdb_dir) {
+                Ok(pdb) => {
                     info!(path = %pluresdb_dir.display(), "PluresDB opened (shared instance)");
-                    Arc::new(CrdtStore::default().with_persistence(engine))
+                    pdb
                 }
                 Err(e) => {
                     warn!(error = %e, "Failed to open PluresDB, using in-memory");
-                    Arc::new(CrdtStore::default())
+                    PluresDbStateStore::in_memory()
                 }
             };
+            // The shared CrdtStore backing conversation + task state is the SAME
+            // store owned by `state_store` (co-location invariant preserved).
+            let shared_store: Arc<CrdtStore> = pdb.crdt_store();
+            let state_store: Arc<dyn StateStore> = Arc::new(pdb);
 
             // Conversation store writes to the shared PluresDB
             let conversation_store: Arc<dyn ConversationStore> =
@@ -3737,6 +3750,7 @@ pub(crate) async fn run_serve_spine(
                 let px_action_handler: Arc<dyn AsyncActionHandler> =
                     Arc::new(CompositeActionHandler::new(
                         Arc::clone(&conversation_store),
+                        Arc::clone(&state_store),
                         Arc::clone(&tool_handler),
                     ));
 
