@@ -47,7 +47,7 @@ pares-agens-tui         = { path = "../tui" }
 # --- pluresdb (headroom + px executor types; pinned to the SAME revs radix core uses
 #     so the ActionHandler/CrdtStore types unify across the graph) ---
 pluresdb    = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3", features = ["embeddings"] }
-pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "195c67b" }
+pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "0ec9523" }
 
 # --- headroom leaf deps ---
 sha2 = "0.10"

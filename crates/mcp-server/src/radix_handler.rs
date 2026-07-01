@@ -2600,7 +2600,13 @@ impl RadixToolHandler {
             Err(e) => return ToolResult::error(format!("parse error: {e}")),
         };
 
-        if doc.procedures.is_empty() {
+        let has_procedures = doc.statements.iter().any(|s| {
+            matches!(
+                s,
+                px::Statement::DataflowProcedure(_) | px::Statement::LegacyProcedure(_)
+            )
+        });
+        if !has_procedures {
             return ToolResult::error("no procedures found in source");
         }
 

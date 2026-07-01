@@ -50,7 +50,7 @@ semver = "1"
 toml = "0.8"
 base64 = "0.22"
 sha2 = "0.10"
-pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "195c67b" }
+pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "0ec9523" }
 tiktoken-rs = "0.6"
 unicode-segmentation = "1"
 subtle = "2"

@@ -45,7 +45,7 @@ pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", tag = 
 # canonical consumption surface. Same git source + rev as the other pluresdb-px
 # consumers in this workspace (crates/core, crates/agens-plugin) — do NOT depend
 # on plures/praxis (praxis-native) directly.
-pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "195c67b" }
+pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "0ec9523" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
