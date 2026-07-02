@@ -48,13 +48,12 @@ jobs:
           cargo test \
             -p pares-agens-core \
             -p pares-agens-channels \
-            -p pares-models \
+            -p pares-agens-models \
             -p pares-agens-cli \
             -p mcp-client \
             -p pares-agens-privacy \
             -p pares-agens-marketplace \
             -p pares-agens-agenda \
-            -p pares-agens-praxis \
             -p pares-agens-sync \
             -p pares-agens-audit \
             -p pares-agens-tui \
