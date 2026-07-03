@@ -738,11 +738,488 @@ fn compute_embedding_impl(_content: &str) -> Result<Value, ExecutionError> {
 }
 // ΓöÇΓöÇ Unit tests ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
+
+// -- SmartCrusher: JSON array-of-records compaction -------------------------
+//
+// Ideas-origin: headroomlabs-ai/headroom "SmartCrusher" (external, ideas-only
+// -- NO code copied). Build spec: `.openclaw/tmp/smartcrusher-build-spec.md`
+// (APPROVED kbristol #39050, dual-source rule). This is the ORIGIN copy; the
+// pluresdb-native plugin carries a byte-identical port (see the duplicated-logic
+// map in development-guide lessons-learned-feedback-loop.md).
+//
+// The gap this closes: arrays of records -- a very common tool-output / RAG
+// shape -- previously routed to `collapse_whitespace` (whitespace trim only) in
+// `headroom_bridge::compress_one` and got ~0% structural reduction.
+//
+// Contract (identical discipline to Path-2):
+//   * Extractive/statistical ONLY -- kept items emitted VERBATIM (real
+//     examples); the ONLY synthesized content is a single `__headroom_elided__`
+//     marker object carrying TRUE counts (`dropped + kept == of`).
+//   * C-NOSTUB-001: if the body is not a parseable JSON array of objects, or if
+//     there is nothing to gain (N <= max_items_after_crush), return `None` -- an
+//     honest "not applicable", never a faked reduction.
+//   * Net-savings guard: only return `Some` when the crushed output has strictly
+//     fewer cl100k tokens than the input AND is non-empty; else `None`.
+//   * Output is itself valid JSON: `serde_json::to_string` of the kept-items vec.
+//
+// v2 HOOK (NOT stubbed -- honest absence): a query-relevance top-K pass is
+// DEFERRED. It needs the recall query plumbed into the compressor, which the
+// store write-path does not currently pass. When that plumbing exists, add a
+// `query: Option<&str>` arm that scores remaining items and unions its top-K
+// into `keep`. Until then it is simply absent -- no placeholder, no fake.
+
+/// Real cl100k_base token count as a free function (the `count_tokens` actor
+/// exposes the same value through the `.px` handler; this is the direct form
+/// used by the SmartCrusher net-savings guard, matching the pluresdb-native
+/// port's `count_tokens`). The `bpe()` init only fails if the bundled BPE data
+/// is corrupt (never in practice); we treat that as "cannot count" -> usize::MAX
+/// so the guard conservatively refuses to claim a reduction.
+fn count_tokens_cl100k(content: &str) -> usize {
+    match bpe() {
+        Ok(b) => b.encode_with_special_tokens(content).len(),
+        Err(_) => usize::MAX,
+    }
+}
+
+/// Tunable knobs for [`compress_json_array`]. Defaults come verbatim from the
+/// build spec (`smartcrusher-build-spec.md` config knobs).
+#[derive(Debug, Clone)]
+pub struct JsonCrushConfig {
+    /// Below this many cl100k tokens on the input body, don't bother crushing.
+    pub min_tokens_to_crush: usize,
+    /// Target number of items to KEEP from the statistical sample. If the array
+    /// length is <= this, there is nothing to gain and we return `None`.
+    pub max_items_after_crush: usize,
+    /// Always keep the first N items (head window), in original order.
+    pub keep_first: usize,
+    /// Always keep the last N items (tail window), in original order.
+    pub keep_last: usize,
+    /// A numeric field value more than this many standard deviations from its
+    /// column mean marks the item as an anomaly (always kept).
+    pub anomaly_std_threshold: f64,
+    /// When true, any item whose stringified form carries an error signal is
+    /// kept 100% (reuses the `looks_like_error` heuristic + explicit signals).
+    pub preserve_errors: bool,
+}
+
+impl Default for JsonCrushConfig {
+    fn default() -> Self {
+        Self {
+            min_tokens_to_crush: 200,
+            max_items_after_crush: 50,
+            keep_first: 3,
+            keep_last: 3,
+            anomaly_std_threshold: 2.0,
+            preserve_errors: true,
+        }
+    }
+}
+
+/// SmartCrusher: compact a JSON **array of objects** to an extractive sample.
+///
+/// Returns `Some(json)` only when the body is a parseable array of objects worth
+/// crushing AND the crushed form is strictly smaller (cl100k tokens); otherwise
+/// `None` (the caller then falls back to whitespace-collapse).
+///
+/// Selection policy: the union of head+tail window, every error item (when
+/// `preserve_errors`), every numeric >N-sigma anomaly item, and an evenly-strided
+/// statistical sample of the rest sized to ~`max_items_after_crush`, emitted in
+/// ORIGINAL order, followed by a single `__headroom_elided__` marker with true
+/// counts.
+pub fn compress_json_array(content: &str, cfg: &JsonCrushConfig) -> Option<String> {
+    // Cheap token floor before any parse work.
+    if count_tokens_cl100k(content) < cfg.min_tokens_to_crush {
+        return None;
+    }
+
+    // Must be a top-level JSON array. C-NOSTUB-001: a parse failure or a
+    // non-array (e.g. a single object) is an honest "not applicable" -> None.
+    let arr: Vec<Value> = serde_json::from_str(content).ok()?;
+    let n = arr.len();
+    if n == 0 {
+        return None;
+    }
+    // Array-of-OBJECTS only: require the majority of elements to be objects.
+    let object_count = arr.iter().filter(|v| v.is_object()).count();
+    if object_count * 2 <= n {
+        return None;
+    }
+    // Nothing to gain if the array already fits under the target.
+    if n <= cfg.max_items_after_crush {
+        return None;
+    }
+
+    // ---- build the KEEP set (indices into `arr`) ----
+    let mut keep = vec![false; n];
+    let keep_first = cfg.keep_first.min(n);
+    let keep_last = cfg.keep_last.min(n);
+
+    // 1. head + tail windows.
+    for k in keep.iter_mut().take(keep_first) {
+        *k = true;
+    }
+    for k in keep.iter_mut().skip(n - keep_last) {
+        *k = true;
+    }
+
+    // 2. error items (kept 100% when preserve_errors).
+    if cfg.preserve_errors {
+        for (i, item) in arr.iter().enumerate() {
+            if item_has_error_signal(item) {
+                keep[i] = true;
+            }
+        }
+    }
+
+    // 3. numeric >N-sigma anomalies on any common numeric field.
+    mark_numeric_anomalies(&arr, cfg.anomaly_std_threshold, &mut keep);
+
+    // 4. evenly-strided statistical sample of the REMAINING (non-kept) items.
+    let already = keep.iter().filter(|&&k| k).count();
+    if already < cfg.max_items_after_crush {
+        let want = cfg.max_items_after_crush - already;
+        let remaining: Vec<usize> = (0..n).filter(|&i| !keep[i]).collect();
+        if !remaining.is_empty() && want > 0 {
+            let stride = (remaining.len() as f64 / want as f64).max(1.0);
+            let mut acc = 0.0f64;
+            let mut next = 0.0f64;
+            for &idx in &remaining {
+                if acc >= next {
+                    keep[idx] = true;
+                    next += stride;
+                }
+                acc += 1.0;
+            }
+        }
+    }
+
+    let kept_count = keep.iter().filter(|&&k| k).count();
+    let dropped = n - kept_count;
+    // If we kept everything, nothing to elide -> no shrink -> honest None.
+    if dropped == 0 {
+        return None;
+    }
+
+    // ---- emit kept items VERBATIM in original order + true-count marker ----
+    let mut out_items: Vec<Value> = Vec::with_capacity(kept_count + 1);
+    for (i, item) in arr.into_iter().enumerate() {
+        if keep[i] {
+            out_items.push(item); // verbatim, extractive
+        }
+    }
+    out_items.push(json!({
+        "__headroom_elided__": {
+            "dropped": dropped,
+            "kept": kept_count,
+            "reason": "smartcrush",
+            "of": n,
+        }
+    }));
+
+    let out = serde_json::to_string(&out_items).ok()?;
+
+    // Outer net-savings guard: strictly fewer tokens AND non-empty, else None.
+    if !out.trim().is_empty() && count_tokens_cl100k(&out) < count_tokens_cl100k(content) {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+/// True when a single array item carries an error signal: an
+/// `error`/`err`/`fail`/`exception` substring in its stringified form, a
+/// `level`/`severity` field in {error,fatal,critical}, an HTTP status field
+/// >= 400, or the shared `looks_like_error` heuristic. Case-insensitive scan.
+fn item_has_error_signal(item: &Value) -> bool {
+    if let Some(obj) = item.as_object() {
+        for key in ["level", "severity", "lvl", "log_level"] {
+            if let Some(v) = obj.get(key).and_then(|v| v.as_str()) {
+                let v = v.to_ascii_lowercase();
+                if v == "error" || v == "fatal" || v == "critical" || v == "err" {
+                    return true;
+                }
+            }
+        }
+        for key in ["status", "statusCode", "status_code", "code", "http_status"] {
+            if let Some(v) = obj.get(key).and_then(json_as_i64) {
+                if (400..600).contains(&v) {
+                    return true;
+                }
+            }
+        }
+    }
+    let s = item.to_string().to_ascii_lowercase();
+    if s.contains("\"error\"")
+        || s.contains("exception")
+        || s.contains("\"err\"")
+        || s.contains("fail")
+    {
+        return true;
+    }
+    looks_like_error(&s)
+}
+
+/// Coerce a JSON value to i64 (integer, whole float, or numeric string).
+fn json_as_i64(v: &Value) -> Option<i64> {
+    if let Some(i) = v.as_i64() {
+        return Some(i);
+    }
+    if let Some(f) = v.as_f64() {
+        if f.fract() == 0.0 {
+            return Some(f as i64);
+        }
+    }
+    if let Some(s) = v.as_str() {
+        return s.trim().parse::<i64>().ok();
+    }
+    None
+}
+
+/// Mark items that are numeric >`threshold`-sigma anomalies on ANY common
+/// numeric field. A field qualifies when it is numeric in a MAJORITY of items;
+/// for such a field we compute mean + population std over present values and set
+/// `keep[i] = true` for any item deviating by more than `threshold` std.
+/// Extractive: only SELECTS items, never edits them.
+fn mark_numeric_anomalies(arr: &[Value], threshold: f64, keep: &mut [bool]) {
+    let n = arr.len();
+    if n < 3 {
+        return;
+    }
+    let mut fields: Vec<String> = Vec::new();
+    for item in arr.iter() {
+        if let Some(obj) = item.as_object() {
+            for (k, v) in obj {
+                if json_as_f64(v).is_some() && !fields.contains(k) {
+                    fields.push(k.clone());
+                }
+            }
+        }
+    }
+    for field in fields {
+        let mut vals: Vec<(usize, f64)> = Vec::with_capacity(n);
+        for (i, item) in arr.iter().enumerate() {
+            if let Some(v) = item.as_object().and_then(|o| o.get(&field)).and_then(json_as_f64) {
+                vals.push((i, v));
+            }
+        }
+        if vals.len() * 2 <= n {
+            continue;
+        }
+        let count = vals.len() as f64;
+        let mean = vals.iter().map(|(_, v)| *v).sum::<f64>() / count;
+        let var = vals.iter().map(|(_, v)| (v - mean).powi(2)).sum::<f64>() / count;
+        let std = var.sqrt();
+        if std <= f64::EPSILON {
+            continue;
+        }
+        for (i, v) in vals {
+            if ((v - mean) / std).abs() > threshold {
+                keep[i] = true;
+            }
+        }
+    }
+}
+
+/// Coerce a JSON value to f64 if it is genuinely numeric (not a string).
+fn json_as_f64(v: &Value) -> Option<f64> {
+    v.as_f64()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::OnceLock;
     use serde_json::json;
+
+    // ==========================================================================
+    // SMARTCRUSHER: compress_json_array -- JSON array-of-records compaction.
+    // Build spec: .openclaw/tmp/smartcrusher-build-spec.md (Tests, 6 cases).
+    // ORIGIN copy; byte-identical selection logic to the pluresdb-native port.
+    //
+    // C-TEST-002: fixtures are SYNTHESIZED FROM REAL FORMATTERS -- records are
+    // built programmatically as serde_json Values, timestamps via the real
+    // chrono formatter (RFC3339), then serialized with serde_json::to_string.
+    // NO hand-assembled fixed-width JSON strings. Errors + numeric anomalies are
+    // PLANTED at known indices so the assertions are exact. Detection here is
+    // actor-driven (headroom_bridge), so the end-to-end detect->crush path is
+    // covered by tests/headroom_e2e.rs; these exercise the free crush fn direct.
+    // ==========================================================================
+
+    fn crush_record(i: usize, ts_secs: i64, latency: f64, is_error: bool) -> serde_json::Value {
+        use chrono::{TimeZone, Utc};
+        let ts = Utc
+            .timestamp_opt(ts_secs, 0)
+            .single()
+            .expect("valid ts")
+            .to_rfc3339();
+        if is_error {
+            serde_json::json!({
+                "id": i, "ts": ts, "level": "error", "latency_ms": latency,
+                "error": "upstream connection refused", "path": "/api/v1/resource",
+            })
+        } else {
+            serde_json::json!({
+                "id": i, "ts": ts, "level": "info", "latency_ms": latency,
+                "msg": "request handled ok", "path": "/api/v1/resource",
+            })
+        }
+    }
+
+    fn crush_fixture(
+        n: usize,
+        error_idx: &[usize],
+        anomaly_idx: &[usize],
+    ) -> (String, Vec<serde_json::Value>) {
+        let base_ts = 1_735_000_000i64;
+        let mut recs = Vec::with_capacity(n);
+        for i in 0..n {
+            let is_err = error_idx.contains(&i);
+            let mut latency = 100.0 + ((i % 7) as f64) - 3.0;
+            if anomaly_idx.contains(&i) {
+                latency = 5000.0;
+            }
+            recs.push(crush_record(i, base_ts + i as i64, latency, is_err));
+        }
+        let s = serde_json::to_string(&recs).expect("serialize fixture");
+        (s, recs)
+    }
+
+    // ---- Test 1: headline case ----
+    #[test]
+    fn crush_1000_records_keeps_errors_anomalies_head_tail() {
+        let error_idx = [123usize, 456, 789];
+        let anomaly_idx = [500usize, 600];
+        let (input, recs) = crush_fixture(1000, &error_idx, &anomaly_idx);
+        let cfg = JsonCrushConfig::default();
+        let out = compress_json_array(&input, &cfg).expect("1000-record array must crush");
+
+        let parsed: Vec<serde_json::Value> =
+            serde_json::from_str(&out).expect("crushed output must be valid JSON");
+        let t_in = count_tokens_cl100k(&input);
+        let t_out = count_tokens_cl100k(&out);
+        assert!(t_out < t_in, "tokens must drop: {t_in} -> {t_out}");
+        assert!(
+            (t_out as f64) < (t_in as f64) * 0.5,
+            "expected wide-margin reduction (<50%): {t_in} -> {t_out}"
+        );
+        for &ei in &error_idx {
+            assert!(
+                parsed.iter().any(|v| v.get("id").and_then(|x| x.as_u64()) == Some(ei as u64)
+                    && v.get("level").and_then(|x| x.as_str()) == Some("error")),
+                "error item id={ei} missing from crushed output"
+            );
+        }
+        for &ai in &anomaly_idx {
+            assert!(
+                parsed.iter().any(|v| v.get("id").and_then(|x| x.as_u64()) == Some(ai as u64)
+                    && v.get("latency_ms").and_then(|x| x.as_f64()) == Some(5000.0)),
+                "anomaly item id={ai} missing from crushed output"
+            );
+        }
+        for id in [0u64, 1, 2, 997, 998, 999] {
+            assert!(
+                parsed.iter().any(|v| v.get("id").and_then(|x| x.as_u64()) == Some(id)),
+                "head/tail item id={id} missing"
+            );
+        }
+        let kept = parsed.len() - 1;
+        assert!(
+            kept <= cfg.max_items_after_crush + error_idx.len() + anomaly_idx.len() + cfg.keep_first + cfg.keep_last,
+            "kept {kept} exceeds head+tail+errors+anomalies+max budget"
+        );
+        assert!(kept < 1000, "nothing was elided");
+        let marker = parsed.last().unwrap().get("__headroom_elided__").expect("marker present");
+        let dropped = marker.get("dropped").and_then(|v| v.as_u64()).unwrap();
+        let kept_c = marker.get("kept").and_then(|v| v.as_u64()).unwrap();
+        let of = marker.get("of").and_then(|v| v.as_u64()).unwrap();
+        assert_eq!(of, 1000, "marker.of must equal N");
+        assert_eq!(dropped + kept_c, of, "dropped+kept must equal of");
+        assert_eq!(kept_c as usize, kept, "marker.kept must match real kept item count");
+        assert_eq!(recs.len(), 1000);
+    }
+
+    // ---- Test 2: small array is a no-op ----
+    #[test]
+    fn crush_small_array_no_op() {
+        let (input, _) = crush_fixture(10, &[], &[]);
+        assert!(
+            compress_json_array(&input, &JsonCrushConfig::default()).is_none(),
+            "small array (N<=max) must return None (no crush)"
+        );
+    }
+
+    // ---- Test 3: non-array JSON is a no-op ----
+    #[test]
+    fn crush_non_array_json_no_op() {
+        let padding: String = (0..80)
+            .map(|i| format!("field-{i}-descriptive-token-value-alpha "))
+            .collect();
+        let obj = serde_json::json!({
+            "id": 1, "level": "info", "latency_ms": 100.0,
+            "padding": padding, "note": "a single object, not an array"
+        });
+        let s = serde_json::to_string(&obj).unwrap();
+        assert!(count_tokens_cl100k(&s) >= JsonCrushConfig::default().min_tokens_to_crush, "fixture under token floor");
+        assert!(
+            compress_json_array(&s, &JsonCrushConfig::default()).is_none(),
+            "single object must return None"
+        );
+        let prose = "this is not json at all, just a long sentence repeated. ".repeat(10);
+        assert!(compress_json_array(&prose, &JsonCrushConfig::default()).is_none());
+    }
+
+    // ---- Test 4: output is valid JSON with arithmetically-correct marker ----
+    #[test]
+    fn crush_output_is_valid_json() {
+        let (input, _) = crush_fixture(400, &[10, 20], &[200]);
+        let out = compress_json_array(&input, &JsonCrushConfig::default())
+            .expect("400-record array must crush");
+        let parsed: Vec<serde_json::Value> =
+            serde_json::from_str(&out).expect("output must parse as JSON array");
+        let marker = parsed
+            .last()
+            .and_then(|v| v.get("__headroom_elided__"))
+            .expect("elided marker must be last element");
+        let dropped = marker.get("dropped").and_then(|v| v.as_u64()).unwrap();
+        let kept = marker.get("kept").and_then(|v| v.as_u64()).unwrap();
+        let of = marker.get("of").and_then(|v| v.as_u64()).unwrap();
+        assert_eq!(dropped + kept, of, "dropped + kept == of");
+        assert_eq!(of, 400);
+        assert_eq!(marker.get("reason").and_then(|v| v.as_str()), Some("smartcrush"));
+    }
+
+    // ---- Test 5: a kept error item is byte-identical to the original ----
+    #[test]
+    fn crush_preserves_error_item_verbatim() {
+        let error_idx = [77usize];
+        let (input, recs) = crush_fixture(300, &error_idx, &[]);
+        let out = compress_json_array(&input, &JsonCrushConfig::default())
+            .expect("300-record array must crush");
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+        let kept_err = parsed
+            .iter()
+            .find(|v| v.get("id").and_then(|x| x.as_u64()) == Some(77))
+            .expect("error item id=77 must be kept");
+        let original = &recs[77];
+        assert_eq!(
+            serde_json::to_string(kept_err).unwrap(),
+            serde_json::to_string(original).unwrap(),
+            "kept error item was mutated (must be verbatim)"
+        );
+        assert_eq!(kept_err.get("level").and_then(|v| v.as_str()), Some("error"));
+    }
+
+    // ---- Test 6 (negative): all-errors -> nothing dropped -> None ----
+    #[test]
+    fn crush_all_errors_keeps_all() {
+        let all: Vec<usize> = (0..200).collect();
+        let (input, _) = crush_fixture(200, &all, &[]);
+        assert!(
+            compress_json_array(&input, &JsonCrushConfig::default()).is_none(),
+            "all-error array must return None (nothing to drop, no shrink)"
+        );
+    }
+
 
     // Share ONE CrdtStore across all tests to avoid the HNSW 1M-element
     // pre-allocation (~300 MB per instance) being multiplied across parallel tests.

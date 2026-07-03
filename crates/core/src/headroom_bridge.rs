@@ -219,7 +219,16 @@ impl HeadroomHook {
             "code" => self.compress_code(content),
             "log" => self.compress_log(content),
             "prose" | "error" => self.compress_prose(content),
-            // json / other: structural whitespace trim is the safe default.
+            // json: SmartCrusher array-of-records compaction first (real
+            // structural reduction on tool-output / RAG shapes); fall back to
+            // whitespace trim when it is not a crushable array. `compress_one`'s
+            // own smaller-output guard below still applies.
+            "json" => crate::headroom::compress_json_array(
+                content,
+                &crate::headroom::JsonCrushConfig::default(),
+            )
+            .or_else(|| self.compress_whitespace(content)),
+            // other: structural whitespace trim is the safe default.
             _ => self.compress_whitespace(content),
         };
 
