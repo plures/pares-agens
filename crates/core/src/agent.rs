@@ -1609,7 +1609,7 @@ impl Agent {
     /// the budget, a summary system message is prepended noting how many
     /// older messages were truncated.
     fn trim_to_token_budget(messages: &[ChatMessage]) -> Vec<ChatMessage> {
-        // Count total tokens
+        // Count total tokens (cheap chars/4 gate mirrors the historical fast path).
         let total_tokens: usize = messages.iter().map(Self::estimate_tokens).sum();
 
         if total_tokens <= Self::MAX_HISTORY_TOKENS {
@@ -1617,36 +1617,64 @@ impl Agent {
             return messages.to_vec();
         }
 
-        // Exceeds budget - keep most recent messages that fit
-        let mut budget = Self::MAX_HISTORY_TOKENS - Self::SUMMARY_TOKEN_BUDGET;
-        let mut keep_from = messages.len();
-        for (i, msg) in messages.iter().enumerate().rev() {
-            let tokens = Self::estimate_tokens(msg);
-            if tokens > budget {
-                break;
-            }
-            budget -= tokens;
-            keep_from = i;
+        // ── IntelligentContext: importance-scored dropping ──────────────────────
+        // Instead of blunt oldest-first truncation (drop the whole earliest
+        // contiguous prefix), SCORE every message and keep the highest-value set
+        // that fits the budget — preserving high-signal old turns (errors,
+        // decisions, identifiers) that blunt truncation would discard. The
+        // lowest-value messages are the ones dropped into the compacted summary.
+        // This is the compaction-EVENT-minimization lever (see
+        // `crate::headroom::select_by_importance`).
+        //
+        // Embeddings are a capability-gated signal reachable only via the
+        // HeadroomActionHandler; this sync static seam has no executor, so no
+        // per-message embedding is supplied here (`embedding: None`). The scorer
+        // then runs its real recency+role+content-signal heuristic — a fully
+        // functional path, NOT a stub. When embeddings are absent the semantic
+        // term is simply omitted (honest capability gate).
+        let budget = Self::MAX_HISTORY_TOKENS - Self::SUMMARY_TOKEN_BUDGET;
+
+        let metas: Vec<crate::headroom::MessageMeta<'_>> = messages
+            .iter()
+            .map(|m| crate::headroom::MessageMeta {
+                role: m.role.as_str(),
+                content: m.content.as_str(),
+                has_tool_calls: m.tool_calls.as_ref().is_some_and(|c| !c.is_empty()),
+                tool_call_id: m.tool_call_id.as_deref(),
+                embedding: None,
+            })
+            .collect();
+
+        let plan = crate::headroom::select_by_importance(&metas, budget);
+
+        // Nothing was dropped after all: return in original order untouched.
+        if plan.drop.is_empty() {
+            return messages.to_vec();
         }
 
-        let dropped = keep_from;
-        let mut result = Vec::with_capacity(messages.len() - keep_from + 1);
+        // Build the compacted summary from the DROPPED (lowest-value) messages,
+        // in chronological order, so the prefix reads naturally.
+        let dropped_msgs: Vec<ChatMessage> =
+            plan.drop.iter().map(|&i| messages[i].clone()).collect();
+        let dropped_tokens: usize = plan
+            .drop
+            .iter()
+            .map(|&i| Self::estimate_tokens(&messages[i]))
+            .sum();
+        let summary = Self::build_compacted_summary(&dropped_msgs);
 
-        if dropped > 0 {
-            let dropped_tokens: usize = messages[..keep_from]
-                .iter()
-                .map(Self::estimate_tokens)
-                .sum();
-            let summary = Self::build_compacted_summary(&messages[..keep_from]);
-            result.push(ChatMessage::system(format!(
-                "[Compacted context]\n{}\n\n(Compacted {} earlier messages, ~{} tokens to fit context window. Full history remains persisted.)",
-                summary,
-                dropped,
-                dropped_tokens,
-            )));
+        let mut result = Vec::with_capacity(plan.keep.len() + 1);
+        result.push(ChatMessage::system(format!(
+            "[Compacted context]\n{}\n\n(Compacted {} lower-importance messages, ~{} tokens, to fit the context window while preserving high-signal turns. Full history remains persisted.)",
+            summary,
+            plan.drop.len(),
+            dropped_tokens,
+        )));
+
+        // Kept messages, in original chronological order.
+        for &i in &plan.keep {
+            result.push(messages[i].clone());
         }
-
-        result.extend_from_slice(&messages[keep_from..]);
         result
     }
 
@@ -2825,6 +2853,40 @@ mod tests {
             trimmed[0].content.contains("[Compacted context]"),
             "expected compacted context note, got: {}",
             trimmed[0].content
+        );
+    }
+
+    #[test]
+    fn trim_preserves_high_signal_turn_over_filler() {
+        // IntelligentContext end-to-end through the agent seam: a HIGH-signal
+        // early turn (a decision + an error) must survive compaction even though
+        // it is old, while newer bulk filler is dropped. Blunt oldest-first
+        // truncation would have discarded the early decision purely for its age.
+        let mut messages = Vec::new();
+        // idx 0: the high-signal early decision (small, but must be kept).
+        messages.push(ChatMessage::user(
+            "Important decision: the production database is codenamed ORCA. Never drop it.".to_string(),
+        ));
+        // A large block of low-value filler that blows the budget. Each ~2k chars
+        // of pure chatter (no signal keywords) so the decision out-scores them.
+        for i in 0..300 {
+            messages.push(ChatMessage::user(format!("chatter question number {i} {}", "z".repeat(2_000))));
+            messages.push(ChatMessage::assistant(format!("sure thing {i} {}", "w".repeat(2_000))));
+        }
+
+        let trimmed = Agent::trim_to_token_budget(&messages);
+        assert!(trimmed.len() < messages.len(), "expected compaction");
+        assert_eq!(trimmed[0].role, "system", "first block is the compacted summary");
+
+        // The ORCA decision must be present in a KEPT (non-summary) message body,
+        // not merely mentioned inside the truncated summary snippet. Check the
+        // messages AFTER the summary prefix.
+        let kept_has_decision = trimmed[1..]
+            .iter()
+            .any(|m| m.content.contains("ORCA") && m.content.contains("codenamed"));
+        assert!(
+            kept_has_decision,
+            "high-signal ORCA decision was dropped by compaction (should have survived over filler)"
         );
     }
 }

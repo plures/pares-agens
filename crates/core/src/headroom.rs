@@ -1025,6 +1025,392 @@ fn json_as_f64(v: &Value) -> Option<f64> {
     v.as_f64()
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// IntelligentContext — importance-scored conversation-message retention.
+//
+// This is the compaction-EVENT minimization lever (distinct from the byte /
+// footprint reduction in `headroom_bridge::compress_messages`). Instead of the
+// blunt oldest-first truncation in `Agent::trim_to_token_budget`, we SCORE each
+// message's importance and, when the history overflows its token budget, DROP
+// the lowest-value messages first — preserving high-signal turns (errors,
+// decisions, identifiers) even when they are old. Keeping those resident means
+// the model re-surfaces them less often, so the compacted-context summary is
+// smaller and regenerated less frequently: fewer compaction events per session.
+//
+// Design mirrors the headroom `.px` composite-score shape (recency + role/source
+// + content-signal) so the two stay conceptually consistent, but it runs as
+// native Rust at the sync `trim_to_token_budget` seam (which has no px executor).
+// See `.intelligentcontext-milestones.md` STAGE 2 for the full rationale.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Lightweight, dependency-free view of one conversation message, built by the
+/// caller (e.g. `agent.rs` from `pares_radix_core::model::ChatMessage`) so this
+/// module never takes a dependency on a concrete `ChatMessage` type.
+///
+/// `embedding` is OPTIONAL: when the caller has precomputed per-message
+/// embeddings (bge-small-en-v1.5 via the `compute_embedding` actor) it supplies
+/// them and the scorer adds a real semantic-centrality bonus. When it is `None`
+/// the semantic term is simply omitted — a genuine capability gate, NOT a fake
+/// value (C-NOSTUB-001).
+#[derive(Debug, Clone)]
+pub struct MessageMeta<'a> {
+    /// Role string, lowercased by the caller is fine but not required
+    /// (`user`, `assistant`, `tool`, `system`).
+    pub role: &'a str,
+    /// The message text content (empty string for pure tool-call messages).
+    pub content: &'a str,
+    /// `true` when this assistant message carries one or more tool calls.
+    pub has_tool_calls: bool,
+    /// `Some(id)` when this is a `role=tool` result correlated to a prior
+    /// assistant tool call via that id.
+    pub tool_call_id: Option<&'a str>,
+    /// Optional precomputed embedding (capability-gated semantic signal).
+    pub embedding: Option<&'a [f32]>,
+}
+
+/// Per-message importance score plus its component breakdown (for observability
+/// and tests). `composite` is clamped to `[0.0, 1.0]`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MessageScore {
+    pub recency: f64,
+    pub role: f64,
+    pub signal: f64,
+    /// Additive semantic-centrality bonus actually applied (0.0 when embeddings
+    /// were absent — the honest capability-gated default).
+    pub semantic_bonus: f64,
+    pub composite: f64,
+}
+
+/// Weights for the base composite (recency + role + signal). They sum to 1.0.
+const W_RECENCY: f64 = 0.40;
+const W_ROLE: f64 = 0.25;
+const W_SIGNAL: f64 = 0.35;
+/// Maximum additive semantic-centrality bonus (only when embeddings supplied).
+const SEMANTIC_BONUS_MAX: f64 = 0.15;
+
+/// Case-insensitive substrings that mark a turn as explicitly high-value: the
+/// kind of content a human would be angry to lose to blunt truncation
+/// (decisions, standing instructions, identifiers, secrets, failures).
+const EXPLICIT_KEEP_MARKERS: &[&str] = &[
+    "remember",
+    "important",
+    "decision",
+    "decided",
+    "codename",
+    "do not",
+    "never",
+    "always",
+    "api key",
+    "token",
+    "password",
+    "secret",
+    "todo",
+    "fixme",
+    "error",
+    "panic",
+    "failed",
+];
+
+/// True when `content` contains any explicit-keep marker (ASCII-case-insensitive).
+fn has_explicit_keep_marker(content: &str) -> bool {
+    let lower = content.to_ascii_lowercase();
+    EXPLICIT_KEEP_MARKERS.iter().any(|m| lower.contains(m))
+}
+
+/// Base role weight before any error/decision lift.
+fn role_base_weight(role: &str) -> f64 {
+    match role {
+        "user" => 1.00,
+        "assistant" => 0.75,
+        "tool" => 0.55,
+        "system" => 0.35,
+        _ => 0.50,
+    }
+}
+
+/// Content-signal score in `[0.0, 1.0]`: the strongest applicable signal wins.
+fn content_signal_score(meta: &MessageMeta<'_>) -> f64 {
+    let c = meta.content;
+    if c.trim().is_empty() {
+        // A pure tool-call assistant message still carries intent.
+        return if meta.has_tool_calls { 0.70 } else { 0.05 };
+    }
+    if looks_like_error(c) {
+        return 1.0;
+    }
+    if has_explicit_keep_marker(c) {
+        return 0.90;
+    }
+    if meta.has_tool_calls {
+        return 0.70;
+    }
+    if is_code_content(c) || is_log_content(c) {
+        return 0.50;
+    }
+    // Otherwise a mild length-normalized signal: longer substantive turns carry
+    // more information than a bare "ok"/"thanks". Saturates at 0.40 by ~600 tok.
+    let toks = count_tokens_cl100k(c);
+    let toks = if toks == usize::MAX { 0 } else { toks };
+    ((toks as f64) / 600.0).min(1.0) * 0.40
+}
+
+/// Mean cosine similarity of `idx`'s embedding to every OTHER supplied embedding,
+/// mapped from cosine `[-1,1]` to `[0,1]`. Returns `None` when fewer than two
+/// embeddings are present (centrality is undefined for a single vector).
+fn semantic_centrality(metas: &[MessageMeta<'_>], idx: usize) -> Option<f64> {
+    let me = metas[idx].embedding?;
+    if me.is_empty() {
+        return None;
+    }
+    let mut acc = 0.0f64;
+    let mut count = 0usize;
+    for (j, other) in metas.iter().enumerate() {
+        if j == idx {
+            continue;
+        }
+        let Some(ov) = other.embedding else { continue };
+        if ov.len() != me.len() || ov.is_empty() {
+            continue;
+        }
+        let dot: f64 = me.iter().zip(ov).map(|(a, b)| (*a as f64) * (*b as f64)).sum();
+        let na: f64 = me.iter().map(|x| (*x as f64) * (*x as f64)).sum::<f64>().sqrt();
+        let nb: f64 = ov.iter().map(|x| (*x as f64) * (*x as f64)).sum::<f64>().sqrt();
+        if na == 0.0 || nb == 0.0 {
+            continue;
+        }
+        acc += dot / (na * nb);
+        count += 1;
+    }
+    if count == 0 {
+        return None;
+    }
+    // cosine [-1,1] -> [0,1]
+    Some(((acc / count as f64) + 1.0) / 2.0)
+}
+
+/// Score one message's importance in `[0.0, 1.0]`.
+///
+/// `rank` is the chronological position (0 = oldest) and `n` the total count;
+/// together they yield the recency term (`rank/(n-1)`, newest = 1.0). The role
+/// term is lifted to 0.9 for a `system` message that looks like an error or
+/// carries an explicit-keep marker (e.g. a prior `[Compacted context]` summary
+/// or a decision), so structural/decision system content is not treated as
+/// low-value boilerplate. A **high-signal lift** (+0.25) is added when the
+/// content-signal tier is >= 0.9 (error or explicit-keep marker) so such turns
+/// resist eviction by recent low-signal chatter regardless of age. The semantic
+/// bonus is applied only when an embedding is present (capability-gated).
+pub fn score_message_importance(
+    metas: &[MessageMeta<'_>],
+    idx: usize,
+) -> MessageScore {
+    let n = metas.len();
+    let meta = &metas[idx];
+
+    let recency = if n <= 1 {
+        1.0
+    } else {
+        idx as f64 / (n as f64 - 1.0)
+    };
+
+    let mut role = role_base_weight(meta.role);
+    if meta.role == "system"
+        && (looks_like_error(meta.content) || has_explicit_keep_marker(meta.content))
+    {
+        role = role.max(0.90);
+    }
+
+    let signal = content_signal_score(meta);
+
+    let base = (W_RECENCY * recency + W_ROLE * role + W_SIGNAL * signal).clamp(0.0, 1.0);
+
+    // High-signal lift: a turn carrying an ERROR or an explicit-keep marker
+    // (decision / identifier / secret / "remember") is content a human would be
+    // angry to lose to a wall of recent low-signal chatter. Recency weight (0.40)
+    // is large enough that, without this, a very old decision loses to 300 recent
+    // "sure thing" turns (verified: decision 0.565 < recent-filler 0.789). The
+    // lift acts as a SOFT explicit-keep: it raises such turns above ordinary
+    // chatter regardless of age, while they remain droppable when the budget
+    // genuinely cannot fit them or when outranked by OTHER high-signal turns.
+    // Applied only to the top signal tier (>= 0.9) so it never rewards filler.
+    let high_signal_lift = if signal >= 0.90 { 0.25 } else { 0.0 };
+
+    let semantic_bonus = match semantic_centrality(metas, idx) {
+        Some(cen) => SEMANTIC_BONUS_MAX * cen,
+        None => 0.0,
+    };
+
+    let composite = (base + high_signal_lift + semantic_bonus).clamp(0.0, 1.0);
+
+    MessageScore {
+        recency,
+        role,
+        signal,
+        semantic_bonus,
+        composite,
+    }
+}
+
+/// Outcome of an importance-scored retention pass: which chronological indices
+/// to KEEP (in original order) and which to DROP (feed to the summary).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RetentionPlan {
+    /// Indices to keep, ascending (original chronological order).
+    pub keep: Vec<usize>,
+    /// Indices to drop, ascending — the lowest-value messages.
+    pub drop: Vec<usize>,
+    /// Total cl100k tokens of the kept set (for the caller's budget accounting).
+    pub kept_tokens: usize,
+}
+
+/// Real cl100k token count of a message body (public shim over the private
+/// `count_tokens_cl100k`, so the retention seam in `agent.rs` measures the exact
+/// same tokenizer the compressor uses — not a chars/4 estimate). A corrupt-BPE
+/// failure maps to a large-but-finite ceiling so a single unmeasurable message
+/// can never claim to "fit" for free.
+pub fn message_token_count(content: &str) -> usize {
+    let t = count_tokens_cl100k(content);
+    if t == usize::MAX {
+        // Conservative fallback: treat as expensive, but finite so budgeting math
+        // stays sane. chars/4 is the codebase's estimator of record.
+        content.len() / 4 + 1
+    } else {
+        t
+    }
+}
+
+/// Select which messages to keep so the kept set fits within `budget_tokens`,
+/// dropping the LOWEST-importance messages first (IntelligentContext).
+///
+/// Guarantees (see milestones STAGE 2 invariants):
+/// 1. The most-recent message (last index) is ALWAYS kept.
+/// 2. A `role=tool` result is kept iff the assistant message bearing its parent
+///    `tool_call_id` is kept, and vice-versa — tool/assistant pairs are never
+///    split (that would break the model's function-calling contract).
+/// 3. `keep` is returned in ascending (chronological) order.
+///
+/// When everything already fits, `keep` is `0..n` and `drop` is empty. When even
+/// the mandatory set (last msg + its pair partners) exceeds the budget, the
+/// mandatory set is still kept (correctness over budget — the caller's summary
+/// prefix absorbs the rest); this matches the old behavior of always keeping at
+/// least the most-recent turn.
+pub fn select_by_importance(
+    metas: &[MessageMeta<'_>],
+    budget_tokens: usize,
+) -> RetentionPlan {
+    let n = metas.len();
+    if n == 0 {
+        return RetentionPlan {
+            keep: Vec::new(),
+            drop: Vec::new(),
+            kept_tokens: 0,
+        };
+    }
+
+    let tokens: Vec<usize> = metas.iter().map(|m| message_token_count(m.content)).collect();
+    let total: usize = tokens.iter().sum();
+
+    // Fast path: everything fits, keep all in order.
+    if total <= budget_tokens {
+        return RetentionPlan {
+            keep: (0..n).collect(),
+            drop: Vec::new(),
+            kept_tokens: total,
+        };
+    }
+
+    let scores: Vec<f64> = (0..n)
+        .map(|i| score_message_importance(metas, i).composite)
+        .collect();
+
+    // ── tool/assistant pairing map ──────────────────────────────────────────
+    // For each tool result index, find the assistant index that issued the call
+    // (the nearest earlier assistant message whose tool_calls include this id).
+    // We only have the tool_call_id on the tool side and `has_tool_calls` on the
+    // assistant side; correlate by scanning backwards for the closest assistant
+    // that has tool calls. This keeps the pair together without needing the
+    // full tool_calls id list threaded through (which the caller may not expose).
+    let mut partner: Vec<Option<usize>> = vec![None; n];
+    for (i, m) in metas.iter().enumerate() {
+        if m.role == "tool" && m.tool_call_id.is_some() {
+            // nearest earlier assistant-with-tool-calls
+            if let Some(a) = (0..i).rev().find(|&k| {
+                metas[k].role == "assistant" && metas[k].has_tool_calls
+            }) {
+                partner[i] = Some(a);
+                // Link back the assistant to this tool result too (first result wins;
+                // additional results also point at the same assistant via their own
+                // partner entry, so keeping the assistant pulls all of them below).
+                if partner[a].is_none() {
+                    partner[a] = Some(i);
+                }
+            }
+        }
+    }
+
+    // ── mandatory set: the most-recent message, plus its pair partner ───────
+    let mut kept = vec![false; n];
+    let mut kept_tokens = 0usize;
+    let force_keep = |idx: usize, kept: &mut [bool], kept_tokens: &mut usize| {
+        if !kept[idx] {
+            kept[idx] = true;
+            *kept_tokens += tokens[idx];
+        }
+    };
+    force_keep(n - 1, &mut kept, &mut kept_tokens);
+    if let Some(p) = partner[n - 1] {
+        force_keep(p, &mut kept, &mut kept_tokens);
+    }
+
+    // ── value-monotonic fill by descending importance ──────────────────────
+    // Strict "drop lowest-value first" contract: walk candidates in DESCENDING
+    // score and include each if it (plus any structural partner) fits. On the
+    // first candidate that does NOT fit, STOP — we do not back-fill the leftover
+    // budget with strictly-lower-value messages. This guarantees the retained
+    // set forms a clean value threshold: every kept message scores >= every
+    // dropped message (modulo the always-kept newest turn and forced tool/
+    // assistant partners). Leaving a few budget "crumbs" unused is the correct
+    // price of that guarantee for a compaction-EVENT-minimization lever.
+    let mut order: Vec<usize> = (0..n).filter(|&i| !kept[i]).collect();
+    order.sort_by(|&a, &b| {
+        scores[b]
+            .partial_cmp(&scores[a])
+            .unwrap_or(std::cmp::Ordering::Equal)
+            // tie-break: prefer the more recent message.
+            .then(b.cmp(&a))
+    });
+
+    for idx in order {
+        if kept[idx] {
+            continue;
+        }
+        // Cost of adding this message AND any partner it structurally requires.
+        let mut add: Vec<usize> = vec![idx];
+        if let Some(p) = partner[idx] {
+            if !kept[p] {
+                add.push(p);
+            }
+        }
+        let cost: usize = add.iter().map(|&i| tokens[i]).sum();
+        if kept_tokens + cost <= budget_tokens {
+            for i in add {
+                force_keep(i, &mut kept, &mut kept_tokens);
+            }
+        } else {
+            // First non-fitting candidate: stop. Everything remaining scores <=
+            // this one, so keeping any of it would violate value-monotonicity.
+            break;
+        }
+    }
+
+    let keep: Vec<usize> = (0..n).filter(|&i| kept[i]).collect();
+    let drop: Vec<usize> = (0..n).filter(|&i| !kept[i]).collect();
+    RetentionPlan {
+        keep,
+        drop,
+        kept_tokens,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1506,5 +1892,221 @@ mod tests {
             let result = h.call(action, &json!({}));
             assert!(result.is_ok(), "action '{action}' returned Err: {:?}", result.err());
         }
+    }
+
+    // ══ IntelligentContext — importance-scored message retention ══════════════════
+
+    /// Build a `MessageMeta` from parts (no embedding).
+    fn mm<'a>(role: &'a str, content: &'a str, has_tc: bool, tcid: Option<&'a str>) -> MessageMeta<'a> {
+        MessageMeta { role, content, has_tool_calls: has_tc, tool_call_id: tcid, embedding: None }
+    }
+
+    /// A realistic multi-turn conversation. Index annotations:
+    ///  0 system boilerplate (low)             1 user greeting "hi" (low)
+    ///  2 assistant "Hello!" (low)             3 user DECISION: codename FALCON (HIGH, old)
+    ///  4 assistant ack (mid)                  5 user "thanks" (low)
+    ///  6 assistant "yw" (low)                 7 user asks to run build (mid)
+    ///  8 assistant tool_call (build) (mid)    9 tool ERROR result (HIGH)
+    /// 10 assistant explains fix (mid)        11 user "ok" (low)
+    /// 12 user newest question (kept: last)
+    fn convo() -> Vec<(&'static str, &'static str, bool, Option<&'static str>)> {
+        vec![
+            ("system", "You are a helpful assistant. Be concise.", false, None),
+            ("user", "hi", false, None),
+            ("assistant", "Hello! How can I help?", false, None),
+            ("user", "Important decision: the deploy codename is FALCON. Remember that for later.", false, None),
+            ("assistant", "Got it — deploy codename FALCON, noted.", false, None),
+            ("user", "thanks", false, None),
+            ("assistant", "You're welcome.", false, None),
+            ("user", "Please run the release build for the core crate.", false, None),
+            ("assistant", "", true, None), // pure tool-call turn
+            ("tool", "error[E0308]: mismatched types\n  --> src/lib.rs:42:5\nthread 'main' panicked at 'build failed'\n  at build::run (build.rs:10)\n  at main (main.rs:3)\nCaused by: type error", false, Some("call_1")),
+            ("assistant", "The build failed on a type mismatch at lib.rs:42; I'll fix the signature.", false, None),
+            ("user", "ok", false, None),
+            ("user", "What was the deploy codename again, and is the build green now?", false, None),
+        ]
+    }
+
+    fn convo_metas<'a>(raw: &'a [(&'static str, &'static str, bool, Option<&'static str>)]) -> Vec<MessageMeta<'a>> {
+        raw.iter().map(|(r, c, tc, id)| mm(r, c, *tc, *id)).collect()
+    }
+
+    #[test]
+    fn score_recency_monotonic_newest_highest() {
+        let raw = convo();
+        let metas = convo_metas(&raw);
+        let first = score_message_importance(&metas, 0).recency;
+        let last = score_message_importance(&metas, metas.len() - 1).recency;
+        assert_eq!(last, 1.0, "newest message must have recency 1.0");
+        assert!(first < last, "recency must increase toward newest ({first} !< {last})");
+    }
+
+    #[test]
+    fn score_error_and_decision_outrank_chatter() {
+        let raw = convo();
+        let metas = convo_metas(&raw);
+        let s = |i: usize| score_message_importance(&metas, i).composite;
+        // idx 9 = tool ERROR, idx 3 = decision/codename, idx 5 = "thanks", idx 11 = "ok"
+        assert!(s(9) > s(5), "error turn must outrank 'thanks' ({} !> {})", s(9), s(5));
+        assert!(s(9) > s(11), "error turn must outrank 'ok' ({} !> {})", s(9), s(11));
+        assert!(s(3) > s(5), "decision turn must outrank 'thanks' ({} !> {})", s(3), s(5));
+        assert!(s(3) > s(6), "decision turn must outrank 'yw' ({} !> {})", s(3), s(6));
+    }
+
+    #[test]
+    fn score_content_signal_error_is_max() {
+        let err = "error[E0308]: mismatched types\nthread 'main' panicked at 'x'\n  at a (b.rs:1)\n  at c (d.rs:2)";
+        let m = mm("tool", err, false, Some("call_1"));
+        assert!((content_signal_score(&m) - 1.0).abs() < 1e-9, "error content must score 1.0");
+        let chatter = mm("user", "ok", false, None);
+        assert!(content_signal_score(&chatter) < 0.1, "bare 'ok' must be near-zero signal");
+    }
+
+    #[test]
+    fn select_drops_lowest_value_keeps_high_signal() {
+        let raw = convo();
+        let metas = convo_metas(&raw);
+        // Budget chosen (68%) to be tight enough to force drops yet roomy enough
+        // that both high-signal turns (decision idx 3/4, error idx 9 + its
+        // assistant idx 8) can be afforded. Descending-score greedy fill.
+        let total: usize = metas.iter().map(|m| message_token_count(m.content)).sum();
+        let budget = (total * 68) / 100;
+        let plan = select_by_importance(&metas, budget);
+
+        assert!(!plan.drop.is_empty(), "tight budget must drop something");
+        // Newest turn is always kept.
+        assert!(plan.keep.contains(&12), "newest message (idx 12) must always survive");
+        // The single highest-signal RECENT chain (error + its fix) must survive
+        // when affordable: idx 9 (error) is the top content-signal turn and idx
+        // 10 (the fix) is the top composite scorer.
+        assert!(plan.keep.contains(&9), "error result (idx 9) must survive at 68% budget");
+        assert!(plan.keep.contains(&10), "fix explanation (idx 10) must survive");
+        // LOW-signal chatter is what gets dropped, NOT the high-signal turns:
+        // every dropped index must be a lower composite score than the LOWEST
+        // kept high-signal turn (the error, idx 9). This is the core guarantee:
+        // we drop lowest-value first.
+        let err_score = score_message_importance(&metas, 9).composite;
+        for &d in &plan.drop {
+            let ds = score_message_importance(&metas, d).composite;
+            assert!(
+                ds <= err_score,
+                "dropped idx {d} (score {ds:.3}) outranks a kept high-signal turn (error {err_score:.3})"
+            );
+        }
+        // And concretely: at least one bare-chatter filler is dropped.
+        let fillers = [0usize, 2, 5, 6, 11];
+        assert!(
+            fillers.iter().any(|i| plan.drop.contains(i)),
+            "expected low-value chatter dropped; drop={:?}",
+            plan.drop
+        );
+    }
+
+    #[test]
+    fn select_respects_token_budget() {
+        let raw = convo();
+        let metas = convo_metas(&raw);
+        let total: usize = metas.iter().map(|m| message_token_count(m.content)).sum();
+        let budget = (total * 50) / 100;
+        let plan = select_by_importance(&metas, budget);
+        let kept_tokens: usize = plan.keep.iter()
+            .map(|&i| message_token_count(metas[i].content))
+            .sum();
+        assert_eq!(kept_tokens, plan.kept_tokens, "reported kept_tokens must match recomputation");
+        // The kept set fits the budget UNLESS the mandatory set (last msg + its
+        // tool/assistant pair) alone exceeds it. Assert the documented guarantee:
+        // kept_tokens <= budget OR only the mandatory pair is kept.
+        let mandatory_only = plan.keep.len() <= 3;
+        assert!(kept_tokens <= budget || mandatory_only,
+            "kept_tokens {kept_tokens} exceeded budget {budget} with {} kept", plan.keep.len());
+    }
+
+    #[test]
+    fn select_output_is_chronological() {
+        let raw = convo();
+        let metas = convo_metas(&raw);
+        let total: usize = metas.iter().map(|m| message_token_count(m.content)).sum();
+        let plan = select_by_importance(&metas, (total * 60) / 100);
+        let mut sorted = plan.keep.clone();
+        sorted.sort_unstable();
+        assert_eq!(plan.keep, sorted, "keep indices must be ascending (chronological)");
+        // drop indices also ascending
+        let mut ds = plan.drop.clone();
+        ds.sort_unstable();
+        assert_eq!(plan.drop, ds, "drop indices must be ascending");
+        // keep ∪ drop == full set, disjoint
+        let mut all: Vec<usize> = plan.keep.iter().chain(plan.drop.iter()).copied().collect();
+        all.sort_unstable();
+        assert_eq!(all, (0..metas.len()).collect::<Vec<_>>(), "keep+drop must partition all indices");
+    }
+
+    #[test]
+    fn select_never_orphans_tool_result_from_its_assistant() {
+        let raw = convo();
+        let metas = convo_metas(&raw);
+        // Force a very tight budget so pairing pressure is real.
+        for pct in [30usize, 45, 55, 70] {
+            let total: usize = metas.iter().map(|m| message_token_count(m.content)).sum();
+            let plan = select_by_importance(&metas, (total * pct) / 100);
+            let tool_idx = 9usize; // the tool ERROR result
+            let assistant_idx = 8usize; // the pure tool-call assistant that precedes it
+            if plan.keep.contains(&tool_idx) {
+                assert!(plan.keep.contains(&assistant_idx),
+                    "pct={pct}: kept tool result (9) without its assistant tool-call (8); keep={:?}", plan.keep);
+            }
+        }
+    }
+
+    #[test]
+    fn select_all_fits_keeps_everything() {
+        let raw = convo();
+        let metas = convo_metas(&raw);
+        let total: usize = metas.iter().map(|m| message_token_count(m.content)).sum();
+        let plan = select_by_importance(&metas, total + 100);
+        assert_eq!(plan.keep, (0..metas.len()).collect::<Vec<_>>());
+        assert!(plan.drop.is_empty());
+        assert_eq!(plan.kept_tokens, total);
+    }
+
+    #[test]
+    fn select_empty_input_is_empty_plan() {
+        let plan = select_by_importance(&[], 1000);
+        assert!(plan.keep.is_empty() && plan.drop.is_empty() && plan.kept_tokens == 0);
+    }
+
+    #[test]
+    fn semantic_bonus_is_capability_gated() {
+        // Without embeddings: zero bonus (honest gate).
+        let raw = convo();
+        let metas = convo_metas(&raw);
+        for i in 0..metas.len() {
+            assert_eq!(score_message_importance(&metas, i).semantic_bonus, 0.0,
+                "idx {i}: semantic bonus must be 0 when no embedding supplied");
+        }
+        // With embeddings: a message central to the set gets a positive bonus,
+        // an orthogonal outlier gets a smaller one. Two near-identical vectors +
+        // one orthogonal.
+        let a = [1.0f32, 0.0, 0.0];
+        let b = [0.98f32, 0.20, 0.0]; // close to a
+        let c = [0.0f32, 0.0, 1.0];   // orthogonal outlier
+        let metas_e = vec![
+            MessageMeta { role: "user", content: "alpha topic", has_tool_calls: false, tool_call_id: None, embedding: Some(&a) },
+            MessageMeta { role: "user", content: "alpha topic restated", has_tool_calls: false, tool_call_id: None, embedding: Some(&b) },
+            MessageMeta { role: "user", content: "unrelated outlier", has_tool_calls: false, tool_call_id: None, embedding: Some(&c) },
+        ];
+        let central = score_message_importance(&metas_e, 0).semantic_bonus;
+        let outlier = score_message_importance(&metas_e, 2).semantic_bonus;
+        assert!(central > 0.0, "central message should get positive semantic bonus");
+        assert!(central > outlier,
+            "central message ({central}) should out-bonus the orthogonal outlier ({outlier})");
+        assert!(central <= SEMANTIC_BONUS_MAX + 1e-9, "bonus must be capped at {SEMANTIC_BONUS_MAX}");
+    }
+
+    #[test]
+    fn explicit_keep_markers_detected() {
+        assert!(has_explicit_keep_marker("please REMEMBER the codename"));
+        assert!(has_explicit_keep_marker("this is an Important decision"));
+        assert!(has_explicit_keep_marker("the api key is xyz"));
+        assert!(!has_explicit_keep_marker("just some ordinary chatter here"));
     }
 }
