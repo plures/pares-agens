@@ -63,7 +63,10 @@ impl ActionHandler for HeadroomActionHandler {
             "detect_content_type" => {
                 let content = params.get("content").and_then(|v| v.as_str()).unwrap_or("");
                 let trimmed = content.trim_start();
-                let (ct, conf): (&str, f64) = if trimmed.starts_with('{') || trimmed.starts_with('[') {
+                let (ct, conf): (&str, f64) = if (trimmed.starts_with('{')
+                    || trimmed.starts_with('['))
+                    && !starts_like_bracketed_log(trimmed)
+                {
                     ("json", 0.92)
                 } else if is_log_content(content) {
                     ("log", 0.85)
@@ -466,6 +469,38 @@ impl ActionHandler for HeadroomActionHandler {
     }
 }
 // ── Helper functions ──────────────────────────────────────────────────────────
+
+/// True when the (left-trimmed) content begins with a bracketed log token that
+/// must never be treated as JSON: a bracketed log-LEVEL token
+/// (`[ERROR]`/`[WARN]`/`[INFO]`/`[DEBUG]`/`[TRACE]`) OR a bracketed ISO-8601
+/// TIMESTAMP prefix (`[2026-07-02 10:15:03]`) — one of the most common real-log
+/// shapes, which starts with `[` and was otherwise misclassified as a JSON array
+/// and skipped the log compactor. Never matches real JSON (a JSON array opens
+/// with `[` + a value, not `LEVEL]` and not a `YYYY-MM-DD` skeleton).
+/// (Dual-source parity fix with pluresdb-node headroom.rs, 2026-07-02.)
+fn starts_like_bracketed_log(trimmed: &str) -> bool {
+    const BRACKETED: [&str; 5] = ["[ERROR]", "[WARN]", "[INFO]", "[DEBUG]", "[TRACE]"];
+    if BRACKETED.iter().any(|b| trimmed.starts_with(b)) {
+        return true;
+    }
+    let b = trimmed.as_bytes();
+    b.first() == Some(&b'[') && starts_with_iso_date(&b[1..])
+}
+
+/// True when bytes begin with a `YYYY-MM-DD` date skeleton. Allocation-free.
+fn starts_with_iso_date(b: &[u8]) -> bool {
+    b.len() >= 10
+        && b[0].is_ascii_digit()
+        && b[1].is_ascii_digit()
+        && b[2].is_ascii_digit()
+        && b[3].is_ascii_digit()
+        && b[4] == b'-'
+        && b[5].is_ascii_digit()
+        && b[6].is_ascii_digit()
+        && b[7] == b'-'
+        && b[8].is_ascii_digit()
+        && b[9].is_ascii_digit()
+}
 
 /// Returns true if the content looks like log output (timestamp + level patterns).
 fn is_log_content(content: &str) -> bool {
