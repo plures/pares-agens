@@ -55,8 +55,10 @@ dependencies = [
  "html2text",
  "pares-agens-agenda",
  "pares-agens-bitnet",
+ "pares-agens-buildinfo",
  "pares-agens-channels",
  "pares-agens-core",
+ "pares-agens-hostkit",
  "pares-agens-mcp-server",
  "pares-agens-models",
  "pares-agens-tui",
@@ -4947,6 +4949,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "pares-agens-buildinfo"
+version = "1.14.0"
+
+[[package]]
 name = "pares-agens-channels"
 version = "1.14.0"
 dependencies = [
@@ -4980,8 +4986,10 @@ dependencies = [
  "crossterm",
  "futures-util",
  "pares-agens-agenda",
+ "pares-agens-buildinfo",
  "pares-agens-channels",
  "pares-agens-core",
+ "pares-agens-hostkit",
  "pares-agens-models",
  "pares-agens-tui",
  "pares-radix-core",
@@ -5042,6 +5050,18 @@ dependencies = [
  "vault-core",
  "walkdir",
  "wiremock",
+]
+
+[[package]]
+name = "pares-agens-hostkit"
+version = "1.14.0"
+dependencies = [
+ "pares-agens-channels",
+ "pares-agens-core",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

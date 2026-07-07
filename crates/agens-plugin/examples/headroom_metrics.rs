@@ -21,7 +21,7 @@ fn count_tokens(h: &HeadroomActionHandler, content: &str) -> u64 {
 
 // ── Sample content generators ─────────────────────────────────────────────────
 
-fn sample_json_array() -> String {
+fn plugin_sample_json_array() -> String {
     // Realistic API response: array of user objects with repetitive keys
     let mut items = Vec::new();
     for i in 0..50 {
@@ -33,7 +33,7 @@ fn sample_json_array() -> String {
     format!("[{}]", items.join(",\n"))
 }
 
-fn sample_code_rust() -> String {
+fn plugin_sample_code_rust() -> String {
     r#"use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -148,7 +148,7 @@ mod tests {
 }"#.to_string()
 }
 
-fn sample_log_output() -> String {
+fn plugin_sample_log_output() -> String {
     let mut lines = Vec::new();
     let levels = ["INFO", "DEBUG", "WARN", "ERROR", "INFO", "INFO", "DEBUG", "INFO"];
     let messages = [
@@ -170,7 +170,7 @@ fn sample_log_output() -> String {
     lines.join("\n")
 }
 
-fn sample_prose_conversation() -> String {
+fn plugin_sample_prose_conversation() -> String {
     r#"The user asked about implementing a context compression layer for their AI agent framework. They mentioned they'd seen the headroom library on GitHub and wanted something similar but native to their .px procedure language.
 
 I explained that headroom works by analyzing each block of content in the context window, classifying it by type (JSON, code, prose, logs, errors), scoring its importance relative to the current query, and then applying type-specific compression. JSON arrays get structural deduplication — if you have 50 user objects with the same keys, you keep one exemplar and a count. Code gets AST-aware summarization — function signatures preserved, bodies compressed based on relevance. Logs get pattern deduplication — repeated error messages collapsed to "ERROR: connection failed (x47 in 2m)". Prose gets extractive summarization — key sentences selected by embedding similarity to the query.
@@ -184,7 +184,7 @@ The user was particularly interested in the severity scoring system. I explained
 Finally, we discussed the cache alignment feature. Different model providers have different prompt caching strategies — Anthropic caches by prefix, OpenAI by content hash. The fitter module reorders compressed blocks to maximize cache hit probability, which can save significant cost on repeated interactions."#.to_string()
 }
 
-fn sample_error_output() -> String {
+fn plugin_sample_error_output() -> String {
     r#"thread 'tokio-runtime-worker' panicked at crates/core/src/pipeline.rs:247:14:
 called `Result::unwrap()` on an `Err` value: PluresDbError(ConnectionRefused("localhost:5432"))
 stack trace:
@@ -229,11 +229,11 @@ fn main() {
 
     // --- Content type detection accuracy ---
     let test_cases = vec![
-        ("JSON (API response)", sample_json_array(), "json"),
-        ("Rust code", sample_code_rust(), "code"),
-        ("Log output", sample_log_output(), "log"),
-        ("Prose conversation", sample_prose_conversation(), "prose"),
-        ("Error/stack trace", sample_error_output(), "error"),
+        ("JSON (API response)", plugin_sample_json_array(), "json"),
+        ("Rust code", plugin_sample_code_rust(), "code"),
+        ("Log output", plugin_sample_log_output(), "log"),
+        ("Prose conversation", plugin_sample_prose_conversation(), "prose"),
+        ("Error/stack trace", plugin_sample_error_output(), "error"),
     ];
 
     println!("── Content Type Detection ──────────────────────────────────────");
@@ -253,11 +253,11 @@ fn main() {
     println!("── Token Analysis by Content Type ──────────────────────────────");
     let mut total_tokens = 0u64;
     let contents: Vec<(&str, String)> = vec![
-        ("JSON (50 objects)", sample_json_array()),
-        ("Rust (config mgr)", sample_code_rust()),
-        ("Logs (80 lines)", sample_log_output()),
-        ("Prose (conversation)", sample_prose_conversation()),
-        ("Error (stack trace)", sample_error_output()),
+        ("JSON (50 objects)", plugin_sample_json_array()),
+        ("Rust (config mgr)", plugin_sample_code_rust()),
+        ("Logs (80 lines)", plugin_sample_log_output()),
+        ("Prose (conversation)", plugin_sample_prose_conversation()),
+        ("Error (stack trace)", plugin_sample_error_output()),
     ];
 
     for (label, content) in &contents {
@@ -274,7 +274,7 @@ fn main() {
     println!("── Compression Ratio Estimates ─────────────────────────────────");
     println!("  (Based on content analysis + headroom algorithm targets)\n");
 
-    let json_content = sample_json_array();
+    let json_content = plugin_sample_json_array();
     let json_tokens = count_tokens(&h, &json_content);
     // JSON: 50 objects with identical schema → 1 exemplar + schema = ~10% of original
     let json_exemplar = json_content.lines().next().unwrap_or("");
@@ -290,7 +290,7 @@ fn main() {
     println!("    Target:     80-92%");
     println!();
 
-    let code_content = sample_code_rust();
+    let code_content = plugin_sample_code_rust();
     let code_tokens = count_tokens(&h, &code_content);
     let sigs = h.call("extract_ast_signatures", &json!({"content": &code_content, "language": "rust"})).unwrap();
     let sig_lines: Vec<&str> = sigs["signatures"].as_array().unwrap()
@@ -305,7 +305,7 @@ fn main() {
     println!("    Target:     50-85%");
     println!();
 
-    let log_content = sample_log_output();
+    let log_content = plugin_sample_log_output();
     let log_tokens = count_tokens(&h, &log_content);
     // Logs: 80 lines with 8 unique patterns → 8 pattern lines + counts
     let log_compressed = "2026-06-16T19:00:00Z INFO  [headroom::pipeline] Starting pipeline compression (x10)\n\
@@ -325,7 +325,7 @@ fn main() {
     println!("    Target:     85-92%");
     println!();
 
-    let prose_content = sample_prose_conversation();
+    let prose_content = plugin_sample_prose_conversation();
     let prose_tokens = count_tokens(&h, &prose_content);
     let sentences = h.call("split_sentences", &json!({"content": &prose_content})).unwrap();
     let sent_count = sentences["sentences"].as_array().unwrap().len();
@@ -343,7 +343,7 @@ fn main() {
     println!("    Target:     30-70%");
     println!();
 
-    let error_content = sample_error_output();
+    let error_content = plugin_sample_error_output();
     let error_tokens = count_tokens(&h, &error_content);
     // Errors: keep the error message + key context, strip stack frames
     let error_compressed = "PluresDbError(ConnectionRefused(\"localhost:5432\")) at pipeline.rs:247\n\
@@ -361,9 +361,9 @@ fn main() {
 
     // --- Hash dedup effectiveness ---
     println!("── Content Hash Deduplication ────────────────────────────────");
-    let h1 = h.call("compute_content_hash", &json!({"content": &sample_json_array()})).unwrap();
-    let h2 = h.call("compute_content_hash", &json!({"content": &sample_json_array()})).unwrap();
-    let h3 = h.call("compute_content_hash", &json!({"content": &sample_code_rust()})).unwrap();
+    let h1 = h.call("compute_content_hash", &json!({"content": &plugin_sample_json_array()})).unwrap();
+    let h2 = h.call("compute_content_hash", &json!({"content": &plugin_sample_json_array()})).unwrap();
+    let h3 = h.call("compute_content_hash", &json!({"content": &plugin_sample_code_rust()})).unwrap();
     println!("  Same content produces same hash: {}", h1["hash"] == h2["hash"]);
     println!("  Different content produces different hash: {}", h1["hash"] != h3["hash"]);
     println!("  Hash format: {}\n", h1["hash"].as_str().unwrap());
@@ -384,7 +384,7 @@ fn main() {
 
     let start = Instant::now();
     for _ in 0..iterations {
-        h.call("detect_content_type", &json!({"content": &sample_json_array()})).unwrap();
+        h.call("detect_content_type", &json!({"content": &plugin_sample_json_array()})).unwrap();
     }
     let detect_us = start.elapsed().as_micros() / iterations;
 

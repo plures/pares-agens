@@ -38,6 +38,7 @@ pares-rector            = { git = "https://github.com/plures/pares-radix.git", t
 # exactly ONE pares-agens-core in the graph (Agent/SessionManager/ModelClient).
 pares-agens-core        = { path = "../core", features = ["embeddings"] }
 pares-agens-channels    = { path = "../channels" }
+pares-agens-hostkit     = { path = "../agens-hostkit" }
 pares-agens-models      = { path = "../models" }
 pares-agens-bitnet      = { path = "../bitnet", features = ["model-client"] }
 pares-agens-agenda      = { path = "../agenda" }
@@ -73,6 +74,9 @@ html2text = "0.17"
 crossterm = "0.28"
 ratatui = "0.29"
 toml = "0.8"
+
+[build-dependencies]
+pares-agens-buildinfo = { path = "../agens-buildinfo" }
 
 [features]
 default = []

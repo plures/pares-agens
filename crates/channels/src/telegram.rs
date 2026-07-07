@@ -19,6 +19,7 @@
 use async_trait::async_trait;
 use pares_radix_core::Event;
 use pares_agens_marketplace::{installer::Installer, SkillCategory, SkillMetadata};
+use pares_agens_core::diagnostics::current_process_rss_kib;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -381,25 +382,6 @@ fn telegram_help_text() -> String {
     lines.push(String::new());
     lines.push("Or just send a message.".to_string());
     lines.join("\n")
-}
-
-fn current_process_rss_kib() -> Option<u64> {
-    #[cfg(target_os = "linux")]
-    {
-        let status = std::fs::read_to_string("/proc/self/status").ok()?;
-        status.lines().find_map(|line| {
-            let line = line.trim();
-            if !line.starts_with("VmRSS:") {
-                return None;
-            }
-            line.split_whitespace().nth(1)?.parse::<u64>().ok()
-        })
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        None
-    }
 }
 
 fn is_update_authorized(msg: &Message) -> bool {

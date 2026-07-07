@@ -1,0 +1,13 @@
+[package]
+name = "pares-agens-buildinfo"
+description = "Shared build-script helper: resolve the embedded git commit hash for pares-agens host binaries (git CLI -> GIT_COMMIT_HASH env -> .git/HEAD -> caller-provided version fallback). Single home per ADR-0010; used as a [build-dependencies] by the `cli` and `agens-plugin` crates so the git-hash resolution logic is not duplicated across build scripts."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "pares_agens_buildinfo"
+path = "src/lib.rs"
+
+[dependencies]

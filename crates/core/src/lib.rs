@@ -24,6 +24,8 @@ pub mod agent;
 pub mod cerebellum;
 /// Local multi-agent delegation and concurrent sub-task execution.
 pub mod delegation;
+/// Lightweight process diagnostics primitives (VmRSS / resident-set sampling).
+pub mod diagnostics;
 /// Feature-gate helpers over the license tier.
 pub mod features;
 /// HeadroomActionHandler — production implementation of headroom .px side-effect actors.

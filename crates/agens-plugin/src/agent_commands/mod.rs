@@ -15,6 +15,13 @@
 //! are now inherent methods on [`AgensProvider`] that the agens host calls
 //! directly (Option B — agens is the sole host of a single provider).
 
+// BitNet-backed cerebellum classifier. Real implementation carved from the radix
+// host in Stage 4c (commit d823bbb) but not yet wired into the routing path, so
+// its items are currently dead. `#[allow(dead_code)]` here (consistent with the
+// crate's existing not-yet-wired allowances) keeps `clippy -D warnings` green
+// until the classifier is connected; it is NOT stubbed — the logic is complete.
+// TODO(agens): wire BitNetClassifier into AgensProvider message routing.
+#[allow(dead_code)]
 mod bitnet_classifier;
 mod config;
 mod px_config;

@@ -36,9 +36,15 @@ use pares_agens_channels::adapter::ChannelAdapter;
 use pares_agens_channels::telegram::{
     TelegramAdapter, TelegramConfig, TelegramConfigControl, TelegramModelControl,
     TelegramPersonalityControl, TelegramRuntimeConfig, TelegramRuntimeControl,
-    TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER,
 };
 use pares_agens_core::agent::{Agent, Memory};
+use pares_agens_hostkit::{
+    apply_runtime_log_level, build_env_filter, current_hostname, current_process_rss_kib,
+    default_deep_escalation_enabled, detect_single_connection_conflicts,
+    extract_verbose_tool_marker, format_verbose_tool_traces, manus_request_for_tool,
+    parse_sync_topic_key, parse_tool_args, redact_connection_id, spawn_memory_monitor,
+    spawn_systemd_watchdog, systemd_notify, value_to_tool_content, ToolCallTrace,
+};
 use pares_radix_core::auth::copilot::{CopilotAuth, CopilotModelClient};
 use pares_agens_core::cerebellum::px_bridge::PxBridge;
 use pares_agens_core::cerebellum::{Cerebellum, CerebellumConfig};
@@ -92,10 +98,6 @@ struct CopilotAuthCache {
 
 const MODEL_OVERRIDE_STATE_KEY: &str = "agent.runtime_model_override";
 const RUNTIME_CONFIG_OVERRIDE_STATE_KEY: &str = "agent.runtime_config_override";
-/// Maximum characters shown for tool-call argument previews in `/verbose`.
-const VERBOSE_TOOL_ARGS_PREVIEW_CHARS: usize = 240;
-/// Maximum characters shown for tool-call result previews in `/verbose`.
-const VERBOSE_TOOL_RESULT_PREVIEW_CHARS: usize = 500;
 
 // Telegram request ID currently being processed on this task.
 // Used to correlate tool calls executed during `agent.handle_event(...)` with
@@ -126,9 +128,6 @@ struct RuntimeModelControl {
     state_store: Arc<dyn StateStore>,
 }
 
-fn default_deep_escalation_enabled() -> bool {
-    true
-}
 
 struct RuntimeConfigControl {
     model_control: Arc<RuntimeModelControl>,
@@ -166,13 +165,6 @@ struct RuntimeAgentFactory {
     cerebellum_model_path: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug)]
-struct ToolCallTrace {
-    tool_name: String,
-    arguments: serde_json::Value,
-    result: String,
-    is_error: bool,
-}
 
 #[derive(Clone, Default)]
 struct ToolTraceStore {
@@ -251,32 +243,6 @@ impl RouterModelClient {
     }
 }
 
-fn normalize_log_level(value: &str) -> Result<String, String> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "trace" | "debug" | "info" | "warn" | "error" => Ok(value.trim().to_ascii_lowercase()),
-        _ => Err("log level must be one of: trace, debug, info, warn, error".to_string()),
-    }
-}
-
-fn build_env_filter(level: &str) -> Result<EnvFilter, String> {
-    let level = normalize_log_level(level)?;
-    let directive = level
-        .parse()
-        .map_err(|e| format!("failed to parse '{level}' as tracing directive: {e}"))?;
-    Ok(EnvFilter::from_default_env().add_directive(directive))
-}
-
-fn apply_runtime_log_level(
-    handle: &tracing_subscriber::reload::Handle<EnvFilter, tracing_subscriber::Registry>,
-    level: &str,
-) -> Result<String, String> {
-    let normalized = normalize_log_level(level)?;
-    let filter = build_env_filter(&normalized)?;
-    handle
-        .reload(filter)
-        .map_err(|e| format!("failed to reload log filter: {e}"))?;
-    Ok(normalized)
-}
 
 impl RuntimeAgentFactory {
     fn build_embedder(&self) -> Box<dyn EmbeddingProvider> {
@@ -296,10 +262,6 @@ impl RuntimeAgentFactory {
             self.build_embedder(),
             128_000,
         ))
-    }
-
-    fn load_system_prompt(&self) -> Result<String, String> {
-        build_system_prompt(self.system_prompt_path.clone())
     }
 
     fn build_agent_with_lm(&self, plures_lm: Arc<PluresLm>) -> Result<Arc<Agent>, String> {
@@ -433,7 +395,7 @@ impl RuntimeAgentFactory {
             }
         };
 
-        let system_prompt = self.load_system_prompt()?;
+        let system_prompt = build_system_prompt(self.system_prompt_path.clone())?;
 
         // Create default personality contract. Runtime seeding into PluresDB
         // happens in the async serve path.
@@ -1113,53 +1075,6 @@ impl ToolDispatcher for ProcedureToolDispatcher {
     }
 }
 
-/// Detect and strip the Telegram verbose marker from inbound content.
-fn extract_verbose_tool_marker(content: &str) -> (bool, String) {
-    match content.strip_prefix(TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER) {
-        Some(stripped) => (true, stripped.to_string()),
-        None => (false, content.to_string()),
-    }
-}
-
-/// Truncate verbose previews to keep Telegram replies within practical limits.
-fn truncate_verbose_preview(value: &str, max_chars: usize) -> String {
-    let mut chars = value.chars();
-    let preview: String = chars.by_ref().take(max_chars).collect();
-    if chars.next().is_some() {
-        format!("{preview}…")
-    } else {
-        preview
-    }
-}
-
-/// Format request-scoped tool traces for inline Telegram `/verbose` output.
-fn format_verbose_tool_traces(traces: &[ToolCallTrace]) -> String {
-    use std::fmt::Write;
-
-    if traces.is_empty() {
-        return "Tool execution details:\n(no tool calls made)".to_string();
-    }
-
-    let mut output = String::from("Tool execution details:");
-    for (idx, trace) in traces.iter().enumerate() {
-        let status = if trace.is_error { "error" } else { "ok" };
-        let args = truncate_verbose_preview(
-            &trace.arguments.to_string(),
-            VERBOSE_TOOL_ARGS_PREVIEW_CHARS,
-        );
-        let result = truncate_verbose_preview(&trace.result, VERBOSE_TOOL_RESULT_PREVIEW_CHARS);
-        let _ = write!(
-            output,
-            "\n{}. {} [{}]\nargs: {}\nresult: {}",
-            idx + 1,
-            trace.tool_name,
-            status,
-            args,
-            result
-        );
-    }
-    output
-}
 
 struct PluresMemory {
     plures_lm: Arc<PluresLm>,
@@ -2199,66 +2114,6 @@ impl Procedure for ParesManusToolProcedure {
     }
 }
 
-fn value_to_tool_content(value: &serde_json::Value) -> String {
-    value
-        .as_str()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| value.to_string())
-}
-
-fn manus_request_for_tool(
-    tool_name: &str,
-    args: serde_json::Value,
-) -> Result<(&'static str, serde_json::Value), String> {
-    match tool_name {
-        "browser_open" => {
-            let url = args
-                .get("url")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| "missing 'url'".to_string())?;
-            Ok(("browser.open", serde_json::json!({ "url": url })))
-        }
-        "browser_screenshot" => Ok(("browser.screenshot", serde_json::json!({}))),
-        "browser_click" => {
-            let x = args
-                .get("x")
-                .and_then(|v| v.as_i64())
-                .ok_or_else(|| "missing 'x'".to_string())?;
-            let y = args
-                .get("y")
-                .and_then(|v| v.as_i64())
-                .ok_or_else(|| "missing 'y'".to_string())?;
-            Ok(("gui.click", serde_json::json!({ "x": x, "y": y })))
-        }
-        "browser_type" => {
-            let text = args
-                .get("text")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| "missing 'text'".to_string())?;
-            Ok(("gui.type", serde_json::json!({ "text": text })))
-        }
-        "screen_capture" => {
-            let monitor = args.get("monitor").and_then(|v| v.as_u64());
-            let window = args.get("window").and_then(|v| v.as_str());
-            let mut params = serde_json::Map::new();
-            if let Some(monitor) = monitor {
-                params.insert("monitor".to_string(), serde_json::Value::from(monitor));
-            }
-            if let Some(window) = window {
-                params.insert("window".to_string(), serde_json::Value::from(window));
-            }
-            Ok(("screen.capture", serde_json::Value::Object(params)))
-        }
-        "cdp_execute" => {
-            let script = args
-                .get("script")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| "missing 'script'".to_string())?;
-            Ok(("cdp.execute", serde_json::json!({ "script": script })))
-        }
-        _ => Err(format!("unsupported pares-manus tool '{tool_name}'")),
-    }
-}
 
 async fn call_pares_manus(
     ws_url: &str,
@@ -2514,9 +2369,6 @@ impl PluginCrudProcedure {
     }
 }
 
-fn parse_tool_args(raw: &str) -> Result<serde_json::Value, String> {
-    serde_json::from_str(raw).map_err(|e| format!("invalid tool arguments: {e}"))
-}
 
 fn tool_definitions() -> Vec<ToolDefinition> {
     vec![
@@ -2795,185 +2647,21 @@ fn build_system_prompt(path: Option<PathBuf>) -> Result<String, String> {
     Ok("You are Pares Radix, an AI agent built on the plures technology stack. Be direct, use tools proactively, and push commits without asking.".to_string())
 }
 
-fn parse_sync_topic_key(raw: &str) -> Result<[u8; 32], String> {
-    let trimmed = raw.trim();
-    let value = trimmed.strip_prefix("0x").unwrap_or(trimmed);
-    if value.len() != 64 {
-        return Err("sync topic key must be 64 hex characters (32 bytes)".to_string());
-    }
-
-    let mut key = [0u8; 32];
-    for i in 0..32 {
-        let pair = &value[(i * 2)..(i * 2 + 2)];
-        key[i] = u8::from_str_radix(pair, 16)
-            .map_err(|_| format!("invalid hex byte at position {}: {pair}", i * 2))?;
-    }
-    Ok(key)
-}
 
 const ADAPTER_DISCOVERY_TIMEOUT: Duration = Duration::from_millis(1200);
 const ADAPTER_DISCOVERY_INTERVAL: Duration = Duration::from_millis(200);
 const TELEGRAM_RECONNECT_MAX_ATTEMPTS: u32 = 8;
 const TELEGRAM_RECONNECT_BASE_DELAY_SECS: u64 = 2;
 const TELEGRAM_RECONNECT_MAX_DELAY_SECS: u64 = 30;
-const MEMORY_MONITOR_INTERVAL_SECS: u64 = 60;
 const MANUS_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MANUS_RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SingleConnectionConflict {
-    kind: String,
-    connection_id: String,
-    hosts: Vec<String>,
-}
-
-fn sanitize_hostname(raw: &str) -> String {
-    let mut value = String::new();
-    let mut prev_underscore = false;
-    for c in raw.trim().chars() {
-        let mapped = if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
-            c
-        } else {
-            '_'
-        };
-        if mapped == '_' {
-            if prev_underscore {
-                continue;
-            }
-            prev_underscore = true;
-        } else {
-            prev_underscore = false;
-        }
-        value.push(mapped);
-    }
-    value = value.trim_matches('_').to_string();
-    if value.is_empty() {
-        value = "unknown-host".to_string();
-    }
-    value
-}
-
-fn current_hostname() -> String {
-    if let Ok(value) = std::env::var("HOSTNAME") {
-        let clean = sanitize_hostname(&value);
-        if clean != "unknown-host" {
-            return clean;
-        }
-    }
-    if let Ok(value) = std::env::var("COMPUTERNAME") {
-        let clean = sanitize_hostname(&value);
-        if clean != "unknown-host" {
-            return clean;
-        }
-    }
-    #[cfg(unix)]
-    if let Ok(value) = std::fs::read_to_string("/etc/hostname") {
-        let clean = sanitize_hostname(&value);
-        if clean != "unknown-host" {
-            return clean;
-        }
-    }
-    "unknown-host".to_string()
-}
 
 // NOTE (B1 Option A, Stage R2): the self-update command/task builders that used
 // to live inline here have been RELOCATED into `crate::self_update` (the host now
 // owns its self-update behavior, single source of truth — ADR-0010). Callers in
 // this module use `crate::self_update::*`.
 
-#[allow(dead_code)] // Used on Linux only (/proc/self/status)
-fn parse_vm_rss_kib(contents: &str) -> Option<u64> {
-    contents.lines().find_map(|line| {
-        let line = line.trim();
-        if !line.starts_with("VmRSS:") {
-            return None;
-        }
-        line.split_whitespace().nth(1)?.parse::<u64>().ok()
-    })
-}
-
-fn current_process_rss_kib() -> Option<u64> {
-    #[cfg(target_os = "linux")]
-    {
-        let status = std::fs::read_to_string("/proc/self/status").ok()?;
-        parse_vm_rss_kib(&status)
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        None
-    }
-}
-
-fn parse_watchdog_ping_interval(watchdog_usec: &str) -> Option<Duration> {
-    let micros = watchdog_usec.trim().parse::<u64>().ok()?;
-    if micros == 0 {
-        return None;
-    }
-    let half = micros / 2;
-    let ping_interval_micros = std::cmp::max(half, 1_000_000);
-    Some(Duration::from_micros(ping_interval_micros))
-}
-
-#[cfg(unix)]
-fn systemd_notify(state: &str) -> Result<(), String> {
-    use std::os::unix::net::UnixDatagram;
-
-    let notify_socket = match std::env::var("NOTIFY_SOCKET") {
-        Ok(v) if !v.trim().is_empty() => v,
-        _ => return Ok(()),
-    };
-
-    let sock = UnixDatagram::unbound().map_err(|e| format!("sd_notify socket failed: {e}"))?;
-    if notify_socket.starts_with('@') {
-        return Err("abstract NOTIFY_SOCKET is not supported in this build".to_string());
-    }
-
-    sock.send_to(state.as_bytes(), &notify_socket)
-        .map_err(|e| format!("sd_notify send failed: {e}"))?;
-
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn systemd_notify(_state: &str) -> Result<(), String> {
-    Ok(())
-}
-
-fn spawn_memory_monitor() -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(MEMORY_MONITOR_INTERVAL_SECS));
-        loop {
-            interval.tick().await;
-            if let Some(rss_kib) = current_process_rss_kib() {
-                tracing::info!(
-                    memory_rss_kib = rss_kib,
-                    commit = env!("GIT_COMMIT_HASH"),
-                    "process memory usage"
-                );
-            }
-        }
-    })
-}
-
-fn spawn_systemd_watchdog() -> Option<tokio::task::JoinHandle<()>> {
-    let watchdog_usec = std::env::var("WATCHDOG_USEC").ok()?;
-    let ping_interval = parse_watchdog_ping_interval(&watchdog_usec)?;
-
-    if let Err(e) = systemd_notify("READY=1") {
-        tracing::warn!("failed to send systemd READY=1: {e}");
-    }
-
-    Some(tokio::spawn(async move {
-        let mut interval = tokio::time::interval(ping_interval);
-        loop {
-            interval.tick().await;
-            if let Err(e) = systemd_notify("WATCHDOG=1") {
-                tracing::warn!("failed to send systemd WATCHDOG=1: {e}");
-            }
-        }
-    }))
-}
 
 async fn run_adapter_with_recovery(
     adapter: &TelegramAdapter,
@@ -3124,56 +2812,6 @@ async fn read_host_adapter_configs(
     Ok(records)
 }
 
-fn detect_single_connection_conflicts(
-    local_host: &str,
-    records: &[HostAdapterRecord],
-) -> Vec<SingleConnectionConflict> {
-    use std::collections::{BTreeMap, BTreeSet};
-
-    let mut owners: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
-    for record in records {
-        for adapter in &record.adapters {
-            if !adapter.single_connection || adapter.connection_id.trim().is_empty() {
-                continue;
-            }
-            owners
-                .entry((adapter.kind.clone(), adapter.connection_id.clone()))
-                .or_default()
-                .insert(record.host.clone());
-        }
-    }
-
-    owners
-        .into_iter()
-        .filter_map(|((kind, connection_id), hosts)| {
-            if hosts.len() < 2 || !hosts.contains(local_host) {
-                return None;
-            }
-            Some(SingleConnectionConflict {
-                kind,
-                connection_id,
-                hosts: hosts.into_iter().collect(),
-            })
-        })
-        .collect()
-}
-
-fn redact_connection_id(value: &str) -> String {
-    let len = value.chars().count();
-    if len <= 8 {
-        return "********".to_string();
-    }
-    let start: String = value.chars().take(4).collect();
-    let end: String = value
-        .chars()
-        .rev()
-        .take(4)
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect();
-    format!("{start}…{end}")
-}
 
 // ===== Agent command handlers (former run_with_providers match arms) =====
 
@@ -4779,7 +4417,7 @@ pub(crate) async fn run_serve(
                     tracing::warn!("systemd notify: {e}");
                 }
 
-                let memory_monitor = spawn_memory_monitor();
+                let memory_monitor = spawn_memory_monitor(env!("GIT_COMMIT_HASH"));
                 let watchdog = spawn_systemd_watchdog();
                 tokio::signal::ctrl_c().await.ok();
                 tracing::info!("Shutdown signal received");
@@ -4995,7 +4633,7 @@ pub(crate) async fn run_serve(
                 tracing::info!("Heartbeat runner started (with task manager + event spine)");
             }
 
-            let memory_monitor = spawn_memory_monitor();
+            let memory_monitor = spawn_memory_monitor(env!("GIT_COMMIT_HASH"));
             let watchdog = spawn_systemd_watchdog();
 
             // Spawn autonomous task dispatch loop (IO boundary for autonomous-dispatch.px)
@@ -6008,82 +5646,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn detect_single_connection_conflicts_for_local_host() {
-        let records = vec![
-            HostAdapterRecord {
-                host: "alpha".to_string(),
-                adapters: vec![HostAdapterConfig {
-                    kind: "telegram".to_string(),
-                    connection_id: "token-a".to_string(),
-                    single_connection: true,
-                }],
-            },
-            HostAdapterRecord {
-                host: "beta".to_string(),
-                adapters: vec![HostAdapterConfig {
-                    kind: "telegram".to_string(),
-                    connection_id: "token-a".to_string(),
-                    single_connection: true,
-                }],
-            },
-        ];
-        let conflicts = detect_single_connection_conflicts("alpha", &records);
-        assert_eq!(conflicts.len(), 1);
-        assert_eq!(conflicts[0].kind, "telegram");
-        assert_eq!(
-            conflicts[0].hosts,
-            vec!["alpha".to_string(), "beta".to_string()]
-        );
-    }
-
-    #[test]
-    fn detect_single_connection_conflicts_ignores_non_single_connections() {
-        let records = vec![
-            HostAdapterRecord {
-                host: "alpha".to_string(),
-                adapters: vec![HostAdapterConfig {
-                    kind: "local".to_string(),
-                    connection_id: "n/a".to_string(),
-                    single_connection: false,
-                }],
-            },
-            HostAdapterRecord {
-                host: "beta".to_string(),
-                adapters: vec![HostAdapterConfig {
-                    kind: "local".to_string(),
-                    connection_id: "n/a".to_string(),
-                    single_connection: false,
-                }],
-            },
-        ];
-        let conflicts = detect_single_connection_conflicts("alpha", &records);
-        assert!(conflicts.is_empty());
-    }
-
-    #[test]
-    fn detect_single_connection_conflicts_ignores_non_local_conflicts() {
-        let records = vec![
-            HostAdapterRecord {
-                host: "beta".to_string(),
-                adapters: vec![HostAdapterConfig {
-                    kind: "telegram".to_string(),
-                    connection_id: "token-a".to_string(),
-                    single_connection: true,
-                }],
-            },
-            HostAdapterRecord {
-                host: "gamma".to_string(),
-                adapters: vec![HostAdapterConfig {
-                    kind: "telegram".to_string(),
-                    connection_id: "token-a".to_string(),
-                    single_connection: true,
-                }],
-            },
-        ];
-        let conflicts = detect_single_connection_conflicts("alpha", &records);
-        assert!(conflicts.is_empty());
-    }
 
     #[test]
     fn relocated_self_update_task_from_env_builds_interval_task() {
@@ -6109,79 +5671,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn parse_vm_rss_kib_extracts_numeric_value() {
-        let status = "Name:\tpares-radix\nVmRSS:\t   42104 kB\nThreads:\t6\n";
-        assert_eq!(parse_vm_rss_kib(status), Some(42104));
-    }
-
-    #[test]
-    fn parse_watchdog_ping_interval_uses_half_of_watchdog_usec() {
-        let interval = parse_watchdog_ping_interval("4000000").expect("watchdog interval");
-        assert_eq!(interval, Duration::from_secs(2));
-    }
-
-    #[test]
-    fn parse_watchdog_ping_interval_has_safe_minimum() {
-        let interval = parse_watchdog_ping_interval("1000").expect("watchdog interval");
-        assert_eq!(interval, Duration::from_secs(1));
-    }
-
-    #[test]
-    fn extract_verbose_tool_marker_detects_and_strips_prefix() {
-        let (is_verbose, stripped) =
-            extract_verbose_tool_marker("__PARES_VERBOSE_TOOL_DETAILS__:run diagnostics");
-        assert!(is_verbose);
-        assert_eq!(stripped, "run diagnostics");
-    }
-
-    #[test]
-    fn extract_verbose_tool_marker_preserves_plain_content() {
-        let (is_verbose, stripped) = extract_verbose_tool_marker("hello");
-        assert!(!is_verbose);
-        assert_eq!(stripped, "hello");
-    }
-
-    #[test]
-    fn format_verbose_tool_traces_renders_tool_name_and_result() {
-        let traces = vec![ToolCallTrace {
-            tool_name: "web_search".to_string(),
-            arguments: serde_json::json!({"q":"status"}),
-            result: "{\"ok\":true}".to_string(),
-            is_error: false,
-        }];
-        let formatted = format_verbose_tool_traces(&traces);
-        assert!(formatted.contains("Tool execution details:"));
-        assert!(formatted.contains("web_search [ok]"));
-        assert!(formatted.contains("result: {\"ok\":true}"));
-    }
-
-    #[test]
-    fn manus_request_maps_browser_click_to_gui_click() {
-        let (method, params) =
-            manus_request_for_tool("browser_click", serde_json::json!({"x": 21, "y": 34}))
-                .expect("request should map");
-        assert_eq!(method, "gui.click");
-        assert_eq!(params, serde_json::json!({"x": 21, "y": 34}));
-    }
-
-    #[test]
-    fn manus_request_requires_browser_open_url() {
-        let err = manus_request_for_tool("browser_open", serde_json::json!({}))
-            .expect_err("missing url should fail");
-        assert!(err.contains("missing 'url'"));
-    }
-
-    #[test]
-    fn manus_request_maps_screen_capture_optional_fields() {
-        let (method, params) = manus_request_for_tool(
-            "screen_capture",
-            serde_json::json!({"monitor": 1, "window": "Edge"}),
-        )
-        .expect("request should map");
-        assert_eq!(method, "screen.capture");
-        assert_eq!(params, serde_json::json!({"monitor": 1, "window": "Edge"}));
-    }
 
     #[tokio::test]
     async fn runtime_model_control_persists_primary_model_override() {
@@ -6261,16 +5750,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn normalize_log_level_accepts_known_values() {
-        assert_eq!(normalize_log_level("DEBUG").unwrap(), "debug");
-        assert_eq!(normalize_log_level(" warn ").unwrap(), "warn");
-    }
-
-    #[test]
-    fn normalize_log_level_rejects_unknown_values() {
-        assert!(normalize_log_level("verbose").is_err());
-    }
 
     #[tokio::test]
     async fn runtime_config_control_persists_model_endpoint_and_log_level() {

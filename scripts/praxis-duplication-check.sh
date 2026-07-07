@@ -50,6 +50,13 @@ COMMON_FN_NAMES="$COMMON_FN_NAMES|render|update|view|name|id|len|is_empty|get|se
 COMMON_FN_NAMES="$COMMON_FN_NAMES|push|pop|clear|iter|next|parse|serialize|deserialize"
 COMMON_FN_NAMES="$COMMON_FN_NAMES|display|debug|error|warn|info|trace|log"
 COMMON_FN_NAMES="$COMMON_FN_NAMES|open|close|read|write|flush|seek|with_store|with_config"
+# Idiomatic builder-setter methods: `fn with_x(mut self, x) -> Self { self.x = Some(x); self }`.
+# These recur across unrelated builder structs in different crates (TelegramAdapter,
+# Agent, Heartbeat, RadixHandler, App, ...). They are NOT shared operational logic —
+# each sets a field on its OWN type — so they cannot (and must not) be hoisted into a
+# single home. Same rationale as the with_store/with_config/with_event_spine entries.
+COMMON_FN_NAMES="$COMMON_FN_NAMES|with_task_manager|with_state_store|with_session_manager"
+COMMON_FN_NAMES="$COMMON_FN_NAMES|with_pipeline_emitter|with_plugin_runtime"
 COMMON_FN_NAMES="$COMMON_FN_NAMES|check|validate|verify|matches|search|aggregate|empty"
 COMMON_FN_NAMES="$COMMON_FN_NAMES|handles|rules|category|label|evaluate|register"
 COMMON_FN_NAMES="$COMMON_FN_NAMES|approve|remove|list|is_complete|is_valid|make_entry|make_event"
@@ -64,10 +71,11 @@ KNOWN_DELEGATES="build_nixos_update_command|build_self_update_task|self_update_t
 KNOWN_DELEGATES="$KNOWN_DELEGATES|build_nixos_update_command_delegates_to_agenda"
 # Known debt — tracked for cleanup, excluded from CI gate until resolved.
 # TODO: Extract shell_single_quote to a shared utils crate
-# TODO: Extract current_process_rss_kib to a shared diagnostics module
 # TODO: Unify build_system_prompt between cli and core
 # TODO: Deduplicate json_error_converted_from_serde test helpers
-KNOWN_DEBT="shell_single_quote|current_process_rss_kib|build_system_prompt|json_error_converted_from_serde"
+# NOTE: current_process_rss_kib was extracted into the shared `agens-hostkit`
+#       crate (pares_agens_hostkit) — debt resolved, no longer excluded here.
+KNOWN_DEBT="shell_single_quote|build_system_prompt|json_error_converted_from_serde"
 
 REAL_DUPLICATES=$(
     echo "$DUPLICATES" \

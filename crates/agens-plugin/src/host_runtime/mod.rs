@@ -35,9 +35,10 @@ use std::sync::Arc;
 use clap::{Parser, Subcommand};
 #[allow(unused_imports)]
 use tracing::{debug, error, info, warn};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::agent_commands::AgensProvider;
+use pares_agens_hostkit::build_env_filter;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -51,20 +52,6 @@ struct Cli {
     command: Commands,
 }
 
-fn normalize_log_level(value: &str) -> Result<String, String> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "trace" | "debug" | "info" | "warn" | "error" => Ok(value.trim().to_ascii_lowercase()),
-        _ => Err("log level must be one of: trace, debug, info, warn, error".to_string()),
-    }
-}
-
-fn build_env_filter(level: &str) -> Result<EnvFilter, String> {
-    let level = normalize_log_level(level)?;
-    let directive = level
-        .parse()
-        .map_err(|e| format!("failed to parse '{level}' as tracing directive: {e}"))?;
-    Ok(EnvFilter::from_default_env().add_directive(directive))
-}
 #[derive(Debug, Subcommand)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
@@ -596,21 +583,5 @@ fn collect_px_in_dir(dir: &std::path::Path, paths: &mut Vec<PathBuf>, depth: usi
                 collect_px_in_dir(&ep, paths, depth - 1);
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalize_log_level_accepts_known_values() {
-        assert_eq!(normalize_log_level("DEBUG").unwrap(), "debug");
-        assert_eq!(normalize_log_level(" warn ").unwrap(), "warn");
-    }
-
-    #[test]
-    fn normalize_log_level_rejects_unknown_values() {
-        assert!(normalize_log_level("verbose").is_err());
     }
 }
