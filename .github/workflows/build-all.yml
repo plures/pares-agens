@@ -21,6 +21,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ADR-0015: build the FULL workspace so a duplicate `[[bin]] name` (link
+      # collision, e.g. two `pares-agens` bins) fails CI. Building only
+      # `-p pares-agens-cli` below would not catch a workspace link collision.
+      - name: Build workspace (ADR-0015 collision guard)
+        run: cargo build --workspace
+
       - name: Build CLI (release)
         run: cargo build --release -p pares-agens-cli
 

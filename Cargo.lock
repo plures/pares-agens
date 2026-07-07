@@ -5065,19 +5065,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pares-agens-praxis"
-version = "1.14.0"
-dependencies = [
- "chrono",
- "pest",
- "pest_derive",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "uuid",
-]
-
-[[package]]
 name = "pares-agens-privacy"
 version = "1.14.0"
 dependencies = [
