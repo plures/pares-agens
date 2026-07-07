@@ -42,4 +42,15 @@ pub enum MigrateError {
     /// Failed to serialize data to JSON for output.
     #[error("serialization failed: {0}")]
     Serialize(serde_json::Error),
+    /// Failed to open or query an OpenClaw SQLite database (e.g.
+    /// `memory/main.sqlite`), including an unexpected schema (missing
+    /// `chunks` table).
+    #[error("failed to read sqlite database {path}: {source}")]
+    Sqlite {
+        /// Path of the SQLite database that could not be read.
+        path: PathBuf,
+        /// Underlying rusqlite error.
+        #[source]
+        source: rusqlite::Error,
+    },
 }

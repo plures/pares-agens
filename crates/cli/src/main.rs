@@ -1892,7 +1892,12 @@ const TELEGRAM_RECONNECT_MAX_ATTEMPTS: u32 = 8;
 const TELEGRAM_RECONNECT_BASE_DELAY_SECS: u64 = 2;
 const TELEGRAM_RECONNECT_MAX_DELAY_SECS: u64 = 30;
 const MEMORY_MONITOR_INTERVAL_SECS: u64 = 60;
+// Staged (not yet wired to a live path) NixOS self-update scaffolding. Kept for
+// the upcoming self-update flow; annotated so the crate's `-D warnings` clippy
+// gate stays green until the entry point is wired.
+#[allow(dead_code)]
 const DEFAULT_NIX_FLAKE_DIR: &str = ".";
+#[allow(dead_code)]
 const DEFAULT_NIX_HOST: &str = "praxisbot";
 const MANUS_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MANUS_RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -1953,16 +1958,19 @@ fn current_hostname() -> String {
     "unknown-host".to_string()
 }
 
+#[allow(dead_code)] // staged self-update helper; not yet wired to a live path
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 /// Delegate to the canonical self-update command builder in `pares_agens_agenda`.
 /// See ADR-0010: no duplicated operational logic across crates.
+#[allow(dead_code)] // staged self-update helper; not yet wired to a live path
 fn build_nixos_update_command(flake_dir: &str, host: &str) -> String {
     pares_agens_agenda::self_update::build_update_command(flake_dir, host)
 }
 
+#[allow(dead_code)] // staged self-update helper; not yet wired to a live path
 fn build_self_update_task(
     flake_dir: &str,
     host: &str,
@@ -1975,6 +1983,7 @@ fn self_update_task_from_env() -> pares_agens_agenda::scheduler::Task {
     pares_agens_agenda::self_update::self_update_task_from_env()
 }
 
+#[allow(dead_code)] // staged memory-monitor helper; not yet wired to a live path
 fn parse_vm_rss_kib(contents: &str) -> Option<u64> {
     contents.lines().find_map(|line| {
         let line = line.trim();

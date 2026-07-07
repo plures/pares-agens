@@ -5,13 +5,17 @@
 //! ```text
 //! <output>/
 //!   memories.json     — [`pares_agens_core::memory::entry::MemoryEntry`] array
-//!   channels.json     — channel configuration (Telegram token, etc.)
+//!                       (imported from `memory/main.sqlite` chunks + any legacy
+//!                       `memories.json`)
+//!   channels.json     — channel configuration (Telegram bot token, etc.)
 //!   state.json        — PluresDB state entries (personality files)
-//!   procedures.json   — timer procedures converted from cron jobs
+//!   procedures.json   — timer procedures converted from legacy cron jobs
 //! ```
 //!
 //! In **dry-run** mode the output directory is never written; only
-//! [`MigrationReport`] is produced.
+//! [`MigrationReport`] is produced. The report accounts for every source that
+//! was found — channels, personality documents, and the memory corpus — so an
+//! empty or partial installation is *visible*, never silently dropped.
 
 use std::path::Path;
 
@@ -20,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    openclaw::{OpenClawCronJob, OpenClawInstallation},
+    openclaw::{MemorySource, OpenClawChunk, OpenClawCronJob, OpenClawInstallation},
     MigrateError,
 };
 
@@ -60,14 +64,28 @@ pub struct StateEntry {
 // ── Report ────────────────────────────────────────────────────────────────────
 
 /// Summary of a completed (or simulated) migration.
+///
+/// Every source discovered under the OpenClaw root is accounted for here so
+/// that an empty or partial installation is *visible* in the output rather than
+/// silently producing a hollow report.
 #[derive(Debug, Default)]
 pub struct MigrationReport {
-    /// Number of memory entries migrated.
+    /// Total number of memory entries migrated (SQLite chunks + legacy export).
     pub memories: usize,
+    /// Number of memory entries imported from `memory/main.sqlite` chunks.
+    pub memory_chunks: usize,
+    /// Number of memory entries imported from a legacy `memories.json`.
+    pub legacy_memories: usize,
+    /// Human-readable status of the memory sources (SQLite + pluresLM-store).
+    pub memory_status: String,
     /// Number of channel configs migrated.
     pub channels: usize,
+    /// Names of the channels that were migrated (e.g. `["telegram"]`).
+    pub channel_names: Vec<String>,
     /// Number of personality files imported as state entries.
     pub state_entries: usize,
+    /// State keys of the personality files imported (e.g. `["soul", "user"]`).
+    pub personality_keys: Vec<String>,
     /// Number of cron jobs converted to timer procedures.
     pub procedures: usize,
     /// Whether this was a dry run (no files were written).
@@ -75,13 +93,33 @@ pub struct MigrationReport {
 }
 
 impl MigrationReport {
-    /// Print a human-readable progress summary to stdout.
+    /// Print a human-readable summary to stdout.
     pub fn print(&self) {
         let mode = if self.dry_run { " (dry run)" } else { "" };
         println!("Migration complete{mode}:");
-        println!("  memories   : {}", self.memories);
-        println!("  channels   : {}", self.channels);
-        println!("  state      : {}", self.state_entries);
+        println!(
+            "  memories   : {} (sqlite chunks: {}, legacy: {})",
+            self.memories, self.memory_chunks, self.legacy_memories
+        );
+        println!("  memory src : {}", self.memory_status);
+        if self.channel_names.is_empty() {
+            println!("  channels   : 0");
+        } else {
+            println!(
+                "  channels   : {} [{}]",
+                self.channels,
+                self.channel_names.join(", ")
+            );
+        }
+        if self.personality_keys.is_empty() {
+            println!("  state      : 0");
+        } else {
+            println!(
+                "  state      : {} [{}]",
+                self.state_entries,
+                self.personality_keys.join(", ")
+            );
+        }
         println!("  procedures : {}", self.procedures);
     }
 }
@@ -117,6 +155,85 @@ fn cron_to_procedure(cron: &OpenClawCronJob) -> TimerProcedure {
     }
 }
 
+/// Convert a raw `chunks`-table row from OpenClaw's `main.sqlite` into a
+/// pares-agens [`MemoryEntry`].
+///
+/// The chunk's `source` document `path` is preserved as a `source:<path>` tag
+/// so provenance survives the import. Embeddings are intentionally left empty;
+/// pares-agens recomputes them on first recall.
+fn chunk_to_entry(chunk: &OpenClawChunk) -> MemoryEntry {
+    let mut tags = Vec::new();
+    if !chunk.path.is_empty() {
+        tags.push(format!("source:{}", chunk.path));
+    }
+    if !chunk.source.is_empty() && chunk.source != chunk.path {
+        tags.push(format!("origin:{}", chunk.source));
+    }
+    let created_at = if chunk.updated_at > 0 {
+        chrono::DateTime::from_timestamp(chunk.updated_at, 0)
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339())
+    } else {
+        chrono::Utc::now().to_rfc3339()
+    };
+    MemoryEntry {
+        id: if chunk.id.is_empty() {
+            Uuid::new_v4().to_string()
+        } else {
+            chunk.id.clone()
+        },
+        content: chunk.text.clone(),
+        // Imported chunks are documentation-derived; classify as Conversation
+        // (the neutral default) since OpenClaw chunks carry no agens category.
+        category: MemoryCategory::Conversation,
+        tags,
+        embedding: vec![],
+        score: 0.0,
+        created_at,
+    }
+}
+
+/// Build a one-line, honest description of the memory sources found.
+///
+/// This never reports "0" when a corpus exists on disk: if the SQLite file is
+/// present its chunk count is stated, and the separate `pluresLM-store/` is
+/// reported as present-but-not-yet-imported (import tracked as a follow-up).
+fn memory_status_line(src: &MemorySource) -> String {
+    let mut parts = Vec::new();
+    match (&src.sqlite_path, src.sqlite_size_bytes) {
+        (Some(_), size) => parts.push(format!(
+            "main.sqlite: {} chunks imported ({})",
+            src.chunks.len(),
+            human_size(size.unwrap_or(0))
+        )),
+        _ => parts.push("main.sqlite: not found".to_string()),
+    }
+    if src.has_plureslm_store() {
+        parts.push(format!(
+            "pluresLM-store/: present ({}), import pending (see praxis-gap)",
+            human_size(src.plureslm_store_size_bytes.unwrap_or(0))
+        ));
+    } else {
+        parts.push("pluresLM-store/: not found".to_string());
+    }
+    parts.join("; ")
+}
+
+/// Format a byte count as a short human-readable size (KiB/MiB/GiB).
+fn human_size(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    let b = bytes as f64;
+    if b < KIB {
+        format!("{bytes} B")
+    } else if b < KIB * KIB {
+        format!("{:.1} KiB", b / KIB)
+    } else if b < KIB * KIB * KIB {
+        format!("{:.1} MiB", b / (KIB * KIB))
+    } else {
+        format!("{:.1} GiB", b / (KIB * KIB * KIB))
+    }
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 /// Run the full migration from `source` to `output`.
@@ -130,16 +247,35 @@ pub fn run(source: &Path, output: &Path, dry_run: bool) -> Result<MigrationRepor
     // ── Phase 1: Load ──────────────────────────────────────────────────────
     println!("Loading OpenClaw installation from: {}", source.display());
     let inst = OpenClawInstallation::load(source)?;
+    let memory_status = memory_status_line(&inst.memory_source);
     println!(
-        "  Found {} memories, {} crons, {} personality files",
+        "  Config source: {}",
+        if inst.config_source_openclaw_json {
+            "openclaw.json"
+        } else if inst.config.telegram.is_some() || !inst.config.extra.is_empty() {
+            "config.json (legacy)"
+        } else {
+            "none found"
+        }
+    );
+    println!(
+        "  Found {} sqlite chunks, {} legacy memories, {} crons, {} personality files",
+        inst.memory_source.chunks.len(),
         inst.memories.len(),
         inst.crons.len(),
         inst.personality_files.len(),
     );
+    println!("  Memory source: {memory_status}");
 
     // ── Phase 2: Convert memories ──────────────────────────────────────────
     println!("Converting memories…");
-    let entries: Vec<MemoryEntry> = inst
+    let chunk_entries: Vec<MemoryEntry> = inst
+        .memory_source
+        .chunks
+        .iter()
+        .map(chunk_to_entry)
+        .collect();
+    let legacy_entries: Vec<MemoryEntry> = inst
         .memories
         .iter()
         .map(|m| MemoryEntry {
@@ -161,15 +297,38 @@ pub fn run(source: &Path, output: &Path, dry_run: bool) -> Result<MigrationRepor
             },
         })
         .collect();
-    println!("  {} memories converted", entries.len());
+    let chunk_count = chunk_entries.len();
+    let legacy_count = legacy_entries.len();
+    let mut entries = chunk_entries;
+    entries.extend(legacy_entries);
+    println!(
+        "  {} memories converted ({} from sqlite chunks, {} legacy)",
+        entries.len(),
+        chunk_count,
+        legacy_count
+    );
 
     // ── Phase 3: Convert channel configs ───────────────────────────────────
     println!("Converting channel configs…");
     let mut channels: Vec<ChannelConfig> = Vec::new();
     if let Some(tg) = &inst.config.telegram {
-        if !tg.token.is_empty() {
+        let token = tg.resolved_token();
+        if !token.is_empty() {
             let mut settings = serde_json::Map::new();
-            settings.insert("token".into(), serde_json::Value::String(tg.token.clone()));
+            settings.insert("token".into(), serde_json::Value::String(token.to_string()));
+            settings.insert("enabled".into(), serde_json::Value::Bool(tg.enabled));
+            let allow_from = tg.allow_from_strings();
+            if !allow_from.is_empty() {
+                settings.insert(
+                    "allowFrom".into(),
+                    serde_json::Value::Array(
+                        allow_from
+                            .into_iter()
+                            .map(serde_json::Value::String)
+                            .collect(),
+                    ),
+                );
+            }
             channels.push(ChannelConfig {
                 channel: "telegram".into(),
                 settings,
@@ -183,6 +342,7 @@ pub fn run(source: &Path, output: &Path, dry_run: bool) -> Result<MigrationRepor
             settings: inst.config.extra.clone(),
         });
     }
+    let channel_names: Vec<String> = channels.iter().map(|c| c.channel.clone()).collect();
     println!("  {} channel configs converted", channels.len());
 
     // ── Phase 4: Convert personality files → state ─────────────────────────
@@ -195,6 +355,7 @@ pub fn run(source: &Path, output: &Path, dry_run: bool) -> Result<MigrationRepor
             value: p.content.clone(),
         })
         .collect();
+    let personality_keys: Vec<String> = state.iter().map(|s| s.key.clone()).collect();
     println!("  {} personality files converted", state.len());
 
     // ── Phase 5: Convert cron jobs → timer procedures ──────────────────────
@@ -204,8 +365,13 @@ pub fn run(source: &Path, output: &Path, dry_run: bool) -> Result<MigrationRepor
 
     let report = MigrationReport {
         memories: entries.len(),
+        memory_chunks: chunk_count,
+        legacy_memories: legacy_count,
+        memory_status,
         channels: channels.len(),
+        channel_names,
         state_entries: state.len(),
+        personality_keys,
         procedures: procedures.len(),
         dry_run,
     };
@@ -326,10 +492,14 @@ mod tests {
             ],
             config: OpenClawConfig {
                 telegram: Some(OpenClawTelegramConfig {
-                    token: "123:ABC".into(),
+                    enabled: true,
+                    bot_token: "123:ABC".into(),
+                    ..Default::default()
                 }),
                 extra: serde_json::Map::new(),
             },
+            config_source_openclaw_json: false,
+            memory_source: crate::openclaw::MemorySource::default(),
             crons: vec![OpenClawCronJob {
                 name: "daily".into(),
                 schedule: "0 9 * * *".into(),
@@ -340,10 +510,12 @@ mod tests {
                 PersonalityFile {
                     key: "soul".into(),
                     content: "# Soul\nI am helpful.".into(),
+                    source_path: std::path::PathBuf::from("workspace/SOUL.md"),
                 },
                 PersonalityFile {
                     key: "identity".into(),
                     content: "# Identity\nPares Agens.".into(),
+                    source_path: std::path::PathBuf::from("workspace/IDENTITY.md"),
                 },
             ],
         }
@@ -493,6 +665,92 @@ mod tests {
         assert_eq!(
             report.channels, 0,
             "empty token should not produce a channel config"
+        );
+    }
+
+    // ── chunk_to_entry provenance ─────────────────────────────────────
+
+    #[test]
+    fn chunk_to_entry_preserves_provenance_and_id() {
+        let chunk = crate::openclaw::OpenClawChunk {
+            id: "c42".into(),
+            path: "AGENTS.md".into(),
+            source: "file".into(),
+            text: "the chunk body".into(),
+            updated_at: 1_700_000_000,
+        };
+        let entry = chunk_to_entry(&chunk);
+        assert_eq!(entry.id, "c42");
+        assert_eq!(entry.content, "the chunk body");
+        assert!(entry.tags.contains(&"source:AGENTS.md".to_string()));
+        assert!(entry.tags.contains(&"origin:file".to_string()));
+        assert!(entry.embedding.is_empty());
+    }
+
+    #[test]
+    fn chunk_with_empty_id_gets_uuid() {
+        let chunk = crate::openclaw::OpenClawChunk {
+            id: String::new(),
+            path: "x".into(),
+            source: String::new(),
+            text: "body".into(),
+            updated_at: 0,
+        };
+        let entry = chunk_to_entry(&chunk);
+        assert!(!entry.id.is_empty(), "empty chunk id must become a UUID");
+    }
+
+    // ── Real end-to-end: sqlite chunks import + honest memory status ────────
+
+    #[test]
+    fn run_imports_sqlite_chunks_and_reports_memory_status() {
+        let src_dir = tempfile::tempdir().unwrap();
+        let out_dir = tempfile::tempdir().unwrap();
+
+        // Build a real chunks DB at memory/main.sqlite.
+        let mem_dir = src_dir.path().join("memory");
+        std::fs::create_dir_all(&mem_dir).unwrap();
+        let conn = rusqlite::Connection::open(mem_dir.join("main.sqlite")).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE chunks (id TEXT PRIMARY KEY, path TEXT, source TEXT, \
+             start_line INTEGER, end_line INTEGER, hash TEXT, model TEXT, \
+             text TEXT, embedding TEXT, updated_at INTEGER)",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO chunks (id, path, source, text, updated_at) VALUES \
+             ('a','AGENTS.md','file','first',1700000000), \
+             ('b','SOUL.md','file','second',1700000100)",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        // Also a real openclaw.json with a telegram channel + workspace personality.
+        std::fs::write(
+            src_dir.path().join("openclaw.json"),
+            r#"{"channels":{"telegram":{"enabled":true,"botToken":"999:TOK","allowFrom":["111"]}}}"#,
+        )
+        .unwrap();
+        let ws = src_dir.path().join("workspace");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::write(ws.join("SOUL.md"), "# Soul").unwrap();
+
+        let report = run(src_dir.path(), out_dir.path(), true).unwrap();
+
+        assert!(report.dry_run);
+        assert_eq!(report.memory_chunks, 2, "both sqlite chunks imported");
+        assert_eq!(report.legacy_memories, 0);
+        assert_eq!(report.memories, 2);
+        assert_eq!(report.channels, 1);
+        assert_eq!(report.channel_names, vec!["telegram".to_string()]);
+        assert_eq!(report.state_entries, 1);
+        assert_eq!(report.personality_keys, vec!["soul".to_string()]);
+        // Honest, non-zero memory status mentioning the imported chunks.
+        assert!(
+            report.memory_status.contains("2 chunks imported"),
+            "memory_status should report chunk count, got: {}",
+            report.memory_status
         );
     }
 }

@@ -23,6 +23,10 @@ uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
+# SQLite reader for importing OpenClaw's `memory/main.sqlite` chunk index during
+# migration. `bundled` compiles SQLite from source so no system libsqlite3 is
+# required (verified building on x86_64-pc-windows-msvc).
+rusqlite = { version = "0.32", features = ["bundled"] }
 teloxide = { version = "0.17", features = ["macros", "throttle"] }
 clap = { version = "4", features = ["derive", "env"] }
 

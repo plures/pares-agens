@@ -23,6 +23,7 @@ async-trait.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 chrono.workspace = true
+rusqlite.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 reqwest.workspace = true
