@@ -26,7 +26,7 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 /// A scheduled task definition.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Task {
     /// Unique task identifier.
     pub id: String,
@@ -44,6 +44,67 @@ pub struct Task {
     /// Last execution result (truncated).
     #[serde(default)]
     pub last_result: Option<String>,
+    /// Optional failure-alert policy: alert after N consecutive failures.
+    #[serde(default)]
+    pub failure_alert: Option<FailureAlert>,
+    /// Count of consecutive failed runs (reset to 0 on any success).
+    #[serde(default)]
+    pub consecutive_failures: u32,
+    /// When the last failure alert fired (for cooldown enforcement).
+    #[serde(default)]
+    pub last_alert_at: Option<DateTime<Utc>>,
+}
+
+/// Failure-alert policy for a [`Task`] — mirrors OpenClaw `failureAlert`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FailureAlert {
+    /// Number of *consecutive* failures required before alerting.
+    pub after: u32,
+    /// Minimum seconds between alerts for this task (0 = alert every time the
+    /// threshold is met).
+    #[serde(default)]
+    pub cooldown_secs: u64,
+}
+
+impl Task {
+    /// Record a failed run: set `last_result`, increment the consecutive-failure
+    /// streak, and return a [`FailureAlertEvent`] iff a [`FailureAlert`] policy is
+    /// configured, the streak has reached `after`, and the cooldown since the last
+    /// alert has elapsed. Stamps `last_alert_at` when it returns an event.
+    ///
+    /// Pure decision logic (no I/O, no clock of its own — `now` is passed in) so it
+    /// is exhaustively unit-testable independent of the async run-loop.
+    pub fn record_failure(
+        &mut self,
+        err_text: String,
+        now: DateTime<Utc>,
+    ) -> Option<FailureAlertEvent> {
+        self.last_result = Some(err_text.clone());
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+        let policy = self.failure_alert.clone()?;
+        if policy.after == 0 || self.consecutive_failures < policy.after {
+            return None;
+        }
+        let cooled = match self.last_alert_at {
+            None => true,
+            Some(prev) => (now - prev).num_seconds() >= policy.cooldown_secs as i64,
+        };
+        if !cooled {
+            return None;
+        }
+        self.last_alert_at = Some(now);
+        Some(FailureAlertEvent {
+            task_id: self.id.clone(),
+            task_name: self.name.clone(),
+            consecutive_failures: self.consecutive_failures,
+            last_error: err_text,
+        })
+    }
+
+    /// Record a successful run: reset the consecutive-failure streak to zero.
+    pub fn record_success(&mut self) {
+        self.consecutive_failures = 0;
+    }
 }
 
 /// Schedule definition — when a task should fire.
@@ -72,6 +133,32 @@ pub enum Schedule {
 
 /// Callback type for task execution.
 pub type TaskExecutor = Arc<dyn Fn(String) -> tokio::task::JoinHandle<String> + Send + Sync>;
+
+impl Default for Schedule {
+    fn default() -> Self {
+        Schedule::Interval { every_secs: 0 }
+    }
+}
+
+/// A fired failure alert, handed to the scheduler's alert sink.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailureAlertEvent {
+    /// Task id that crossed its failure threshold.
+    pub task_id: String,
+    /// Task human-readable name.
+    pub task_name: String,
+    /// Number of consecutive failures at the moment of alerting.
+    pub consecutive_failures: u32,
+    /// The most recent error text (truncated).
+    pub last_error: String,
+}
+
+/// Callback invoked when a task crosses its [`FailureAlert`] threshold (after the
+/// cooldown has elapsed). Injected like [`TaskExecutor`] so delivery (channel
+/// message, webhook, log) is the caller's concern and the scheduler stays
+/// transport-agnostic and unit-testable. Absent sink = alerts are simply not
+/// delivered (honest no-op, not a stub).
+pub type AlertSink = Arc<dyn Fn(FailureAlertEvent) + Send + Sync>;
 
 const TASK_PREFIX: &str = "agenda/task/";
 const TASK_ACTOR: &str = "plures-agenda";
@@ -187,6 +274,7 @@ pub struct Scheduler {
     tasks: Arc<RwLock<HashMap<String, Task>>>,
     executor: Option<TaskExecutor>,
     store: Option<Arc<dyn TaskStore>>,
+    alert_sink: Option<AlertSink>,
 }
 
 impl Scheduler {
@@ -196,6 +284,7 @@ impl Scheduler {
             tasks: Arc::new(RwLock::new(HashMap::new())),
             executor: None,
             store: None,
+            alert_sink: None,
         }
     }
 
@@ -211,6 +300,16 @@ impl Scheduler {
     /// Configure persistent task storage.
     pub fn with_store(mut self, store: Arc<dyn TaskStore>) -> Self {
         self.store = Some(store);
+        self
+    }
+
+    /// Set the failure-alert sink callback.
+    ///
+    /// Invoked with a [`FailureAlertEvent`] when a task with a [`FailureAlert`]
+    /// policy reaches `after` consecutive failures and its cooldown has elapsed.
+    /// Delivery (channel message, webhook, log) is the caller's concern.
+    pub fn with_alert_sink(mut self, sink: AlertSink) -> Self {
+        self.alert_sink = Some(sink);
         self
     }
 
@@ -295,6 +394,7 @@ impl Scheduler {
         let tasks = Arc::clone(&self.tasks);
         let executor = self.executor.clone();
         let store = self.store.clone();
+        let alert_sink = self.alert_sink.clone();
 
         info!("Scheduler started — checking every 10s");
 
@@ -326,6 +426,7 @@ impl Scheduler {
                     let tasks_ref = Arc::clone(&tasks);
                     let exec = Arc::clone(executor);
                     let task_store = store.clone();
+                    let task_alert = alert_sink.clone();
 
                     tokio::spawn(async move {
                         let handle = exec(cmd);
@@ -341,6 +442,8 @@ impl Scheduler {
                                 if let Some(t) = tasks_ref.write().await.get_mut(&task_id) {
                                     t.last_run = Some(Utc::now());
                                     t.last_result = Some(truncated);
+                                    // Success resets the consecutive-failure streak.
+                                    t.record_success();
                                     persisted_task = Some(t.clone());
                                 }
                                 if let (Some(task), Some(store)) =
@@ -353,11 +456,24 @@ impl Scheduler {
                             }
                             Err(e) => {
                                 error!(task = %task_id, error = %e, "task execution failed");
+                                let err_text = format!("ERROR: {e}");
                                 let mut persisted_task = None;
+                                let mut alert_event: Option<FailureAlertEvent> = None;
                                 if let Some(t) = tasks_ref.write().await.get_mut(&task_id) {
                                     t.last_run = Some(Utc::now());
-                                    t.last_result = Some(format!("ERROR: {e}"));
+                                    // Increment the streak + decide whether to alert
+                                    // (pure logic in Task::record_failure).
+                                    alert_event = t.record_failure(err_text.clone(), Utc::now());
                                     persisted_task = Some(t.clone());
+                                }
+                                // Fire the alert outside the tasks lock.
+                                if let (Some(ev), Some(sink)) = (alert_event, task_alert) {
+                                    warn!(
+                                        task = %task_id,
+                                        failures = ev.consecutive_failures,
+                                        "failure-alert threshold reached"
+                                    );
+                                    sink(ev);
                                 }
                                 if let (Some(task), Some(store)) =
                                     (persisted_task, task_store.clone())
@@ -530,6 +646,7 @@ impl Scheduler {
             enabled: true,
             last_run: None,
             last_result: None,
+            ..Default::default()
         })
     }
 
@@ -605,6 +722,7 @@ mod tests {
             enabled: true,
             last_run: None,
             last_result: None,
+            ..Default::default()
         };
         assert!(Scheduler::is_due(&task, &Utc::now()));
     }
@@ -619,6 +737,7 @@ mod tests {
             enabled: true,
             last_run: Some(Utc::now()),
             last_result: None,
+            ..Default::default()
         };
         assert!(!Scheduler::is_due(&task, &Utc::now()));
     }
@@ -634,6 +753,7 @@ mod tests {
             enabled: true,
             last_run: None,
             last_result: None,
+            ..Default::default()
         };
         assert!(Scheduler::is_due(&task, &Utc::now()));
     }
@@ -649,6 +769,7 @@ mod tests {
             enabled: true,
             last_run: Some(Utc::now()),
             last_result: None,
+            ..Default::default()
         };
         assert!(!Scheduler::is_due(&task, &Utc::now()));
     }
@@ -663,9 +784,86 @@ mod tests {
             enabled: false,
             last_run: None,
             last_result: None,
+            ..Default::default()
         };
         // is_due doesn't check enabled — caller does
         assert!(Scheduler::is_due(&task, &Utc::now()));
+    }
+
+    fn alerting_task(after: u32, cooldown_secs: u64) -> Task {
+        Task {
+            id: "fa".into(),
+            name: "failing task".into(),
+            schedule: Schedule::Interval { every_secs: 60 },
+            command: "false".into(),
+            enabled: true,
+            failure_alert: Some(FailureAlert {
+                after,
+                cooldown_secs,
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn record_failure_alerts_only_after_threshold() {
+        let now = Utc::now();
+        let mut t = alerting_task(3, 0);
+        // Failures 1 and 2 must NOT alert.
+        assert!(t.record_failure("ERROR: boom".into(), now).is_none());
+        assert_eq!(t.consecutive_failures, 1);
+        assert!(t.record_failure("ERROR: boom".into(), now).is_none());
+        assert_eq!(t.consecutive_failures, 2);
+        // Failure 3 crosses the threshold -> alert.
+        let ev = t
+            .record_failure("ERROR: boom".into(), now)
+            .expect("threshold reached");
+        assert_eq!(ev.consecutive_failures, 3);
+        assert_eq!(ev.task_id, "fa");
+        assert_eq!(ev.last_error, "ERROR: boom");
+    }
+
+    #[test]
+    fn record_success_resets_streak() {
+        let now = Utc::now();
+        let mut t = alerting_task(2, 0);
+        t.record_failure("ERROR: x".into(), now);
+        assert_eq!(t.consecutive_failures, 1);
+        t.record_success();
+        assert_eq!(t.consecutive_failures, 0);
+        // After a reset, a single failure is below the threshold again.
+        assert!(t.record_failure("ERROR: x".into(), now).is_none());
+    }
+
+    #[test]
+    fn record_failure_respects_cooldown() {
+        let t0 = Utc::now();
+        let mut t = alerting_task(1, 300); // alert every failure, but 5-min cooldown
+        // First failure at t0 alerts.
+        assert!(t.record_failure("ERROR: a".into(), t0).is_some());
+        // 60s later: threshold met again, but within cooldown -> no alert.
+        let t1 = t0 + chrono::Duration::seconds(60);
+        assert!(t.record_failure("ERROR: b".into(), t1).is_none());
+        // 5min+ later: cooldown elapsed -> alerts again.
+        let t2 = t0 + chrono::Duration::seconds(301);
+        assert!(t.record_failure("ERROR: c".into(), t2).is_some());
+    }
+
+    #[test]
+    fn no_policy_never_alerts() {
+        let now = Utc::now();
+        let mut t = Task {
+            id: "np".into(),
+            name: "no policy".into(),
+            schedule: Schedule::Interval { every_secs: 60 },
+            command: "false".into(),
+            enabled: true,
+            ..Default::default()
+        };
+        for _ in 0..5 {
+            assert!(t.record_failure("ERROR: z".into(), now).is_none());
+        }
+        assert_eq!(t.consecutive_failures, 5);
     }
 
     #[test]
@@ -684,6 +882,7 @@ mod tests {
             enabled: true,
             last_run: None,
             last_result: None,
+            ..Default::default()
         };
         assert!(Scheduler::is_due(&task, &now));
     }
@@ -704,6 +903,7 @@ mod tests {
             enabled: true,
             last_run: None,
             last_result: None,
+            ..Default::default()
         };
         assert!(!Scheduler::is_due(&task, &now));
     }
@@ -739,6 +939,7 @@ mod tests {
                 enabled: true,
                 last_run: None,
                 last_result: None,
+                ..Default::default()
             })
             .await;
 

@@ -1018,6 +1018,20 @@ impl RadixToolHandler {
             return ToolResult::error("missing schedule: provide 'cron' or 'interval_secs'");
         };
 
+        // Optional failure-alert policy: alert after N consecutive failures,
+        // with an optional cooldown (seconds) between alerts.
+        let failure_alert = args.get("failure_alert").and_then(|fa| {
+            let after = fa.get("after").and_then(|v| v.as_u64())? as u32;
+            let cooldown_secs = fa
+                .get("cooldown_secs")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            Some(pares_agens_agenda::scheduler::FailureAlert {
+                after,
+                cooldown_secs,
+            })
+        });
+
         let task = Task {
             id: uuid::Uuid::new_v4().to_string(),
             name,
@@ -1026,6 +1040,8 @@ impl RadixToolHandler {
             enabled: true,
             last_run: None,
             last_result: None,
+            failure_alert,
+            ..Default::default()
         };
 
         let id = task.id.clone();
@@ -4916,7 +4932,16 @@ impl ToolHandler for RadixToolHandler {
                         "name": {"type": "string", "description": "Human-readable task name"},
                         "command": {"type": "string", "description": "Shell command to execute"},
                         "cron": {"type": "string", "description": "Cron expression (5-field: min hour dom month dow)"},
-                        "interval_secs": {"type": "integer", "description": "Run every N seconds (alternative to cron)"}
+                        "interval_secs": {"type": "integer", "description": "Run every N seconds (alternative to cron)"},
+                        "failure_alert": {
+                            "type": "object",
+                            "description": "Alert after N consecutive failures (with optional cooldown between alerts).",
+                            "properties": {
+                                "after": {"type": "integer", "description": "Consecutive failures before alerting"},
+                                "cooldown_secs": {"type": "integer", "description": "Minimum seconds between alerts (0 = every time)"}
+                            },
+                            "required": ["after"]
+                        }
                     })),
                     required: Some(vec!["name".into(), "command".into()]),
                 },

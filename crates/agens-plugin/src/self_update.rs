@@ -86,6 +86,7 @@ pub fn build_self_update_task(
         enabled: true,
         last_run: None,
         last_result: None,
+        ..Default::default()
     }
 }
 

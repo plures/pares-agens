@@ -2058,6 +2058,7 @@ impl Procedure for CronAddProcedure {
                                 enabled: true,
                                 last_run: None,
                                 last_result: None,
+                                ..Default::default()
                             };
                             self.scheduler.add(task).await;
                             Ok(format!("Scheduled task created: {task_id}"))
