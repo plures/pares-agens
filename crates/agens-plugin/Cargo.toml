@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "praxisbot"
+name = "agens-host"
 path = "src/bin/pares-agens.rs"
 
 [dependencies]

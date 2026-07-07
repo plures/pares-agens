@@ -1,4 +1,4 @@
-//! `pares-agens` - the agens plugin binary (praxisbot).
+//! `agens-host` - the agens plugin host binary. Composes the pares-radix host
 //!
 //! Composes the host runtime (`crate::host_runtime::run_with_providers`, the
 //! host composition seam RELOCATED into this crate in Stage R3a) with the agens
