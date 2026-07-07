@@ -800,6 +800,206 @@ impl RadixToolHandler {
         }
     }
 
+    // ── Skill workshop (local skill authoring lifecycle) ────────────────────
+
+    /// Author/propose/apply loop for local skills, delegating to the marketplace
+    /// crate's [`ProposalStore`](pares_agens_marketplace::ProposalStore).
+    ///
+    /// A single tool with an `action` arg mirroring OpenClaw's `skill_workshop`:
+    /// `create`, `update`, `revise`, `list`, `inspect`, `apply`, `reject`,
+    /// `quarantine`. Proposals are pending until `apply` installs them into the
+    /// live-skills directory as `SKILL.md` + support files.
+    async fn skill_workshop(&self, args: &Value) -> ToolResult {
+        use pares_agens_marketplace::{
+            ProposalDraft, ProposalStatus, ProposalStore, SupportFile, WorkshopError,
+        };
+
+        let action = match args.get("action").and_then(|v| v.as_str()) {
+            Some(a) => a,
+            None => return ToolResult::error("missing required parameter: action"),
+        };
+
+        // Resolve proposals + live-skills roots (arg override, else workdir default).
+        let proposals_dir = args
+            .get("proposals_dir")
+            .and_then(|v| v.as_str())
+            .map(|p| self.resolve_path(p))
+            .unwrap_or_else(|| self.workdir.join(".agens-skill-proposals"));
+        let skills_dir = args
+            .get("skills_dir")
+            .and_then(|v| v.as_str())
+            .map(|p| self.resolve_path(p))
+            .unwrap_or_else(|| self.workdir.join(".agens-skills"));
+
+        let store = match ProposalStore::open(&proposals_dir, &skills_dir) {
+            Ok(s) => s,
+            Err(e) => return ToolResult::error(format!("skill_workshop: {e}")),
+        };
+
+        // Helper: parse the optional support_files array into typed values.
+        let parse_support = |args: &Value| -> std::result::Result<Vec<SupportFile>, String> {
+            let Some(arr) = args.get("support_files").and_then(|v| v.as_array()) else {
+                return Ok(Vec::new());
+            };
+            let mut out = Vec::with_capacity(arr.len());
+            for (i, item) in arr.iter().enumerate() {
+                let path = item
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| format!("support_files[{i}] missing 'path'"))?;
+                let content = item
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| format!("support_files[{i}] missing 'content'"))?;
+                out.push(SupportFile {
+                    path: path.to_string(),
+                    content: content.to_string(),
+                });
+            }
+            Ok(out)
+        };
+
+        // Helper: build a draft from create/update/revise args.
+        let build_draft = |args: &Value,
+                           target_skill: Option<String>|
+         -> std::result::Result<ProposalDraft, String> {
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("missing required parameter: name")?;
+            let description = args
+                .get("description")
+                .and_then(|v| v.as_str())
+                .ok_or("missing required parameter: description")?;
+            let body = args
+                .get("proposal_content")
+                .and_then(|v| v.as_str())
+                .ok_or("missing required parameter: proposal_content")?;
+            Ok(ProposalDraft {
+                name: name.to_string(),
+                description: description.to_string(),
+                body: body.to_string(),
+                support_files: parse_support(args)?,
+                target_skill,
+            })
+        };
+
+        // Helper: serialise a proposal to pretty JSON for the tool result.
+        fn to_json<T: serde::Serialize>(value: &T) -> String {
+            serde_json::to_string_pretty(value).unwrap_or_else(|e| format!("<serialize error: {e}>"))
+        }
+
+        // Helper: map a WorkshopError to a ToolResult error.
+        fn err(e: WorkshopError) -> ToolResult {
+            ToolResult::error(format!("skill_workshop: {e}"))
+        }
+
+        match action {
+            "create" => {
+                let draft = match build_draft(args, None) {
+                    Ok(d) => d,
+                    Err(m) => return ToolResult::error(m),
+                };
+                match store.create(draft) {
+                    Ok(p) => ToolResult::ok(to_json(&p)),
+                    Err(e) => err(e),
+                }
+            }
+            "update" => {
+                // Update = a proposal that targets an existing live skill.
+                let target = args
+                    .get("skill_name")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| args.get("name").and_then(|v| v.as_str()))
+                    .map(str::to_string);
+                let draft = match build_draft(args, target) {
+                    Ok(d) => d,
+                    Err(m) => return ToolResult::error(m),
+                };
+                match store.create(draft) {
+                    Ok(p) => ToolResult::ok(to_json(&p)),
+                    Err(e) => err(e),
+                }
+            }
+            "revise" => {
+                let id = match args.get("id").and_then(|v| v.as_str()) {
+                    Some(id) => id,
+                    None => return ToolResult::error("missing required parameter: id"),
+                };
+                let target = args
+                    .get("skill_name")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let draft = match build_draft(args, target) {
+                    Ok(d) => d,
+                    Err(m) => return ToolResult::error(m),
+                };
+                match store.revise(id, draft) {
+                    Ok(p) => ToolResult::ok(to_json(&p)),
+                    Err(e) => err(e),
+                }
+            }
+            "list" => {
+                let status = match args.get("status").and_then(|v| v.as_str()) {
+                    None => None,
+                    Some("pending") => Some(ProposalStatus::Pending),
+                    Some("applied") => Some(ProposalStatus::Applied),
+                    Some("rejected") => Some(ProposalStatus::Rejected),
+                    Some("quarantined") => Some(ProposalStatus::Quarantined),
+                    Some("stale") => Some(ProposalStatus::Stale),
+                    Some(other) => {
+                        return ToolResult::error(format!("unknown status filter: {other}"))
+                    }
+                };
+                match store.list(status) {
+                    Ok(list) => ToolResult::ok(to_json(&list)),
+                    Err(e) => err(e),
+                }
+            }
+            "inspect" => {
+                let id = match args.get("id").and_then(|v| v.as_str()) {
+                    Some(id) => id,
+                    None => return ToolResult::error("missing required parameter: id"),
+                };
+                match store.get(id) {
+                    Ok(p) => ToolResult::ok(to_json(&p)),
+                    Err(e) => err(e),
+                }
+            }
+            "apply" => {
+                let id = match args.get("id").and_then(|v| v.as_str()) {
+                    Some(id) => id,
+                    None => return ToolResult::error("missing required parameter: id"),
+                };
+                match store.apply(id) {
+                    Ok(p) => ToolResult::ok(to_json(&p)),
+                    Err(e) => err(e),
+                }
+            }
+            "reject" => {
+                let id = match args.get("id").and_then(|v| v.as_str()) {
+                    Some(id) => id,
+                    None => return ToolResult::error("missing required parameter: id"),
+                };
+                match store.reject(id) {
+                    Ok(p) => ToolResult::ok(to_json(&p)),
+                    Err(e) => err(e),
+                }
+            }
+            "quarantine" => {
+                let id = match args.get("id").and_then(|v| v.as_str()) {
+                    Some(id) => id,
+                    None => return ToolResult::error("missing required parameter: id"),
+                };
+                match store.quarantine(id) {
+                    Ok(p) => ToolResult::ok(to_json(&p)),
+                    Err(e) => err(e),
+                }
+            }
+            other => ToolResult::error(format!("unknown skill_workshop action: {other}")),
+        }
+    }
+
     // ── Memory tools ──────────────────────────────────────────────────────────
 
     async fn memory_search(&self, args: &Value) -> ToolResult {
@@ -4860,6 +5060,54 @@ impl ToolHandler for RadixToolHandler {
                 },
             },
             Tool {
+                name: "skill_workshop".into(),
+                description: Some(
+                    "Author, list, inspect, and apply local skill proposals. Actions: create, \
+                     update, revise, list, inspect, apply, reject, quarantine. Proposals are \
+                     pending until applied; apply installs SKILL.md + support files into the \
+                     live-skills directory."
+                        .into(),
+                ),
+                input_schema: ToolInputSchema {
+                    schema_type: "object".into(),
+                    properties: Some(json!({
+                        "action": {
+                            "type": "string",
+                            "enum": [
+                                "create", "update", "revise", "list", "inspect",
+                                "apply", "reject", "quarantine"
+                            ],
+                            "description": "Lifecycle action to perform."
+                        },
+                        "id": {"type": "string", "description": "Proposal id (revise/inspect/apply/reject/quarantine)."},
+                        "name": {"type": "string", "description": "Skill name (create/update)."},
+                        "description": {"type": "string", "description": "Short description, ≤160 bytes (create/update/revise)."},
+                        "proposal_content": {"type": "string", "description": "Procedure markdown body, stored as PROPOSAL.md (create/update/revise)."},
+                        "skill_name": {"type": "string", "description": "Existing live-skill this proposal targets (update)."},
+                        "support_files": {
+                            "type": "array",
+                            "description": "Support files under assets/examples/references/scripts/templates.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "path": {"type": "string"},
+                                    "content": {"type": "string"}
+                                },
+                                "required": ["path", "content"]
+                            }
+                        },
+                        "status": {
+                            "type": "string",
+                            "enum": ["pending", "applied", "rejected", "quarantined", "stale"],
+                            "description": "Optional status filter (list)."
+                        },
+                        "proposals_dir": {"type": "string", "description": "Override proposals root (default <workdir>/.agens-skill-proposals)."},
+                        "skills_dir": {"type": "string", "description": "Override live-skills dir (default <workdir>/.agens-skills)."}
+                    })),
+                    required: Some(vec!["action".into()]),
+                },
+            },
+            Tool {
                 name: "memory_search".into(),
                 description: Some(
                     "Search long-term memory semantically. Returns relevant stored memories."
@@ -6128,6 +6376,7 @@ impl RadixToolHandler {
             "list_directory" => self.list_directory(&arguments).await,
             "run_command" => self.run_command(&arguments).await,
             "process" => self.process_action(&arguments).await,
+            "skill_workshop" => self.skill_workshop(&arguments).await,
             "memory_search" => self.memory_search(&arguments).await,
             "memory_store" => self.memory_store(&arguments).await,
             "web_fetch" => self.web_fetch(&arguments).await,

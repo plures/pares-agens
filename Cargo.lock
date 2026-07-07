@@ -5012,6 +5012,7 @@ dependencies = [
 name = "pares-agens-marketplace"
 version = "1.14.0"
 dependencies = [
+ "chrono",
  "serde",
  "serde_json",
  "sha2",
@@ -5032,6 +5033,7 @@ dependencies = [
  "opentelemetry",
  "pares-agens-agenda",
  "pares-agens-core",
+ "pares-agens-marketplace",
  "pares-radix-core",
  "pares-radix-praxis",
  "pluresdb 2.9.10",

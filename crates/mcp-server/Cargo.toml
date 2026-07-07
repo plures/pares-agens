@@ -36,6 +36,9 @@ pares-agens-core = { path = "../core" }
 # pattern as crates/core; Stage S-C/S-D scaffolding).
 pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.13" }
 pares-agens-agenda = { path = "../agenda" }
+# Marketplace crate — provides the skill-workshop authoring lifecycle
+# (ProposalStore / SkillProposal) exposed via the `skill_workshop` MCP tool.
+pares-agens-marketplace = { path = "../marketplace" }
 # Praxis (PraxisModule, px compiler/executor) — git+[patch] redirect to local
 # pares-radix crates/praxis (the agens crates/praxis is a different crate,
 # `pares-agens-praxis`; the radix_handler imports `pares_radix_praxis::`).
