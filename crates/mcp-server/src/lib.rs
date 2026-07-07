@@ -32,6 +32,7 @@
 pub mod app_metrics;
 pub mod browser;
 pub mod handler;
+pub mod patch;
 pub mod px_action_bridge;
 pub mod radix_handler;
 pub mod server;

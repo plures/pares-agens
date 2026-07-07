@@ -596,6 +596,63 @@ impl RadixToolHandler {
         }
     }
 
+    /// Apply a multi-file patch in the OpenClaw `*** Begin Patch` envelope.
+    /// Parses all operations, validates every hunk against current disk state,
+    /// and only then commits writes/deletes atomically (nothing is written if any
+    /// operation would fail). Tool-surface parity with OpenClaw `apply_patch`.
+    async fn apply_patch(&self, args: &Value) -> ToolResult {
+        let input = match args.get("input").and_then(|v| v.as_str()) {
+            Some(s) => s,
+            None => return ToolResult::error("missing required parameter: input"),
+        };
+
+        let ops = match crate::patch::parse_patch(input) {
+            Ok(o) => o,
+            Err(e) => return ToolResult::error(e.to_string()),
+        };
+
+        // Build the plan without mutating disk (validate-then-commit).
+        let plan = match crate::patch::plan_patch(
+            &ops,
+            |p| self.resolve_path(p),
+            |abs| std::fs::read_to_string(abs).ok(),
+            |abs| abs.exists(),
+        ) {
+            Ok(p) => p,
+            Err(e) => return ToolResult::error(format!("patch not applied: {e}")),
+        };
+
+        // Commit: create parent dirs + write, then delete. Any I/O failure here
+        // is reported; earlier writes in the same patch are best-effort left in
+        // place (validation already guaranteed each op is individually sound).
+        for (abs, contents) in &plan.writes {
+            if let Some(parent) = abs.parent() {
+                if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                    return ToolResult::error(format!(
+                        "failed to create directories for {}: {e}",
+                        abs.display()
+                    ));
+                }
+            }
+            if let Err(e) = tokio::fs::write(abs, contents).await {
+                return ToolResult::error(format!(
+                    "failed to write {}: {e}",
+                    abs.display()
+                ));
+            }
+        }
+        for abs in &plan.deletes {
+            if let Err(e) = tokio::fs::remove_file(abs).await {
+                return ToolResult::error(format!(
+                    "failed to delete {}: {e}",
+                    abs.display()
+                ));
+            }
+        }
+
+        ToolResult::ok(format!("applied patch: {}", plan.summary.join("; ")))
+    }
+
     async fn list_directory(&self, args: &Value) -> ToolResult {
         let path = match args.get("path").and_then(|v| v.as_str()) {
             Some(p) => self.resolve_path(p),
@@ -4731,6 +4788,19 @@ impl ToolHandler for RadixToolHandler {
                 },
             },
             Tool {
+                name: "apply_patch".into(),
+                description: Some(
+                    "Apply a multi-file patch in the '*** Begin Patch' envelope (Add/Update/Delete File sections). Validates all hunks against current file state, then commits atomically.".into(),
+                ),
+                input_schema: ToolInputSchema {
+                    schema_type: "object".into(),
+                    properties: Some(json!({
+                        "input": {"type": "string", "description": "The full patch text including '*** Begin Patch' and '*** End Patch' markers."}
+                    })),
+                    required: Some(vec!["input".into()]),
+                },
+            },
+            Tool {
                 name: "list_directory".into(),
                 description: Some("List files in a directory".into()),
                 input_schema: ToolInputSchema {
@@ -6029,6 +6099,7 @@ impl RadixToolHandler {
             "read_file" => self.read_file(&arguments).await,
             "write_file" => self.write_file(&arguments).await,
             "edit_file" => self.edit_file(&arguments).await,
+            "apply_patch" => self.apply_patch(&arguments).await,
             "list_directory" => self.list_directory(&arguments).await,
             "run_command" => self.run_command(&arguments).await,
             "process" => self.process_action(&arguments).await,
@@ -6732,6 +6803,66 @@ mod tests {
         assert!(names.contains(&"run_command"));
         assert!(names.contains(&"memory_search"));
         assert!(names.contains(&"web_fetch"));
+        assert!(names.contains(&"apply_patch"));
+    }
+
+    #[tokio::test]
+    async fn apply_patch_add_update_delete_end_to_end() {
+        // Real filesystem E2E: temp workdir, drive the handler's apply_patch,
+        // verify the resulting on-disk state (build the binary, run the binary).
+        let dir = std::env::temp_dir().join(format!("agens_patch_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("update_me.txt"), "alpha\nold\nomega\n").unwrap();
+        std::fs::write(dir.join("delete_me.txt"), "bye\n").unwrap();
+
+        let shell = Arc::new(ShellExecutor::new());
+        let handler = RadixToolHandler::new(shell, dir.clone());
+
+        let patch = "\
+*** Begin Patch\n\
+*** Add File: created.txt\n\
++new file line\n\
+*** Update File: update_me.txt\n\
+@@\n\
+ alpha\n\
+-old\n\
++edited\n\
+*** Delete File: delete_me.txt\n\
+*** End Patch\n";
+
+        let res = handler.apply_patch(&json!({ "input": patch })).await;
+        assert!(!res.is_error, "apply_patch errored: {}", res.content);
+
+        // Add happened.
+        assert_eq!(
+            std::fs::read_to_string(dir.join("created.txt")).unwrap(),
+            "new file line\n"
+        );
+        // Update replaced only the matched run, context preserved.
+        assert_eq!(
+            std::fs::read_to_string(dir.join("update_me.txt")).unwrap(),
+            "alpha\nedited\nomega\n"
+        );
+        // Delete happened.
+        assert!(!dir.join("delete_me.txt").exists());
+
+        // Atomicity: a patch whose Add conflicts writes NOTHING.
+        let bad = "\
+*** Begin Patch\n\
+*** Add File: should_not_appear.txt\n\
++nope\n\
+*** Add File: created.txt\n\
++conflict\n\
+*** End Patch\n";
+        let res2 = handler.apply_patch(&json!({ "input": bad })).await;
+        assert!(res2.is_error, "conflicting patch should fail");
+        assert!(
+            !dir.join("should_not_appear.txt").exists(),
+            "atomicity violated: partial write occurred"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

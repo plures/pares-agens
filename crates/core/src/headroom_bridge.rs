@@ -635,16 +635,14 @@ fn take_timestamp(b: &[u8], i: usize) -> Option<usize> {
     // optional zone: Z | +-hh(:?mm)?
     match b.get(j) {
         Some(&b'Z') => j += 1,
-        Some(&b'+') | Some(&b'-') => {
-            if d(j + 1) && d(j + 2) {
-                let mut k = j + 3;
-                if b.get(k) == Some(&b':') && d(k + 1) && d(k + 2) {
-                    k += 3;
-                } else if d(k) && d(k + 1) {
-                    k += 2;
-                }
-                j = k;
+        Some(&b'+') | Some(&b'-') if d(j + 1) && d(j + 2) => {
+            let mut k = j + 3;
+            if b.get(k) == Some(&b':') && d(k + 1) && d(k + 2) {
+                k += 3;
+            } else if d(k) && d(k + 1) {
+                k += 2;
             }
+            j = k;
         }
         _ => {}
     }
