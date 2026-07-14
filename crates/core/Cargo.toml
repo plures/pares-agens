@@ -50,7 +50,7 @@ semver = "1"
 toml = "0.8"
 base64 = "0.22"
 sha2 = "0.10"
-pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "0ec9523" }
+pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1" }
 tiktoken-rs = "0.6"
 unicode-segmentation = "1"
 subtle = "2"
@@ -59,16 +59,16 @@ walkdir = "2"
 # (`../radix-core`); here it is referenced via git and redirected to the local
 # pares-radix checkout by the temporary [patch] block in the workspace root
 # Cargo.toml (Stage S-C scaffolding — to be replaced by a real pin in S-F).
-pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.13" }
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.25" }
 # Praxis (decision ledger / constraints) — same git+patch redirect as core.
-pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.13" }
+pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.25" }
 # Privacy and audit are local crates in this (pares-agens) workspace.
 pares-agens-privacy = { path = "../privacy" }
 pares-agens-audit = { path = "../audit" }
-pluresdb = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3", features = ["embeddings"] }
-pluresdb-procedures = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3" }
-pluresdb-sync = { git = "https://github.com/plures/pluresdb", rev = "407917e8b73c3924b7860df7c0eaa941d9338566" }
-pluresdb-sea = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3" }
+pluresdb = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1", features = ["embeddings"] }
+pluresdb-procedures = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1" }
+pluresdb-sync = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1" }
+pluresdb-sea = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1" }
 vault-core = { git = "https://github.com/plures/plures-vault", rev = "d4e4783ddd14f63af2699ea97f29ca5895ef6590", package = "vault-core", optional = true }
 
 regex = "1"

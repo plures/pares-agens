@@ -24,13 +24,13 @@ path = "src/bin/pares-agens.rs"
 # longer a dependency. As of the v1.55.13 bump, pares-radix-cli / -cli-api were
 # removed upstream (breaking commit 3172cfa de-cognition cli-runtime/cli-api);
 # the CommandProvider seam is now agens-local (see host_runtime + agent_commands).
-pares-radix-praxis      = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.13" }
+pares-radix-praxis      = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.25" }
 # Platform crates pulled in by the relocated run_with_providers host machinery
 # (Cluster -> pares_rector, McpServe -> pares_radix_core + local mcp-server).
 # Same release tag so they unify on the single published pares_radix_core.
-pares-radix-core        = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.13" }
+pares-radix-core        = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.25" }
 pares-agens-mcp-server  = { path = "../mcp-server" }
-pares-rector            = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.13" }
+pares-rector            = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.25" }
 
 # --- HOST / COGNITION crates (Option A: agens OWNS these) ---
 # Stage R3a: the cognition/host crates are the LOCAL agens copies (path deps).
@@ -46,8 +46,8 @@ pares-agens-tui         = { path = "../tui" }
 
 # --- pluresdb (headroom + px executor types; pinned to the SAME revs radix core uses
 #     so the ActionHandler/CrdtStore types unify across the graph) ---
-pluresdb    = { git = "https://github.com/plures/pluresdb", rev = "111dc919c8c2f1d4da7a1b4a1bac0d5a73adf7a3", features = ["embeddings"] }
-pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "0ec9523" }
+pluresdb    = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1", features = ["embeddings"] }
+pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1" }
 
 # --- headroom leaf deps ---
 sha2 = "0.10"
