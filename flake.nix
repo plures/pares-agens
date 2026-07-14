@@ -16,10 +16,10 @@
       # ort-sys downloads this at build time from cdn.pyke.io in a custom lzma2
       # tar format. We prefetch + extract it so the Nix sandbox stays pure.
       onnxruntimeLib = { pkgs }: pkgs.stdenvNoCC.mkDerivation {
-        name = "onnxruntime-prebuilt-1.23.2";
+        name = "onnxruntime-prebuilt-1.24.2";
         src = pkgs.fetchurl {
-          url = "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.23.2/x86_64-unknown-linux-gnu.tar.lzma2";
-          hash = "sha256-jFfQWaqu5AeBKlaY1nBseeCQrWnhoUIEMJ6ALcu6o18=";
+          url = "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.24.2/x86_64-unknown-linux-gnu.tar.lzma2";
+          hash = "sha256-rMHLp5wzdZTq0diMpyUWFHqmAFTIQhe1M5mjHKpbpnE=";
         };
         nativeBuildInputs = [ pkgs.python3 ];
         dontUnpack = true;
