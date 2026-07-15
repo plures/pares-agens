@@ -3426,6 +3426,7 @@ pub(crate) async fn run_serve_spine(
                         &system_prompt,
                     )
                     .with_conversation_store(Arc::clone(&conversation_store))
+                    .with_task_manager(Arc::clone(&spine_task_manager))
                     .with_stream_sender(stream_broadcast_tx.clone()),
                 ))
                 .await;
