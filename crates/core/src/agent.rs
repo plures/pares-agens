@@ -392,9 +392,29 @@ impl Agent {
     ///
     /// Context size gate: estimate total tokens, reject models where
     /// context_window < total_tokens * 1.3 (30% headroom for response generation).
-    fn select_model_for_request(&self, content: &str) -> Option<&Arc<dyn ModelClient>> {
+    fn select_model_for_request(
+        &self,
+        content: &str,
+        learned_context: &str,
+    ) -> Option<&Arc<dyn ModelClient>> {
         let word_count = content.split_whitespace().count();
-        let complexity = Self::estimate_complexity(content, word_count);
+        let base = Self::estimate_complexity(content, word_count);
+
+        // Task/intent signal: reuse the existing CerebellumClassifier instead of
+        // re-deriving anything. When no cerebellum/classifier is wired, fall back
+        // to a heuristic-only classifier (same heuristic path the cerebellum uses),
+        // so this is a real degrade, never a fabricated intent (C-NOSTUB-001).
+        let classification = self
+            .cerebellum
+            .as_ref()
+            .and_then(|c| c.classifier.as_ref())
+            .map(|cls| cls.classify(content))
+            .unwrap_or_else(|| {
+                crate::cerebellum::classifier::CerebellumClassifier::heuristic_only(vec![])
+                    .classify(content)
+            });
+
+        let complexity = Self::composite_complexity(base, &classification, learned_context);
 
         // Rough token estimate: ~1.3 tokens per word for English text.
         // This doesn't include system prompt or history - those are managed
@@ -404,11 +424,16 @@ impl Agent {
 
         tracing::info!(
             words = word_count,
+            base_complexity = base,
             complexity = complexity,
+            intent = ?classification.intent,
+            needs_tools = classification.needs_tools,
+            needs_deep = classification.needs_deep_model,
+            recall_bytes = learned_context.len(),
             est_tokens = estimated_message_tokens,
             has_fast = self.fast_model_client.is_some(),
             has_deep = self.deep_model_client.is_some(),
-            "model selection: context-size-gated complexity routing"
+            "model selection: task/memory-aware context-size-gated routing"
         );
 
         // Context-size gate check for a model client.
@@ -537,6 +562,54 @@ impl Agent {
         }
 
         score.min(6) // Cap at 6
+    }
+
+    /// Combine the length/keyword `base` complexity with task-intent and
+    /// memory-derived signals into the final 0-6 routing score.
+    ///
+    /// Non-regression guarantee: when the classifier yields a neutral
+    /// intent (`Question`/`Chat`) with no tools/deep flag AND `learned_context`
+    /// is light, both adjustment terms are 0, so the result equals `base` and
+    /// the existing tier boundaries (0-1 Fast / 2-3 Std / 4+ Premium) are
+    /// preserved. All inputs are real (classifier + measured recall length);
+    /// absence degrades to base-only, never a fabricated tier (C-NOSTUB-001).
+    fn composite_complexity(
+        base: u8,
+        classification: &crate::cerebellum::classifier::MessageClassification,
+        learned_context: &str,
+    ) -> u8 {
+        use crate::cerebellum::classifier::MessageIntent;
+
+        // Task adjustment: apply the single largest-magnitude matching rule so
+        // the term stays bounded and interpretable (-1..=+2), not a sum.
+        let task_adjust: i8 = if classification.needs_deep_model {
+            // Classifier already decided this needs the deep model -> floor to Premium.
+            2
+        } else if classification.intent == MessageIntent::Task || classification.needs_tools {
+            // Tool/multi-step work wants Standard+.
+            1
+        } else if matches!(
+            classification.intent,
+            MessageIntent::Command | MessageIntent::Feedback
+        ) {
+            // Deterministic command or trivial acknowledgement -> bias down.
+            -1
+        } else {
+            // Question / Chat -> let base decide.
+            0
+        };
+
+        // Memory adjustment: heavy autorecall hit density implies a richer turn.
+        // Capped at +1; empty/miss contributes 0 (honest degrade).
+        const HEAVY_RECALL_BYTES: usize = 1500;
+        let memory_adjust: i8 = if learned_context.len() >= HEAVY_RECALL_BYTES {
+            1
+        } else {
+            0
+        };
+
+        let combined = base as i16 + task_adjust as i16 + memory_adjust as i16;
+        combined.clamp(0, 6) as u8
     }
 
     /// Attach a delegation broker for decomposed tasks.
@@ -899,7 +972,7 @@ impl Agent {
 
         // Dynamic model selection based on context size + complexity.
         // Context size is the GATE (hard constraint), complexity is the SELECTOR.
-        let effective_client = self.select_model_for_request(content);
+        let effective_client = self.select_model_for_request(content, learned_context);
         let model_client = match effective_client {
             Some(client) => client,
             None => {
@@ -2987,6 +3060,103 @@ mod history_persistence_tests {
                 .iter()
                 .any(|m| m.content.contains("Deploy") || m.content.contains("praxisbot")),
             "task must be in history"
+        );
+    }
+
+    // ── task/memory-aware routing (composite_complexity) ──────────────────
+
+    use crate::cerebellum::classifier::{CerebellumClassifier, MessageIntent};
+
+    fn classify(content: &str) -> crate::cerebellum::classifier::MessageClassification {
+        CerebellumClassifier::heuristic_only(vec![]).classify(content)
+    }
+
+    #[test]
+    fn composite_equals_base_when_signals_neutral() {
+        // A plain question with light recall must reproduce today's base score
+        // exactly (provable non-regression).
+        let content = "what time does the store open";
+        let wc = content.split_whitespace().count();
+        let base = Agent::estimate_complexity(content, wc);
+        let cls = classify(content);
+        assert_eq!(cls.intent, MessageIntent::Question);
+        assert!(!cls.needs_deep_model);
+        let composite = Agent::composite_complexity(base, &cls, "");
+        assert_eq!(composite, base, "neutral signals must not change the score");
+    }
+
+    #[test]
+    fn task_intent_biases_up() {
+        // Short-ish task prompt: base is low, but Task intent bumps it +1.
+        let content = "refactor the auth module";
+        let wc = content.split_whitespace().count();
+        let base = Agent::estimate_complexity(content, wc);
+        let cls = classify(content);
+        assert_eq!(cls.intent, MessageIntent::Task);
+        let composite = Agent::composite_complexity(base, &cls, "");
+        assert_eq!(composite, base + 1, "Task intent must bias up by one");
+    }
+
+    #[test]
+    fn task_complex_prompt_routes_premium_tier() {
+        // A complex, multi-step Task-intent prompt must land in the Premium
+        // tier (score >= 4) so it routes to Deep/Premium when it fits.
+        let content = "design and implement the new deployment pipeline for our services because \
+            the current one is slow and brittle. First analyze the current build and release \
+            setup end to end, then refactor the build stage to cache dependencies properly, \
+            after that rework the test stage to run integration and smoke tests in parallel, \
+            and finally add rollback automation while comparing performance trade-offs and \
+            cost implications across the staging and production environments carefully";
+        let wc = content.split_whitespace().count();
+        let base = Agent::estimate_complexity(content, wc);
+        let cls = classify(content);
+        assert_eq!(cls.intent, MessageIntent::Task);
+        assert!(cls.needs_deep_model, "long task prompt should need deep model");
+        let composite = Agent::composite_complexity(base, &cls, "");
+        assert!(
+            composite >= 4,
+            "complex Task prompt must reach Premium tier (got {composite}, base {base})"
+        );
+    }
+
+    #[test]
+    fn feedback_intent_biases_down_but_never_below_zero() {
+        let content = "thanks that looks good to me";
+        let wc = content.split_whitespace().count();
+        let base = Agent::estimate_complexity(content, wc);
+        let cls = classify(content);
+        assert_eq!(cls.intent, MessageIntent::Feedback);
+        let composite = Agent::composite_complexity(base, &cls, "");
+        assert!(composite <= base, "feedback must not raise the score");
+        assert!(composite <= 6);
+    }
+
+    #[test]
+    fn heavy_recall_bumps_one_tier() {
+        let content = "how does the cache work";
+        let wc = content.split_whitespace().count();
+        let base = Agent::estimate_complexity(content, wc);
+        let cls = classify(content);
+        let light = Agent::composite_complexity(base, &cls, "");
+        let heavy_ctx = "x".repeat(2000); // >= HEAVY_RECALL_BYTES
+        let heavy = Agent::composite_complexity(base, &cls, &heavy_ctx);
+        assert_eq!(heavy, (light + 1).min(6), "heavy recall must add one tier");
+    }
+
+    #[test]
+    fn composite_is_clamped_to_zero_and_six() {
+        let cls_feedback = classify("ok");
+        assert_eq!(
+            Agent::composite_complexity(0, &cls_feedback, ""),
+            0,
+            "clamp floor holds at 0"
+        );
+        let cls_task = classify("build and deploy everything now");
+        let heavy = "x".repeat(2000);
+        assert_eq!(
+            Agent::composite_complexity(6, &cls_task, &heavy),
+            6,
+            "clamp ceiling holds at 6"
         );
     }
 }
