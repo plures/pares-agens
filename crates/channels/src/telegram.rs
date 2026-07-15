@@ -60,7 +60,7 @@ const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
 /// The runtime strips this marker before model processing and uses it only to
 /// decide whether to append tool execution details to the Telegram reply.
 pub const TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER: &str = "__PARES_VERBOSE_TOOL_DETAILS__:";
-const TELEGRAM_HELP_COMMANDS: [(&str, &str); 32] = [
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 33] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
     ("/status", "status + health snapshot"),
@@ -74,6 +74,7 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 32] = [
         "toggle deep model escalation (or /reasoning on|off)",
     ),
     ("/model", "show current primary + deep model"),
+    ("/models", "list all discovered models with tier + context"),
     ("/model <name>", "switch primary model at runtime"),
     ("/model deep <name>", "switch deep model at runtime"),
     (
@@ -557,11 +558,50 @@ impl TelegramConfig {
     }
 }
 
+/// Metadata for a single discovered model, surfaced by `/models`.
+///
+/// Backed entirely by real boot-discovery data; there is no synthetic/default
+/// instance. `context_window` is `None` only when no estimate is available.
+#[derive(Debug, Clone)]
+pub struct DiscoveredModelInfo {
+    /// Model identifier (e.g. "claude-sonnet-4.5").
+    pub id: String,
+    /// Human-readable name, if the provider reported one.
+    pub name: String,
+    /// Context window in tokens (discovered `max_input_tokens` preferred).
+    pub context_window: Option<u64>,
+    /// Tier classification: "Fast" | "Standard" | "Premium".
+    pub tier: String,
+    /// Active selection slot for this model: `Some("fast"|"standard"|"deep")`.
+    pub selected_slot: Option<&'static str>,
+}
+
 /// Runtime model control hooks used by the `/model` Telegram command.
 #[async_trait]
 pub trait TelegramModelControl: Send + Sync {
     /// Return the current `(primary_model, deep_model)` pair.
     async fn current_models(&self) -> (String, String);
+    /// Return the current auto-selected fast-tier model, if any was selected.
+    /// Empty string / `None` means no fast tier is active (honest absence).
+    async fn fast_model(&self) -> Option<String> {
+        None
+    }
+    /// Return the tier that served the most recent turn, e.g. "Fast",
+    /// "Standard", "Premium", or `None` if no turn has been routed yet.
+    async fn last_route_tier(&self) -> Option<String> {
+        None
+    }
+    /// Return a static description of the routing mode in effect.
+    async fn routing_mode(&self) -> String {
+        "unknown".to_string()
+    }
+    /// Return the models discovered at boot, as `(id, context_window, tier,
+    /// selected_slot)` tuples. `selected_slot` is `Some("fast"|"standard"|
+    /// "deep")` when the model is the active pick for that slot. Empty vec =
+    /// nothing discovered (honest absence, never a fabricated list).
+    async fn available_models(&self) -> Vec<DiscoveredModelInfo> {
+        Vec::new()
+    }
     /// Update the primary model.
     async fn set_primary_model(&self, model: &str) -> Result<(), String>;
     /// Update the deep model.
@@ -1304,7 +1344,27 @@ impl ChannelAdapter for TelegramAdapter {
                                     let (primary, deep) = control.current_models().await;
                                     format!("{primary} + {deep}")
                                 } else {
-                                    "GPT-4.1 + Opus 4.6".to_string()
+                                    "unknown (no model control wired)".to_string()
+                                };
+                                // Auto-selected picks + routing visibility (legacy control path).
+                                let routing_line = if let Some(control) = &model_control {
+                                    let (primary, deep) = control.current_models().await;
+                                    let fast = control
+                                        .fast_model()
+                                        .await
+                                        .unwrap_or_else(|| "(none)".to_string());
+                                    let mode = control.routing_mode().await;
+                                    let last = control
+                                        .last_route_tier()
+                                        .await
+                                        .unwrap_or_else(|| "(none yet)".to_string());
+                                    Some(format!(
+                                        "⚙️ Routing: {mode}\n\
+                                         🧠 fast=<code>{fast}</code> · std=<code>{primary}</code> · deep=<code>{deep}</code>\n\
+                                         🎯 Last turn: {last}"
+                                    ))
+                                } else {
+                                    None
                                 };
                                 let version = env!("CARGO_PKG_VERSION");
                                 let commit = option_env!("GIT_COMMIT_HASH").unwrap_or("unknown");
@@ -1345,12 +1405,16 @@ impl ChannelAdapter for TelegramAdapter {
                                     "🤖 <b>Pares Radix v{version}</b> (<code>{commit}</code>)\n\
                                      ⏱️ Uptime: {uptime} · PID: {} · RSS: {memory}\n\
                                      🧠 Model: <code>{model_line}</code>\n\
+                                     {routing_block}\
                                      🔑 {cerebellum_line}\n\
                                      ⚡️ Event Spine: {event_spine_status}\n\
                                      🔧 {tools_line}\n\
                                      🗄 PluresDB: <code>{home}/.pares-radix/memory/</code>\n\
                                      🖥 Host: <code>{hostname}</code>",
                                     std::process::id(),
+                                    routing_block = routing_line
+                                        .map(|l| format!("{l}\n"))
+                                        .unwrap_or_default(),
                                 );
                                 let full_status = if let Some(health) = health_section {
                                     format!("{}\n\n{}", status, health)
@@ -1358,6 +1422,44 @@ impl ChannelAdapter for TelegramAdapter {
                                     status
                                 };
                                 Self::send_reply_with_fallback(&bot, &msg, &full_status, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            "models" => {
+                                let reply = if let Some(control) = &model_control {
+                                    let models = control.available_models().await;
+                                    if models.is_empty() {
+                                        "🧠 <b>Discovered models</b>\n\nNo models discovered at boot (discovery empty, failed, or not in auto mode).".to_string()
+                                    } else {
+                                        let mut lines = vec![format!(
+                                            "🧠 <b>Discovered models</b> ({} total)\n",
+                                            models.len()
+                                        )];
+                                        for m in &models {
+                                            let ctx = m
+                                                .context_window
+                                                .map(|c| format!("{}k tok", c / 1000))
+                                                .unwrap_or_else(|| "ctx unknown".to_string());
+                                            let sel = match m.selected_slot {
+                                                Some(slot) => format!(" ✅ [{slot}]"),
+                                                None => String::new(),
+                                            };
+                                            let name = if m.name.is_empty() {
+                                                String::new()
+                                            } else {
+                                                format!(" — {}", m.name)
+                                            };
+                                            lines.push(format!(
+                                                "<code>{}</code>{name} · {ctx} · {}{sel}",
+                                                m.id, m.tier
+                                            ));
+                                        }
+                                        lines.join("\n")
+                                    }
+                                } else {
+                                    "Model control not available on this deployment.".to_string()
+                                };
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }

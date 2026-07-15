@@ -186,6 +186,51 @@ pub struct Agent {
     /// transient message clone sent to the model on each turn is byte-shrunk
     /// before transmission. The canonical history is never compressed.
     headroom: Option<HeadroomHook>,
+    /// Tier that served the most recent request (lock-free, written by
+    /// `select_model_for_request`). Encoding: 0 = none-yet, 1 = Fast,
+    /// 2 = Standard, 3 = Premium. Read by `/status` to report the last route.
+    /// Never a fabricated value — before the first turn it is genuinely 0.
+    last_route: Arc<std::sync::atomic::AtomicU8>,
+}
+
+/// Routing tier that served a request. Mirrors the encoding stored in
+/// [`Agent::last_route`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteTier {
+    /// Fast tier (simple follow-ups, short factual).
+    Fast,
+    /// Standard tier (moderate questions, tool use).
+    Standard,
+    /// Premium/deep tier (complex reasoning).
+    Premium,
+}
+
+impl RouteTier {
+    fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(RouteTier::Fast),
+            2 => Some(RouteTier::Standard),
+            3 => Some(RouteTier::Premium),
+            _ => None,
+        }
+    }
+
+    fn code(self) -> u8 {
+        match self {
+            RouteTier::Fast => 1,
+            RouteTier::Standard => 2,
+            RouteTier::Premium => 3,
+        }
+    }
+
+    /// Human-readable label.
+    pub fn label(self) -> &'static str {
+        match self {
+            RouteTier::Fast => "Fast",
+            RouteTier::Standard => "Standard",
+            RouteTier::Premium => "Premium",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -234,6 +279,7 @@ impl Agent {
             state_store: None,
             task_manager: None,
             headroom: None,
+            last_route: Arc::new(std::sync::atomic::AtomicU8::new(0)),
         }
     }
 
@@ -274,6 +320,7 @@ impl Agent {
             state_store: None,
             task_manager: None,
             headroom: None,
+            last_route: Arc::new(std::sync::atomic::AtomicU8::new(0)),
         }
     }
 
@@ -392,6 +439,12 @@ impl Agent {
     ///
     /// Context size gate: estimate total tokens, reject models where
     /// context_window < total_tokens * 1.3 (30% headroom for response generation).
+    /// Return the tier that served the most recent request, or `None` if no
+    /// request has been routed yet (honest absence — never a fabricated tier).
+    pub fn last_route_tier(&self) -> Option<RouteTier> {
+        RouteTier::from_code(self.last_route.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
     fn select_model_for_request(&self, content: &str) -> Option<&Arc<dyn ModelClient>> {
         let word_count = content.split_whitespace().count();
         let complexity = Self::estimate_complexity(content, word_count);
@@ -427,6 +480,11 @@ impl Agent {
             }
         };
 
+        let record = |tier: RouteTier| {
+            self.last_route
+                .store(tier.code(), std::sync::atomic::Ordering::Relaxed);
+        };
+
         // Tier selection based on complexity score:
         // 0-1: Fast tier (simple follow-ups, acknowledgments, short factual)
         // 2-3: Standard tier (moderate questions, tool use, summaries)
@@ -440,6 +498,7 @@ impl Agent {
                 if let Some(ref fast) = self.fast_model_client {
                     if fits_context(fast) {
                         tracing::info!("routing to Fast tier (complexity={})", complexity);
+                        record(RouteTier::Fast);
                         return Some(fast);
                     }
                     tracing::info!("fast model context too small, escalating to standard");
@@ -447,10 +506,14 @@ impl Agent {
                 // Standard as fallback
                 if let Some(ref standard) = self.model_client {
                     if fits_context(standard) {
+                        record(RouteTier::Standard);
                         return Some(standard);
                     }
                 }
                 // Deep as last resort (largest context)
+                if self.deep_model_client.is_some() {
+                    record(RouteTier::Premium);
+                }
                 self.deep_model_client.as_ref()
             }
             2..=3 => {
@@ -458,19 +521,32 @@ impl Agent {
                 if let Some(ref standard) = self.model_client {
                     if fits_context(standard) {
                         tracing::info!("routing to Standard tier (complexity={})", complexity);
+                        record(RouteTier::Standard);
                         return Some(standard);
                     }
                     tracing::info!("standard model context too small, escalating to premium");
                 }
                 // Deep as fallback for large context
-                self.deep_model_client.as_ref().or(self.model_client.as_ref())
+                let picked = self.deep_model_client.as_ref().or(self.model_client.as_ref());
+                if picked.is_some() {
+                    record(if self.deep_model_client.is_some() {
+                        RouteTier::Premium
+                    } else {
+                        RouteTier::Standard
+                    });
+                }
+                picked
             }
             _ => {
                 // Premium tier directly - these have the largest context windows
                 if let Some(ref deep) = self.deep_model_client {
                     tracing::info!("routing to Premium tier (complexity={})", complexity);
+                    record(RouteTier::Premium);
                     Some(deep)
                 } else {
+                    if self.model_client.is_some() {
+                        record(RouteTier::Standard);
+                    }
                     self.model_client.as_ref()
                 }
             }
