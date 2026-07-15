@@ -124,8 +124,17 @@ struct RuntimeConfigOverride {
 struct RuntimeModelControl {
     primary_model: Arc<RwLock<String>>,
     deep_model: Arc<RwLock<String>>,
+    fast_model: Arc<RwLock<String>>,
     deep_escalation_enabled: Arc<RwLock<bool>>,
     state_store: Arc<dyn StateStore>,
+    /// Full list of models discovered at boot (Copilot API). Retained so the
+    /// `/models` command can enumerate real data instead of a hardcoded list.
+    /// Empty when discovery returned nothing or failed (honest absence).
+    available_models:
+        Arc<RwLock<Vec<pares_radix_core::auth::copilot::AvailableModel>>>,
+    /// Handle to the live agent, populated after agent construction so the
+    /// `/status` command can read the last-routed tier. `None` until wired.
+    agent_ref: Arc<RwLock<Option<Arc<Agent>>>>,
 }
 
 
@@ -446,6 +455,62 @@ impl TelegramModelControl for RuntimeModelControl {
             self.primary_model.read().await.clone(),
             self.deep_model.read().await.clone(),
         )
+    }
+
+    async fn fast_model(&self) -> Option<String> {
+        let f = self.fast_model.read().await.clone();
+        if f.trim().is_empty() {
+            None
+        } else {
+            Some(f)
+        }
+    }
+
+    async fn last_route_tier(&self) -> Option<String> {
+        let guard = self.agent_ref.read().await;
+        guard
+            .as_ref()
+            .and_then(|a| a.last_route_tier())
+            .map(|t| t.label().to_string())
+    }
+
+    async fn routing_mode(&self) -> String {
+        "complexity-gated (context-size-gated)".to_string()
+    }
+
+    async fn available_models(&self) -> Vec<pares_agens_channels::telegram::DiscoveredModelInfo> {
+        use pares_radix_core::auth::copilot::{classify_model_tier, ModelTier};
+        let primary = self.primary_model.read().await.clone();
+        let deep = self.deep_model.read().await.clone();
+        let fast = self.fast_model.read().await.clone();
+        let models = self.available_models.read().await;
+        models
+            .iter()
+            .map(|m| {
+                let selected_slot = if m.id == fast && !fast.is_empty() {
+                    Some("fast")
+                } else if m.id == primary {
+                    Some("standard")
+                } else if m.id == deep {
+                    Some("deep")
+                } else {
+                    None
+                };
+                let tier = match classify_model_tier(&m.id) {
+                    ModelTier::Fast => "Fast",
+                    ModelTier::Standard => "Standard",
+                    ModelTier::Premium => "Premium",
+                }
+                .to_string();
+                pares_agens_channels::telegram::DiscoveredModelInfo {
+                    id: m.id.clone(),
+                    name: m.name.clone(),
+                    context_window: m.context_window(),
+                    tier,
+                    selected_slot,
+                }
+            })
+            .collect()
     }
 
     async fn set_primary_model(&self, model: &str) -> Result<(), String> {
@@ -3713,11 +3778,19 @@ pub(crate) async fn run_serve(
             let model_name = Arc::new(RwLock::new(model.clone()));
             let deep_model_name = Arc::new(RwLock::new(deep_model.clone()));
             let fast_model_name = Arc::new(RwLock::new(fast_model.clone()));
+            let available_models_state: Arc<
+                RwLock<Vec<pares_radix_core::auth::copilot::AvailableModel>>,
+            > = Arc::new(RwLock::new(Vec::new()));
+            let agent_ref_state: Arc<RwLock<Option<Arc<Agent>>>> =
+                Arc::new(RwLock::new(None));
             let deep_escalation_enabled_state = Arc::new(RwLock::new(deep_escalation_enabled));
             let runtime_log_level_state = Arc::new(RwLock::new(runtime_log_level.clone()));
             let runtime_model_control = Arc::new(RuntimeModelControl {
                 primary_model: Arc::clone(&model_name),
                 deep_model: Arc::clone(&deep_model_name),
+                fast_model: Arc::clone(&fast_model_name),
+                available_models: Arc::clone(&available_models_state),
+                agent_ref: Arc::clone(&agent_ref_state),
                 deep_escalation_enabled: Arc::clone(&deep_escalation_enabled_state),
                 state_store: Arc::clone(&runtime_state_store),
             });
@@ -3809,6 +3882,9 @@ pub(crate) async fn run_serve(
                         match auth.list_models().await {
                             Ok(available) if !available.is_empty() => {
                                 let selection = pares_radix_core::auth::copilot::select_models(&available);
+                                // Retain the full discovered list so `/models`
+                                // can enumerate real data (no hardcoded list).
+                                *available_models_state.write().await = selection.available.clone();
                                 if model == "auto" {
                                     tracing::info!(selected = %selection.primary, "auto-selected primary model");
                                     model = selection.primary;
@@ -4390,6 +4466,9 @@ pub(crate) async fn run_serve(
                 }
             };
             let agent_handle = Arc::new(RwLock::new(agent));
+            // Wire the live agent into the model control so `/status` can read
+            // the last-routed tier from the real router.
+            *agent_ref_state.write().await = Some(Arc::clone(&*agent_handle.read().await));
 
             // Inject plugin schema context into agent's system prompt
             {
@@ -5679,6 +5758,9 @@ mod tests {
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4.1".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
+            fast_model: Arc::new(RwLock::new(String::new())),
+            available_models: Arc::new(RwLock::new(Vec::new())),
+            agent_ref: Arc::new(RwLock::new(None)),
             deep_escalation_enabled: Arc::new(RwLock::new(true)),
             state_store: Arc::clone(&state_store),
         };
@@ -5706,6 +5788,9 @@ mod tests {
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
+            fast_model: Arc::new(RwLock::new(String::new())),
+            available_models: Arc::new(RwLock::new(Vec::new())),
+            agent_ref: Arc::new(RwLock::new(None)),
             deep_escalation_enabled: Arc::new(RwLock::new(true)),
             state_store: Arc::clone(&state_store),
         };
@@ -5733,6 +5818,9 @@ mod tests {
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
+            fast_model: Arc::new(RwLock::new(String::new())),
+            available_models: Arc::new(RwLock::new(Vec::new())),
+            agent_ref: Arc::new(RwLock::new(None)),
             deep_escalation_enabled: Arc::new(RwLock::new(true)),
             state_store: Arc::clone(&state_store),
         };
@@ -5758,6 +5846,9 @@ mod tests {
         let runtime_model_control = Arc::new(RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
+            fast_model: Arc::new(RwLock::new(String::new())),
+            available_models: Arc::new(RwLock::new(Vec::new())),
+            agent_ref: Arc::new(RwLock::new(None)),
             deep_escalation_enabled: Arc::new(RwLock::new(true)),
             state_store: Arc::clone(&state_store),
         });
