@@ -2437,6 +2437,11 @@ impl ChannelAdapter for TelegramAdapter {
                             let mut last_edit = tokio::time::Instant::now();
                             let debounce = std::time::Duration::from_millis(500);
                             let min_chars = 20; // Don't edit for tiny fragments
+                            // Surface tool activity so long agentic turns (many tool
+                            // calls, little/no interim text) don't look frozen. We show
+                            // the running tool + a step counter until real text streams.
+                            let mut tool_steps: usize = 0;
+                            let mut last_tool: Option<String> = None;
 
                             loop {
                                 tokio::select! {
@@ -2459,7 +2464,27 @@ impl ChannelAdapter for TelegramAdapter {
                                                 continue;
                                             }
                                             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                                            _ => {} // ToolCallStart/Delta — ignore for progressive text
+                                            Ok(pares_radix_core::model::StreamDelta::ToolCallStart { name, .. }) => {
+                                                // Only surface tool progress while no text has
+                                                // streamed yet (once real content arrives we
+                                                // switch to showing the answer). This is what
+                                                // keeps long tool-only turns from looking frozen.
+                                                if accumulated.is_empty() {
+                                                    tool_steps += 1;
+                                                    last_tool = Some(name.clone());
+                                                    if last_edit.elapsed() >= debounce {
+                                                        let tool = last_tool.as_deref().unwrap_or("tool");
+                                                        let display = format!(
+                                                            "\u{23f3} Working\u{2026} \u{1f527} {tool} (step {tool_steps})"
+                                                        );
+                                                        let _ = edit_bot
+                                                            .edit_message_text(edit_chat_id, pid, &display)
+                                                            .await;
+                                                        last_edit = tokio::time::Instant::now();
+                                                    }
+                                                }
+                                            }
+                                            _ => {} // ToolCallDelta (arg fragments) — no user-visible value
                                         }
                                     }
                                     _ = progressive_token.cancelled() => break,
