@@ -34,7 +34,7 @@ pares-agens-core = { path = "../core" }
 # PLATFORM layer (chronos, event, plugins, shell_executor, spine, StateStore) —
 # referenced via git+[patch] redirect to the local pares-radix checkout (same
 # pattern as crates/core; Stage S-C/S-D scaffolding).
-pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.26" }
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.27" }
 pares-agens-agenda = { path = "../agenda" }
 # Marketplace crate — provides the skill-workshop authoring lifecycle
 # (ProposalStore / SkillProposal) exposed via the `skill_workshop` MCP tool.
@@ -42,7 +42,7 @@ pares-agens-marketplace = { path = "../marketplace" }
 # Praxis (PraxisModule, px compiler/executor) — git+[patch] redirect to local
 # pares-radix crates/praxis (the agens crates/praxis is a different crate,
 # `pares-agens-praxis`; the radix_handler imports `pares_radix_praxis::`).
-pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.26" }
+pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.27" }
 # .px engine (parser/compiler/executor) is consumed THROUGH PluresDB per the
 # px-through-PluresDB doctrine (ADR-0021 / TASK-PX-CANON): pluresdb-px is the
 # canonical consumption surface. Same git source + rev as the other pluresdb-px
