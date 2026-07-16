@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Pares Agens
+GenericName=AI Agent Workspace
+Comment=Local-first AI agent desktop for Pares Agens
+Exec=pares-agens
+Icon=com.plures.ParesAgens
+Terminal=false
+Categories=Development;Utility;
+StartupWMClass=Pares Agens
+Keywords=agent;ai;pares;radix;

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.plures.ParesAgens</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>BSL-1.1</project_license>
+  <name>Pares Agens</name>
+  <summary>Local-first AI agent desktop</summary>
+  <description>
+    <p>
+      Pares Agens is a local-first AI agent desktop application. It embeds the
+      Pares Agens and Pares Radix engines in-process to orchestrate agents,
+      tools, and workflows on your own machine.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Runs agents locally with no mandatory cloud dependency.</li>
+      <li>Integrates tools, channels, and models in a single workspace.</li>
+      <li>Cross-platform desktop built on Tauri.</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">com.plures.ParesAgens.desktop</launchable>
+  <url type="homepage">https://github.com/plures/pares-agens</url>
+  <url type="bugtracker">https://github.com/plures/pares-agens/issues</url>
+  <developer id="com.plures">
+    <name>Plures</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <categories>
+    <category>Development</category>
+    <category>Utility</category>
+  </categories>
+  <releases>
+    <release version="1.14.0" date="2026-06-18">
+      <description>
+        <p>Latest Pares Agens desktop release.</p>
+      </description>
+    </release>
+  </releases>
+</component>
