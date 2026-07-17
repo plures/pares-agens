@@ -17,12 +17,13 @@
 //! ```
 
 use async_trait::async_trait;
-use pares_radix_core::Event;
-use pares_agens_marketplace::{installer::Installer, SkillCategory, SkillMetadata};
 use pares_agens_core::diagnostics::current_process_rss_kib;
+use pares_agens_marketplace::{installer::Installer, SkillCategory, SkillMetadata};
+use pares_radix_core::Event;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use teloxide::{
     prelude::*,
     types::{
@@ -60,6 +61,12 @@ const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
 /// The runtime strips this marker before model processing and uses it only to
 /// decide whether to append tool execution details to the Telegram reply.
 pub const TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER: &str = "__PARES_VERBOSE_TOOL_DETAILS__:";
+const TELEGRAM_AGENT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(180);
+const TELEGRAM_BLANK_RESPONSE_FALLBACK: &str =
+    "I’m sorry — I received an empty response from the model. Please try again.";
+const TELEGRAM_NO_RESPONSE_FALLBACK: &str =
+    "I’m sorry — I finished processing, but no visible response was produced. Please try again.";
+const TELEGRAM_TIMEOUT_FALLBACK: &str = "⏱️ I’m sorry — this turn took too long and was stopped before a response was ready. Please try again or narrow the request.";
 const TELEGRAM_HELP_COMMANDS: [(&str, &str); 33] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
@@ -492,7 +499,10 @@ impl TelegramConfig {
 
     /// Enable pool-aware `/model` commands (replaces legacy model_control).
     #[must_use]
-    pub fn with_pool_control(mut self, pool_control: Arc<dyn pares_radix_core::model_pool::PoolControl>) -> Self {
+    pub fn with_pool_control(
+        mut self,
+        pool_control: Arc<dyn pares_radix_core::model_pool::PoolControl>,
+    ) -> Self {
         self.pool_control = Some(pool_control);
         self
     }
@@ -954,6 +964,82 @@ impl TelegramAdapter {
         }
 
         Ok(())
+    }
+
+    fn progressive_response_timeout() -> Duration {
+        TELEGRAM_AGENT_RESPONSE_TIMEOUT
+    }
+
+    fn normalize_progressive_response_content(content: String) -> String {
+        if content.trim().is_empty() {
+            TELEGRAM_BLANK_RESPONSE_FALLBACK.to_string()
+        } else {
+            content
+        }
+    }
+
+    fn progressive_no_response_fallback() -> &'static str {
+        TELEGRAM_NO_RESPONSE_FALLBACK
+    }
+
+    fn progressive_timeout_fallback() -> &'static str {
+        TELEGRAM_TIMEOUT_FALLBACK
+    }
+
+    async fn deliver_progressive_reply(
+        bot: &Bot,
+        msg: &Message,
+        placeholder_id: Option<teloxide::types::MessageId>,
+        content: &str,
+        reply_markup: Option<InlineKeyboardMarkup>,
+        event_spine: Option<&EventSpineHandle>,
+        acknowledge: bool,
+    ) {
+        let delivered_via_edit = if let Some(pid) = placeholder_id {
+            Self::edit_placeholder_with_response(
+                bot,
+                msg.chat.id,
+                pid,
+                content,
+                reply_markup.clone(),
+                event_spine,
+            )
+            .await
+        } else {
+            None
+        };
+
+        if let Some((format_used, msg_ids)) = delivered_via_edit {
+            if let Some(spine) = event_spine {
+                for mid in &msg_ids {
+                    spine.emit_delivery_success(msg.chat.id.0, "telegram", *mid, format_used);
+                }
+            }
+            if acknowledge {
+                Self::acknowledge_message(bot, msg).await;
+            }
+            return;
+        }
+
+        // Placeholder edit failed or wasn't possible — delete placeholder and send fresh.
+        if let Some(pid) = placeholder_id {
+            let _ = bot.delete_message(msg.chat.id, pid).await;
+        }
+        match Self::send_html_reply(bot, msg, content, reply_markup, event_spine).await {
+            Ok((format_used, msg_ids)) => {
+                if let Some(spine) = event_spine {
+                    for mid in &msg_ids {
+                        spine.emit_delivery_success(msg.chat.id.0, "telegram", *mid, format_used);
+                    }
+                }
+                if acknowledge {
+                    Self::acknowledge_message(bot, msg).await;
+                }
+            }
+            Err(e) => {
+                error!("Failed to send Telegram reply: {e}");
+            }
+        }
     }
 
     /// Edit a placeholder message with the full response.
@@ -2441,7 +2527,6 @@ impl ChannelAdapter for TelegramAdapter {
                             // calls, little/no interim text) don't look frozen. We show
                             // the running tool + a step counter until real text streams.
                             let mut tool_steps: usize = 0;
-                            let mut last_tool: Option<String> = None;
 
                             loop {
                                 tokio::select! {
@@ -2464,27 +2549,25 @@ impl ChannelAdapter for TelegramAdapter {
                                                 continue;
                                             }
                                             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                                            Ok(pares_radix_core::model::StreamDelta::ToolCallStart { name, .. }) => {
+                                            Ok(pares_radix_core::model::StreamDelta::ToolCallStart { name, .. })
+                                                if accumulated.is_empty() =>
+                                            {
                                                 // Only surface tool progress while no text has
                                                 // streamed yet (once real content arrives we
                                                 // switch to showing the answer). This is what
                                                 // keeps long tool-only turns from looking frozen.
-                                                if accumulated.is_empty() {
-                                                    tool_steps += 1;
-                                                    last_tool = Some(name.clone());
-                                                    if last_edit.elapsed() >= debounce {
-                                                        let tool = last_tool.as_deref().unwrap_or("tool");
-                                                        let display = format!(
-                                                            "\u{23f3} Working\u{2026} \u{1f527} {tool} (step {tool_steps})"
-                                                        );
-                                                        let _ = edit_bot
-                                                            .edit_message_text(edit_chat_id, pid, &display)
-                                                            .await;
-                                                        last_edit = tokio::time::Instant::now();
-                                                    }
+                                                tool_steps += 1;
+                                                if last_edit.elapsed() >= debounce {
+                                                    let display = format!(
+                                                        "\u{23f3} Working\u{2026} \u{1f527} {name} (step {tool_steps})"
+                                                    );
+                                                    let _ = edit_bot
+                                                        .edit_message_text(edit_chat_id, pid, &display)
+                                                        .await;
+                                                    last_edit = tokio::time::Instant::now();
                                                 }
                                             }
-                                            _ => {} // ToolCallDelta (arg fragments) — no user-visible value
+                                            _ => {} // ToolCallDelta / tool activity after content — no user-visible value
                                         }
                                     }
                                     _ = progressive_token.cancelled() => break,
@@ -2493,65 +2576,75 @@ impl ChannelAdapter for TelegramAdapter {
                         });
                     }
 
-                    if let Some(Event::ModelResponse {
-                        request_id, content, ..
-                    }) = on_event(event).await
-                    {
-                        typing_cancel.cancel();
-                        progressive_cancel.cancel(); // Stop progressive editor before final edit
+                    let agent_result = tokio::time::timeout(
+                        Self::progressive_response_timeout(),
+                        on_event(event),
+                    )
+                    .await;
 
-                        // Emit model response to event spine
-                        if let Some(ref spine) = event_spine {
-                            spine.emit_model_response(msg.chat.id.0, "telegram", &content);
-                        }
+                    typing_cancel.cancel();
+                    progressive_cancel.cancel(); // Stop progressive editor before final edit/fallback.
 
-                        let reply_markup = if Self::is_approval_prompt(&content) {
-                            Some(Self::approval_keyboard(&request_id))
-                        } else {
-                            None
-                        };
+                    match agent_result {
+                        Ok(Some(Event::ModelResponse {
+                            request_id, content, ..
+                        })) => {
+                            let content = Self::normalize_progressive_response_content(content);
 
-                        // Try to edit the placeholder with the response
-                        let delivered_via_edit = if let Some(pid) = placeholder_id {
-                            Self::edit_placeholder_with_response(
-                                &bot, msg.chat.id, pid, &content, reply_markup.clone(), event_spine.as_ref()
-                            ).await
-                        } else {
-                            None
-                        };
-
-                        if let Some((format_used, msg_ids)) = delivered_via_edit {
-                            // Delivered by editing the placeholder
+                            // Emit model response to event spine
                             if let Some(ref spine) = event_spine {
-                                for mid in &msg_ids {
-                                    spine.emit_delivery_success(msg.chat.id.0, "telegram", *mid, format_used);
-                                }
+                                spine.emit_model_response(msg.chat.id.0, "telegram", &content);
                             }
-                            Self::acknowledge_message(&bot, &msg).await;
-                        } else {
-                            // Placeholder edit failed or wasn't possible — delete placeholder and send fresh
-                            if let Some(pid) = placeholder_id {
-                                let _ = bot.delete_message(msg.chat.id, pid).await;
-                            }
-                            match Self::send_html_reply(&bot, &msg, &content, reply_markup, event_spine.as_ref()).await {
-                                Ok((format_used, msg_ids)) => {
-                                    if let Some(ref spine) = event_spine {
-                                        for mid in &msg_ids {
-                                            spine.emit_delivery_success(msg.chat.id.0, "telegram", *mid, format_used);
-                                        }
-                                    }
-                                    Self::acknowledge_message(&bot, &msg).await;
-                                }
-                                Err(e) => {
-                                    error!("Failed to send Telegram reply: {e}");
-                                }
-                            }
+
+                            let reply_markup = if Self::is_approval_prompt(&content) {
+                                Some(Self::approval_keyboard(&request_id))
+                            } else {
+                                None
+                            };
+
+                            Self::deliver_progressive_reply(
+                                &bot,
+                                &msg,
+                                placeholder_id,
+                                &content,
+                                reply_markup,
+                                event_spine.as_ref(),
+                                true,
+                            )
+                            .await;
                         }
-                    } else {
-                        typing_cancel.cancel();
-                        // No response — delete the placeholder
-                        if let Some(pid) = placeholder_id {
-                            let _ = bot.delete_message(msg.chat.id, pid).await;
+                        Ok(_) => {
+                            warn!(
+                                chat_id = msg.chat.id.0,
+                                "Telegram progressive turn completed without a model response; sending fallback"
+                            );
+                            Self::deliver_progressive_reply(
+                                &bot,
+                                &msg,
+                                placeholder_id,
+                                Self::progressive_no_response_fallback(),
+                                None,
+                                event_spine.as_ref(),
+                                false,
+                            )
+                            .await;
+                        }
+                        Err(_) => {
+                            warn!(
+                                chat_id = msg.chat.id.0,
+                                timeout_secs = Self::progressive_response_timeout().as_secs(),
+                                "Telegram progressive turn timed out; sending fallback"
+                            );
+                            Self::deliver_progressive_reply(
+                                &bot,
+                                &msg,
+                                placeholder_id,
+                                Self::progressive_timeout_fallback(),
+                                None,
+                                event_spine.as_ref(),
+                                false,
+                            )
+                            .await;
                         }
                     }
                 }
@@ -2827,6 +2920,34 @@ mod tests {
     fn adapter_name_is_telegram() {
         let adapter = TelegramAdapter::new(TelegramConfig::new("test-token"));
         assert_eq!(adapter.name(), "telegram");
+    }
+
+    #[test]
+    fn blank_progressive_response_is_normalized_to_visible_fallback() {
+        let normalized =
+            TelegramAdapter::normalize_progressive_response_content("  \n\t  ".to_string());
+        assert!(!normalized.trim().is_empty());
+        assert_ne!(normalized, "⏳");
+        assert!(normalized.contains("empty response"));
+    }
+
+    #[test]
+    fn progressive_missing_response_fallbacks_are_visible() {
+        let no_response = TelegramAdapter::progressive_no_response_fallback();
+        let timed_out = TelegramAdapter::progressive_timeout_fallback();
+
+        assert!(!no_response.trim().is_empty());
+        assert!(!timed_out.trim().is_empty());
+        assert_ne!(no_response, "⏳");
+        assert_ne!(timed_out, "⏳");
+        assert!(timed_out.contains("took too long"));
+    }
+
+    #[test]
+    fn progressive_response_timeout_is_bounded() {
+        let timeout = TelegramAdapter::progressive_response_timeout();
+        assert!(timeout > std::time::Duration::ZERO);
+        assert!(timeout <= std::time::Duration::from_secs(300));
     }
 
     #[test]
