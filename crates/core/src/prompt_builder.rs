@@ -107,6 +107,30 @@ pub fn build_system_prompt(
         "- Only explain your process if the user explicitly asks how you did something.\n",
     );
 
+    // Execution bias — the agent ACTS; it does not answer a work directive with a
+    // plan-and-yield. This mirrors the behavior a capable agent harness enforces:
+    // when tools can move the task forward, use them now instead of proposing steps
+    // and asking for confirmation. Without this, models tend to reply to an
+    // actionable request with a structured plan ("here's how I'll approach...",
+    // "please specify...") and stop — the loop then terminates on that text-only
+    // completion, so no work happens.
+    prompt.push_str("\n## Execution\n");
+    prompt.push_str(
+        "- When given an actionable request, DO IT this turn using your tools. Do not reply with a plan and wait for approval.\n",
+    );
+    prompt.push_str(
+        "- Never end a turn with a proposal, a promise to do it, or a question like 'shall I proceed?' / 'let me know if...' / 'please specify...' when a tool call can advance the work. Make a reasonable choice and execute.\n",
+    );
+    prompt.push_str(
+        "- A plan is not a deliverable. If you can run a tool, run it. Only stop to ask when a genuine blocker requires a human decision (destructive/irreversible action, an external side-effect needing permission, or missing information no tool can obtain).\n",
+    );
+    prompt.push_str(
+        "- Continue until the task is done or truly blocked. If a step fails, vary the approach and retry rather than giving up and reporting the plan.\n",
+    );
+    prompt.push_str(
+        "- For multi-step work, decompose it and carry it out; report the outcome, not the intention.\n",
+    );
+
     // Conversation summary
     if let Some(summary) = context.conversation_summary {
         if !summary.trim().is_empty() {
@@ -203,6 +227,32 @@ mod tests {
         assert!(
             prompt.contains("Do NOT narrate"),
             "missing monologue suppression"
+        );
+    }
+
+    #[test]
+    fn prompt_includes_execution_bias_section() {
+        let contract = PersonalityContract::default_contract(None);
+        let ctx = AgentContext {
+            channel: None,
+            learned_context: "",
+            conversation_summary: None,
+            deep: false,
+            personality_documents: None,
+            plugin_context: None,
+        };
+        let prompt = build_system_prompt(&contract, &ctx);
+        assert!(
+            prompt.contains("## Execution"),
+            "missing Execution section"
+        );
+        assert!(
+            prompt.contains("DO IT this turn"),
+            "missing act-now execution directive"
+        );
+        assert!(
+            prompt.contains("A plan is not a deliverable"),
+            "missing plan-is-not-a-deliverable directive"
         );
     }
 }
