@@ -1371,6 +1371,14 @@ impl ChannelAdapter for TelegramAdapter {
         ));
 
         let on_event = std::sync::Arc::new(on_event);
+        // Per-chat active-turn registry: shared seam for mid-turn steering (S2)
+        // and control buttons (S3).
+        let active_turns = crate::active_turns::ActiveTurns::new();
+        let active_turns_msg = active_turns.clone();
+        // Clones for the callback_query branch (S3), taken BEFORE the message
+        // handler moves its own clones in.
+        let active_turns_cb = active_turns.clone();
+        let on_event_cb = on_event.clone();
         let handler = Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
             let event = Self::message_to_event(&msg);
             let on_event = on_event.clone();
@@ -1392,6 +1400,7 @@ impl ChannelAdapter for TelegramAdapter {
             let bot_username = bot_username.clone();
             let group_policy = group_policy.clone();
             let group_context = group_context.clone();
+            let active_turns = active_turns_msg.clone();
             let update_flake_dir =
                 std::env::var("PARES_NIX_FLAKE_DIR").unwrap_or_else(|_| DEFAULT_NIX_FLAKE_DIR.into());
             let update_host =
@@ -2486,14 +2495,56 @@ impl ChannelAdapter for TelegramAdapter {
                             *content = format!("{TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER}{content}");
                         }
                     }
+                    // ── Mid-turn steering (S2, option b) ─────────────────
+                    // If a turn is already live for this chat, inject this
+                    // message into it instead of spawning a competing turn.
+                    let steer_chat = msg.chat.id.0;
+                    let steer_text = match &event {
+                        Event::Message { content, .. } => content.clone(),
+                        _ => String::new(),
+                    };
+                    if !steer_text.is_empty() && active_turns.steer(steer_chat, steer_text).await {
+                        debug!(chat_id = steer_chat, "steered mid-turn message into running turn");
+                        Self::acknowledge_message(&bot, &msg).await;
+                        return respond(());
+                    }
+
                     // Progressive delivery: send placeholder, keep typing, edit when done
                     let placeholder_bot = bot.clone();
                     let placeholder_msg = placeholder_bot
-                        .send_message(msg.chat.id, "⏳")
+                        .send_message(msg.chat.id, crate::turn_ux::render_turn_status("Working", None, 0, None))
                         .reply_parameters(ReplyParameters::new(msg.id))
                         .await;
 
                     let placeholder_id = placeholder_msg.as_ref().ok().map(|m| m.id);
+
+                    // ── Register this turn (S2/S3) ──────────────────────
+                    // request_id = inbound message id (chat_id:msg_id form), the
+                    // same id the core turn traces under. The turn is cancellable
+                    // via the Stop button (S3) and steerable via SteeringTx (S2).
+                    let turn_request_id = match &event {
+                        Event::Message { id, .. } => id.clone(),
+                        _ => msg.chat.id.0.to_string(),
+                    };
+                    let turn_cancel = tokio_util::sync::CancellationToken::new();
+                    let steering_rx = active_turns
+                        .register(msg.chat.id.0, turn_cancel.clone(), turn_request_id.clone())
+                        .await;
+
+                    // Add a Stop button to the status message so the user can
+                    // cooperatively cancel a long turn.
+                    if let Some(pid) = placeholder_id {
+                        let stop_kb = teloxide::types::InlineKeyboardMarkup::new(vec![vec![
+                            InlineKeyboardButton::callback(
+                                "\u{1f6d1} Stop",
+                                crate::turn_ux::stop_callback_data(&turn_request_id),
+                            ),
+                        ]]);
+                        let _ = bot
+                            .edit_message_reply_markup(msg.chat.id, pid)
+                            .reply_markup(stop_kb)
+                            .await;
+                    }
 
                     // Keep typing indicator alive while agent processes
                     let typing_bot = bot.clone();
@@ -2558,8 +2609,15 @@ impl ChannelAdapter for TelegramAdapter {
                                                 // keeps long tool-only turns from looking frozen.
                                                 tool_steps += 1;
                                                 if last_edit.elapsed() >= debounce {
-                                                    let display = format!(
-                                                        "\u{23f3} Working\u{2026} \u{1f527} {name} (step {tool_steps})"
+                                                    // Stable single-line status: compact spinner
+                                                    // frame + phase + tool. No raw ever-incrementing
+                                                    // "(step N)" dominance — tool_steps only drives
+                                                    // the spinner frame so the line breathes.
+                                                    let display = crate::turn_ux::render_turn_status(
+                                                        "Working",
+                                                        Some(&name),
+                                                        tool_steps,
+                                                        None,
                                                     );
                                                     let _ = edit_bot
                                                         .edit_message_text(edit_chat_id, pid, &display)
@@ -2576,14 +2634,44 @@ impl ChannelAdapter for TelegramAdapter {
                         });
                     }
 
-                    let agent_result = tokio::time::timeout(
-                        Self::progressive_response_timeout(),
-                        on_event(event),
-                    )
-                    .await;
+                    let agent_result = tokio::select! {
+                        r = tokio::time::timeout(
+                            Self::progressive_response_timeout(),
+                            on_event(event),
+                        ) => r,
+                        _ = turn_cancel.cancelled() => {
+                            // Stop button pressed — cooperatively abort the turn.
+                            typing_cancel.cancel();
+                            progressive_cancel.cancel();
+                            active_turns.remove(msg.chat.id.0).await;
+                            if let Some(pid) = placeholder_id {
+                                let _ = bot
+                                    .edit_message_text(msg.chat.id, pid, "\u{1f6d1} Stopped.")
+                                    .await;
+                            }
+                            return respond(());
+                        }
+                    };
 
                     typing_cancel.cancel();
                     progressive_cancel.cancel(); // Stop progressive editor before final edit/fallback.
+
+                    // Turn finished — deregister. Any messages steered in after the
+                    // turn began are drained and re-dispatched as a follow-up turn
+                    // (handle_event is atomic per message, so late-arriving steering
+                    // is delivered as the next turn rather than lost).
+                    active_turns.remove(msg.chat.id.0).await;
+                    let steered_late = steering_rx.drain().await;
+                    if !steered_late.is_empty() {
+                        let combined = steered_late.join("\n");
+                        // Re-dispatch the steered text as its own turn.
+                        if let Some(mut followup) = Self::message_to_event(&msg) {
+                            if let Event::Message { content, .. } = &mut followup {
+                                *content = combined;
+                            }
+                            let _ = on_event(followup).await;
+                        }
+                    }
 
                     match agent_result {
                         Ok(Some(Event::ModelResponse {
@@ -2652,7 +2740,81 @@ impl ChannelAdapter for TelegramAdapter {
             }
         });
 
-        Dispatcher::builder(bot, handler)
+        // ── Control-button branch (S3): callback_query dispatch ──────────
+        // Parses callback_data (stop:{id} / approval:yes|no:{id}), acts on the
+        // live turn, and ALWAYS answers the callback so Telegram clears the
+        // spinner. Previously these buttons were dead (no consumer).
+        let callback_handler = Update::filter_callback_query().endpoint(
+            move |bot: Bot, q: teloxide::types::CallbackQuery| {
+                let active_turns = active_turns_cb.clone();
+                let on_event = on_event_cb.clone();
+                async move {
+                    let data = q.data.clone().unwrap_or_default();
+                    let chat_id = q.message.as_ref().map(|m| m.chat().id.0);
+                    let action = crate::turn_ux::parse_callback(&data);
+                    let ack = match (&action, chat_id) {
+                        (Some(crate::turn_ux::ControlAction::Stop { request_id }), Some(cid)) => {
+                            if active_turns.cancel(cid, request_id).await {
+                                "Stopping\u{2026}"
+                            } else {
+                                "No active turn"
+                            }
+                        }
+                        (Some(crate::turn_ux::ControlAction::Approve { .. }), Some(cid))
+                        | (Some(crate::turn_ux::ControlAction::Reject { .. }), Some(cid)) => {
+                            // handle_event is atomic per message, so there is no
+                            // in-flight future to unblock. We resolve the approval
+                            // by injecting the decision back into the chat's turn
+                            // context: steer the live turn if one exists, otherwise
+                            // dispatch the decision as a fresh turn. This makes the
+                            // ✅/❌ buttons actually drive the agent forward.
+                            let decision = match action.as_ref().unwrap() {
+                                crate::turn_ux::ControlAction::Approve { .. } => "approved",
+                                _ => "rejected",
+                            };
+                            let injected = format!(
+                                "[approval decision]: the pending approval request was {decision} by the user"
+                            );
+                            if !active_turns.steer(cid, injected.clone()).await {
+                                // No live turn: the approval prompt's turn already
+                                // ended. Dispatch the decision as a fresh turn and
+                                // deliver its reply as a normal message so the
+                                // decision actually drives the agent and the user
+                                // sees the outcome.
+                                let ev = pares_radix_core::Event::Message {
+                                    id: cid.to_string(),
+                                    sender: "user".to_string(),
+                                    content: injected,
+                                    channel: "telegram".to_string(),
+                                };
+                                if let Some(pares_radix_core::Event::ModelResponse { content, .. }) =
+                                    on_event(ev).await
+                                {
+                                    let _ = bot
+                                        .send_message(teloxide::types::ChatId(cid), content)
+                                        .await;
+                                }
+                            }
+                            if decision == "approved" { "Approved" } else { "Rejected" }
+                        }
+                        _ => "",
+                    };
+                    // ALWAYS answer so the client-side spinner clears.
+                    let mut answer = bot.answer_callback_query(q.id.clone());
+                    if !ack.is_empty() {
+                        answer = answer.text(ack);
+                    }
+                    let _ = answer.await;
+                    respond(())
+                }
+            },
+        );
+
+        let dispatch_handler = dptree::entry()
+            .branch(handler)
+            .branch(callback_handler);
+
+        Dispatcher::builder(bot, dispatch_handler)
             .enable_ctrlc_handler()
             .build()
             .dispatch()
