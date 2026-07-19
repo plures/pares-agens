@@ -2577,6 +2577,17 @@ async fn main() {
                 handle
             };
 
+            // Wire the task manager into the Telegram config so `/tasks` works
+            // and the agent's promise-storage path is backed by a real store.
+            // The `serve` path previously omitted this (unlike the agent_commands
+            // runtime path), so `/tasks` reported "Task manager is unavailable" and
+            // stored promises had nowhere to live. Shares the same CrdtStore as the
+            // event spine and runtime state store.
+            let serve_task_manager = std::sync::Arc::new(
+                pares_radix_core::task_manager::TaskManager::new(store.crdt_store_arc()),
+            );
+            config = config.with_task_manager(std::sync::Arc::clone(&serve_task_manager));
+
             let adapter = TelegramAdapter::with_event_spine(config, event_spine_handle.clone());
 
             // Seed personality contract into PluresDB state if not present
