@@ -20,6 +20,11 @@ pub struct AgentContext<'a> {
     pub personality_documents: Option<&'a str>,
     /// Plugin schema context (installed plugins, entities, tools).
     pub plugin_context: Option<&'a str>,
+    /// Pre-rendered `<available_skills>` catalog block (runtime skill discovery).
+    /// Built by the caller from the live-skills dir via
+    /// `pares_agens_marketplace::skills_catalog`; the model reads a chosen
+    /// `SKILL.md` on demand through the `read_file` tool. Empty when none.
+    pub skills_catalog: Option<&'a str>,
 }
 
 /// Build a complete system prompt from a personality contract and context.
@@ -148,6 +153,17 @@ pub fn build_system_prompt(
         }
     }
 
+    // Available skills catalog (runtime skill discovery) — advertises installed
+    // SKILL.md files so the model can load one on demand via read_file.
+    if let Some(skills) = context.skills_catalog {
+        if !skills.trim().is_empty() {
+            prompt.push_str("\n## Skills\n");
+            prompt.push_str("Installed skills are listed below. When a task matches one, read its SKILL.md at the given <location> with the read_file tool, then follow it.\n\n");
+            prompt.push_str(skills.trim());
+            prompt.push('\n');
+        }
+    }
+
     prompt
 }
 
@@ -185,6 +201,7 @@ mod tests {
             deep: false,
             personality_documents: None,
             plugin_context: None,
+            skills_catalog: None,
         };
         let prompt = build_system_prompt(&contract, &ctx);
         assert!(prompt.contains("Pares Radix"));
@@ -203,6 +220,7 @@ mod tests {
             deep: true,
             personality_documents: None,
             plugin_context: None,
+            skills_catalog: None,
         };
         let prompt = build_system_prompt(&contract, &ctx);
         assert!(prompt.starts_with("Think deeply"));
@@ -218,6 +236,7 @@ mod tests {
             deep: false,
             personality_documents: None,
             plugin_context: None,
+            skills_catalog: None,
         };
         let prompt = build_system_prompt(&contract, &ctx);
         assert!(
@@ -240,6 +259,7 @@ mod tests {
             deep: false,
             personality_documents: None,
             plugin_context: None,
+            skills_catalog: None,
         };
         let prompt = build_system_prompt(&contract, &ctx);
         assert!(
@@ -253,6 +273,32 @@ mod tests {
         assert!(
             prompt.contains("A plan is not a deliverable"),
             "missing plan-is-not-a-deliverable directive"
+        );
+    }
+
+    #[test]
+    fn prompt_injects_available_skills_catalog() {
+        let contract = PersonalityContract::default_contract(None);
+        let catalog = "<available_skills>\n  <skill>\n    <name>weather</name>\n    <location>/skills/weather/SKILL.md</location>\n    <version>1.0.0</version>\n  </skill>\n</available_skills>";
+        let ctx = AgentContext {
+            channel: None,
+            learned_context: "",
+            conversation_summary: None,
+            deep: false,
+            personality_documents: None,
+            plugin_context: None,
+            skills_catalog: Some(catalog),
+        };
+        let prompt = build_system_prompt(&contract, &ctx);
+        assert!(prompt.contains("## Skills"), "missing Skills section");
+        assert!(
+            prompt.contains("<available_skills>"),
+            "catalog block not injected"
+        );
+        assert!(prompt.contains("<name>weather</name>"), "skill not in prompt");
+        assert!(
+            prompt.contains("read its SKILL.md"),
+            "missing on-demand load instruction"
         );
     }
 }
