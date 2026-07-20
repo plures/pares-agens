@@ -13,6 +13,7 @@ use tokio::time::{self, Duration};
 use tracing::{debug, info, warn};
 
 use pares_radix_core::event_spine::EventSpineHandle;
+use pares_radix_core::spine::event::SpineEvent;
 use pares_radix_core::spine::pipeline::PipelineEmitter;
 use pares_radix_core::state::StateStore;
 use pares_radix_core::task_executor::TaskDispatcher;
@@ -87,6 +88,18 @@ pub struct HeartbeatRunner {
     pipeline_emitter: Option<PipelineEmitter>,
     task_manager: Option<Arc<TaskManager>>,
     task_dispatcher: Option<TaskDispatcher>,
+    /// Monotonic heartbeat tick counter (payload for the `heartbeat_tick` spine
+    /// event consumed by evaluate_dispatch as `tick: int`). Interior-mutable so
+    /// `tick(&self)` can advance it without a `&mut self` receiver.
+    tick_counter: std::sync::atomic::AtomicI64,
+}
+
+impl HeartbeatRunner {
+    /// Advance and return the next monotonic tick counter.
+    fn next_tick(&self) -> i64 {
+        self.tick_counter
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 const STATE_KEY_CONFIG: &str = "heartbeat/config";
@@ -104,6 +117,7 @@ impl HeartbeatRunner {
             pipeline_emitter: None,
             task_manager: None,
             task_dispatcher: None,
+            tick_counter: std::sync::atomic::AtomicI64::new(0),
         }
     }
 
@@ -302,28 +316,27 @@ impl HeartbeatRunner {
             "heartbeat: work found, escalating"
         );
 
-        // ── Try autonomous task dispatch first ─────────────────────
-        // Decision logic lives in autonomous-dispatch.px (via PxBridge).
-        // Here we only check the fast-path gate and call the IO dispatcher.
-        if let (Some(ref tm), Some(ref dispatcher)) = (&self.task_manager, &self.task_dispatcher) {
+        // ── Autonomous task dispatch: hand the tick to the .px decision engine ──
+        // W3: the producer edge. We do NOT decide WHICH task to run here (that is
+        // evaluate_dispatch in autonomous-dispatch.px, C-DEV-001). We only (a) run
+        // the zero-token fast-path gate so we never wake the model with nothing to
+        // do, and (b) emit a real `heartbeat_tick` spine event into the SAME
+        // reactive pipeline that evaluate_dispatch listens on. The pipeline loop
+        // turns this into a `heartbeat_tick:<id>` reactive write → evaluate_dispatch
+        // selects a task, marks it in_progress, and calls the dispatch_task IO edge
+        // (TaskDispatcher) which injects the autonomous Inbound re-drive.
+        if let (Some(ref tm), Some(ref emitter)) = (&self.task_manager, &self.pipeline_emitter) {
             if TaskDispatcher::has_pending_work(tm) {
-                // TODO: Route through PxBridge.call("evaluate_dispatch", tick)
-                // For now, dispatch highest-priority directly (Rust fallback)
-                // This is a KNOWN .px gap — tracked for wiring once PxBridge
-                // is available in the heartbeat context.
-                let tasks = tm.evaluable_tasks();
-                if let Some(task) = tasks.first() {
-                    let prompt = format!(
-                        "[autonomous-task] Execute this task:\nTask: {}\nID: {}\nPriority: {}\n\nWork on this task using available tools.",
-                        task.description, task.id, task.priority
-                    );
-                    if dispatcher.dispatch(&task.id, &prompt) {
-                        dispatcher.record_dispatch(&task.id).await;
-                        info!("heartbeat: dispatched autonomous task via TaskDispatcher");
-                        self.save_daily_count(count + 1, &today).await;
-                        return;
-                    }
-                }
+                let tick = self.next_tick();
+                emitter
+                    .emit(SpineEvent::HeartbeatTick {
+                        id: SpineEvent::new_id(),
+                        tick,
+                    })
+                    .await;
+                info!(tick, "heartbeat: emitted heartbeat_tick into spine (evaluate_dispatch owns the decision)");
+                self.save_daily_count(count + 1, &today).await;
+                return;
             }
         }
 
