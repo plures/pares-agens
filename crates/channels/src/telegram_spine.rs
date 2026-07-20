@@ -193,7 +193,7 @@ impl SpineChannel for TelegramSpineChannel {
                                 Ok(Ok(StreamDelta::Content(chunk))) => {
                                     accumulated.push_str(&chunk);
                                     if last_edit.elapsed() >= debounce && accumulated.len() >= min_chars {
-                                        let display = format!("{}\u{25cf}", &accumulated);
+                                        let display = format!("{}\u{25cf}", accumulated);
                                         let _ = edit_bot.edit_message_text(edit_chat_id, pid, &display).await;
                                         last_edit = tokio::time::Instant::now();
                                     }

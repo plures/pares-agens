@@ -2587,7 +2587,7 @@ impl ChannelAdapter for TelegramAdapter {
                                                 accumulated.push_str(&chunk);
                                                 // Debounce: only edit if enough time passed AND enough content
                                                 if last_edit.elapsed() >= debounce && accumulated.len() >= min_chars {
-                                                    let display = format!("{}\u{25cf}", &accumulated); // ● = cursor
+                                                    let display = format!("{}\u{25cf}", accumulated); // ● = cursor
                                                     let _ = edit_bot
                                                         .edit_message_text(edit_chat_id, pid, &display)
                                                         .await;
