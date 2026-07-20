@@ -114,6 +114,12 @@ tar.extractall(os.environ['out'] + '/lib')
             glib pango cairo gdk-pixbuf atk gtk3 graphene
             webkitgtk_4_1 libsoup_3
           ];
+          # zlib ships zlib.pc under $dev/share/pkgconfig (NOT lib/pkgconfig),
+          # which mkShell's pkg-config hook does not add. gdk-3.0.pc requires
+          # zlib, so expose it explicitly or gdk-sys fails to build.
+          shellHook = ''
+            export PKG_CONFIG_PATH="${pkgs.zlib.dev}/share/pkgconfig:${pkgs.zlib.dev}/lib/pkgconfig:$PKG_CONFIG_PATH"
+          '';
         };
       }
     ) // {
