@@ -169,6 +169,10 @@ pub struct Agent {
     personality_documents_cache: Mutex<Option<String>>,
     /// Cached plugin schema context for system prompt injection.
     plugin_context: Mutex<Option<String>>,
+    /// Cached `<available_skills>` catalog (runtime skill discovery) for prompt
+    /// injection. Populated via [`Agent::set_skills_catalog`] from the live-skills
+    /// dir; the model reads a chosen SKILL.md on demand with the read_file tool.
+    skills_catalog: Mutex<Option<String>>,
     /// Hook manager for plugin lifecycle intercepts.
     hook_manager: Arc<HookManager>,
     /// Session manager for cross-restart persistence.
@@ -272,6 +276,7 @@ impl Agent {
             branch_state: Mutex::new(HashMap::new()),
             personality_documents_cache: Mutex::new(None),
             plugin_context: Mutex::new(None),
+            skills_catalog: Mutex::new(None),
             hook_manager: Arc::new(HookManager::new()),
             session_manager: None,
             chronos: None,
@@ -313,6 +318,7 @@ impl Agent {
             branch_state: Mutex::new(HashMap::new()),
             personality_documents_cache: Mutex::new(None),
             plugin_context: Mutex::new(None),
+            skills_catalog: Mutex::new(None),
             hook_manager: Arc::new(HookManager::new()),
             session_manager: None,
             chronos: None,
@@ -405,6 +411,15 @@ impl Agent {
     pub fn set_plugin_context(&self, context: Option<String>) {
         if let Ok(mut cache) = self.plugin_context.lock() {
             *cache = context;
+        }
+    }
+
+    /// Set the pre-rendered `<available_skills>` catalog injected into the system
+    /// prompt. Callers build this from the live-skills directory via
+    /// `pares_agens_marketplace::skills_catalog`. Pass `None`/empty to clear.
+    pub fn set_skills_catalog(&self, catalog: Option<String>) {
+        if let Ok(mut cache) = self.skills_catalog.lock() {
+            *cache = catalog;
         }
     }
 
@@ -1348,6 +1363,7 @@ impl Agent {
                 .ok()
                 .and_then(|g| g.clone());
             let plugin_cache = self.plugin_context.lock().ok().and_then(|g| g.clone());
+            let skills_cache = self.skills_catalog.lock().ok().and_then(|g| g.clone());
             let ctx = crate::prompt_builder::AgentContext {
                 channel: channel.as_deref(),
                 learned_context,
@@ -1355,6 +1371,7 @@ impl Agent {
                 deep,
                 personality_documents: docs_cache.as_deref(),
                 plugin_context: plugin_cache.as_deref(),
+                skills_catalog: skills_cache.as_deref(),
             };
             return crate::prompt_builder::build_system_prompt(personality, &ctx);
         }
