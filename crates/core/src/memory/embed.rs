@@ -189,6 +189,137 @@ mod tests {
 }
 
 // ---------------------------------------------------------------------------
+// Local / native bge-small-en-v1.5 embedder (sovereign, zero external network)
+// ---------------------------------------------------------------------------
+
+/// Local, native embedding provider backed by `fastembed` (ONNX Runtime)
+/// running **BAAI/bge-small-en-v1.5** (384-dim) entirely on-device.
+///
+/// This is the sovereignty-aligned production provider: it requires **no
+/// external embedding API**, matching OpenClaw/PluresLM behaviour. Model
+/// weights are fetched once (via `hf-hub`, cached under `FASTEMBED_CACHE_PATH`)
+/// and thereafter all embedding is fully offline.
+///
+/// It reuses [`pluresdb::FastEmbedder`] — the exact same model the PluresDB
+/// store already uses for auto-embedding on write — so query embeddings and
+/// stored embeddings come from the identical model, guaranteeing that cosine
+/// similarity is meaningful across the boundary.
+///
+/// Gated behind the `embeddings` cargo feature (pulls the ONNX runtime).
+#[cfg(feature = "embeddings")]
+pub struct BgeLocalEmbedder {
+    inner: std::sync::Arc<pluresdb::FastEmbedder>,
+    dimensions: usize,
+}
+
+#[cfg(feature = "embeddings")]
+impl BgeLocalEmbedder {
+    /// The default (and only sovereignty-target) model id.
+    pub const DEFAULT_MODEL: &'static str = "BAAI/bge-small-en-v1.5";
+
+    /// Construct a local embedder for BAAI/bge-small-en-v1.5 (384-dim).
+    ///
+    /// The first call downloads the model into the fastembed cache; subsequent
+    /// calls (and all embedding) are fully offline.
+    ///
+    /// # Errors
+    /// Returns [`Error::Embed`] if the ONNX model fails to initialise.
+    pub fn new() -> Result<Self, Error> {
+        Self::with_model(Self::DEFAULT_MODEL)
+    }
+
+    /// Construct a local embedder for an explicit fastembed-supported model id.
+    ///
+    /// # Errors
+    /// Returns [`Error::Embed`] if the model id is unsupported or init fails.
+    pub fn with_model(model_id: &str) -> Result<Self, Error> {
+        let inner = pluresdb::FastEmbedder::new(model_id)
+            .map_err(|e| Error::Embed(format!("local embedder init failed: {e}")))?;
+        // bge-small-en-v1.5 is 384-dim; we assert against EMBEDDING_DIM at embed
+        // time so a mismatched model id surfaces loudly rather than silently.
+        Ok(Self {
+            inner: std::sync::Arc::new(inner),
+            dimensions: EMBEDDING_DIM,
+        })
+    }
+}
+
+#[cfg(feature = "embeddings")]
+#[async_trait]
+impl EmbeddingProvider for BgeLocalEmbedder {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, Error> {
+        use pluresdb::EmbedText;
+
+        let inner = std::sync::Arc::clone(&self.inner);
+        let owned = text.to_string();
+
+        // ONNX inference is blocking/CPU-bound — run it off the async runtime.
+        let mut vecs = tokio::task::spawn_blocking(move || inner.embed(&[owned.as_str()]))
+            .await
+            .map_err(|e| Error::Embed(format!("local embed task panicked: {e}")))?
+            .map_err(|e| Error::Embed(format!("local embed failed: {e}")))?;
+
+        let mut embedding = vecs
+            .pop()
+            .ok_or_else(|| Error::Embed("local embedder returned no vector".into()))?;
+
+        if embedding.len() != EMBEDDING_DIM {
+            return Err(Error::Embed(format!(
+                "local embedder produced {} dims, expected {EMBEDDING_DIM}",
+                embedding.len()
+            )));
+        }
+
+        // L2 normalise for cosine similarity (parity with the other providers).
+        let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if norm > 0.0 {
+            embedding.iter_mut().for_each(|x| *x /= norm);
+        }
+
+        Ok(embedding)
+    }
+
+    fn dimensions(&self) -> usize {
+        self.dimensions
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Provider selection
+// ---------------------------------------------------------------------------
+
+/// Which embedding backend to use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmbedProviderKind {
+    /// Deterministic in-process mock (tests / offline fallback).
+    Mock,
+    /// Local native bge-small-en-v1.5 (sovereign, no external API).
+    Local,
+    /// External OpenAI-compatible endpoint.
+    OpenAi,
+}
+
+impl EmbedProviderKind {
+    /// Resolve the desired provider from the `PARES_EMBED_PROVIDER` env var.
+    ///
+    /// Recognised values (case-insensitive): `local` | `bge` | `native`,
+    /// `openai`, `mock`. Defaults to [`EmbedProviderKind::Local`] — the
+    /// sovereignty-aligned choice — when unset or unrecognised.
+    pub fn from_env() -> Self {
+        match std::env::var("PARES_EMBED_PROVIDER")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "openai" => Self::OpenAi,
+            "mock" => Self::Mock,
+            "local" | "bge" | "native" => Self::Local,
+            _ => Self::Local,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // OpenAI-compatible embedder
 // ---------------------------------------------------------------------------
 
@@ -451,3 +582,57 @@ mod openai_tests {
         assert!(result.is_ok());
     }
 }
+
+// ---------------------------------------------------------------------------
+// Local bge-small-en-v1.5 embedder tests (real ONNX model, feature-gated)
+// ---------------------------------------------------------------------------
+
+#[cfg(all(test, feature = "embeddings"))]
+mod local_tests {
+    use super::*;
+
+    fn cosine(a: &[f32], b: &[f32]) -> f32 {
+        a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+    }
+
+    // Real model: downloads bge-small-en-v1.5 on first run, then runs offline.
+    // Verifies (1) correct 384-dim output and (2) genuine semantic ordering —
+    // similar sentences are more cosine-similar than dissimilar ones. No canned
+    // fixtures (C-NOSTUB-001, C-TEST-002).
+    #[tokio::test]
+    async fn bge_local_embedder_dim_and_semantics() {
+        let embedder = BgeLocalEmbedder::new()
+            .expect("local bge-small embedder should initialise (needs model download)");
+
+        assert_eq!(embedder.dimensions(), 384);
+
+        let cat_a = embedder.embed("The cat sat quietly on the warm windowsill.").await.unwrap();
+        let cat_b = embedder.embed("A kitten rested calmly on the sunny window ledge.").await.unwrap();
+        let finance = embedder.embed("Quarterly interest rates affected the bond market.").await.unwrap();
+
+        assert_eq!(cat_a.len(), 384, "embedding must be 384-dim");
+        assert_eq!(cat_b.len(), 384);
+        assert_eq!(finance.len(), 384);
+
+        // Unit-normalised, so dot product == cosine similarity.
+        let sim_similar = cosine(&cat_a, &cat_b);
+        let sim_diff = cosine(&cat_a, &finance);
+
+        println!("[bge-local] sim(cat_a, cat_b similar) = {sim_similar:.4}");
+        println!("[bge-local] sim(cat_a, finance diff)  = {sim_diff:.4}");
+
+        assert!(
+            sim_similar > sim_diff,
+            "semantically similar sentences must be more cosine-similar: \
+             similar={sim_similar:.4} vs different={sim_diff:.4}"
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_kind_from_env_defaults_local() {
+        // Default (unset) must be the sovereign Local provider.
+        std::env::remove_var("PARES_EMBED_PROVIDER");
+        assert_eq!(EmbedProviderKind::from_env(), EmbedProviderKind::Local);
+    }
+}
+
