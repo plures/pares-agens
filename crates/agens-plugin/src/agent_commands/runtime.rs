@@ -1029,6 +1029,9 @@ struct ProcedureToolDispatcher {
     trace_store: ToolTraceStore,
     governor: Arc<ToolGovernor>,
     plugin_runtime: Option<Arc<PluginRuntime>>,
+    /// Shared block-and-await approval registry (#472). Cloned into the Telegram
+    /// adapter so an Allow/Deny press can resolve a pending tool approval by token.
+    approval_registry: Arc<pares_radix_core::approval::ApprovalRegistry>,
 }
 
 #[async_trait]
@@ -1058,10 +1061,39 @@ impl ToolDispatcher for ProcedureToolDispatcher {
                 return result;
             }
             GovernanceVerdict::AllowWithApprovalWarning => {
+                // #472 block-and-await seam. Register a pending approval so the
+                // token exists in the shared registry that the Telegram adapter
+                // resolves against; this closes the resolve half of the loop
+                // (adapter -> ApprovalRegistry::resolve -> woken waiter).
+                //
+                // NOTE (honest scope): full mid-tool-call blocking (awaiting
+                // `pending.wait()` here to gate execution) requires an
+                // out-of-band path to surface the Allow/Deny card to the user
+                // while this call is suspended. The current adapter has no
+                // dispatcher->channel outbound handle for a mid-turn card
+                // (see runtime event-spine "stack-local for now" note), so we do
+                // NOT block here yet — blocking without a visible card would
+                // deadlock the turn. The registry + resolve routing are wired
+                // and unit-tested end-to-end; enabling the await is a follow-up
+                // once the outbound-card seam lands.
+                let (req, _pending) = self
+                    .approval_registry
+                    .register(name, &args_str)
+                    .await;
+                let pending_count = self.approval_registry.pending_count().await;
                 tracing::info!(
                     tool = name,
-                    "tool execution proceeding with approval warning (Phase 5+)"
+                    approval_token = %req.token,
+                    pending = pending_count,
+                    "registered pending tool approval (resolve seam live; block-and-await gated on outbound-card seam)"
                 );
+                // Do not leak the waiter: resolve it Allow immediately so the
+                // map stays clean until real blocking is enabled. This preserves
+                // today's log-and-proceed behavior with zero regression.
+                let _ = self
+                    .approval_registry
+                    .resolve(&req.token, pares_radix_core::approval::ApprovalDecision::Allow)
+                    .await;
             }
             GovernanceVerdict::Allow => {}
         }
@@ -4412,11 +4444,16 @@ pub(crate) async fn run_serve(
 
             let tool_trace_store = ToolTraceStore::default();
             let governor = Arc::new(ToolGovernor::with_defaults());
+            // Shared approval registry: the resolve seam is threaded into the
+            // Telegram adapter (below) so Allow/Deny presses reach radix-core.
+            let approval_registry =
+                Arc::new(pares_radix_core::approval::ApprovalRegistry::new());
             let tool_dispatcher: Arc<dyn ToolDispatcher> = Arc::new(ProcedureToolDispatcher {
                 registry: Arc::clone(&procedure_registry),
                 trace_store: tool_trace_store.clone(),
                 governor: Arc::clone(&governor),
                 plugin_runtime: Some(Arc::clone(&plugin_runtime)),
+                approval_registry: Arc::clone(&approval_registry),
             });
 
             // Complete the lazy initialization of the .px action handler
@@ -4608,6 +4645,9 @@ pub(crate) async fn run_serve(
             // Initialize the event spine if enabled
             let mut adapter = adapter;
             adapter.stream_tx = Some(stream_broadcast_tx.clone());
+            // Share the approval registry so Allow/Deny presses resolve pending
+            // tool approvals (#472 block-and-await resolve seam).
+            adapter.approval_registry = Some(Arc::clone(&approval_registry));
             let mut heartbeat_spine_handle: Option<pares_radix_core::event_spine::EventSpineHandle> = None;
             if !no_event_spine {
                 let crdt = store.crdt_store();
@@ -5125,6 +5165,9 @@ pub(crate) async fn run_tui(
                 trace_store: ToolTraceStore::default(),
                 governor: Arc::clone(&governor),
                 plugin_runtime: None,
+                // TUI mode has no interactive-card adapter yet; give it its own
+                // registry so the struct is complete. Resolve routing is a no-op here.
+                approval_registry: Arc::new(pares_radix_core::approval::ApprovalRegistry::new()),
             });
 
             // Complete lazy initialization of .px action handler (TUI mode)
