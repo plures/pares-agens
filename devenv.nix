@@ -24,6 +24,7 @@
     gobject-introspection
     librsvg
     openssl
+    zlib
   ];
 
   env = {
