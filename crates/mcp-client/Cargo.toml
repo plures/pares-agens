@@ -15,7 +15,7 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 pares-agens-core = { path = "../core" }
-pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.33" }
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.34" }
 
 [dev-dependencies]
 chrono = { version = "0.4", features = ["serde"] }
