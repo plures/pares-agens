@@ -66,7 +66,7 @@ const TELEGRAM_BLANK_RESPONSE_FALLBACK: &str =
     "I’m sorry — I received an empty response from the model. Please try again.";
 const TELEGRAM_NO_RESPONSE_FALLBACK: &str =
     "I’m sorry — I finished processing, but no visible response was produced. Please try again.";
-const TELEGRAM_TIMEOUT_FALLBACK: &str = "⏱️ I’m sorry — this turn took too long and was stopped before a response was ready. Please try again or narrow the request.";
+const TELEGRAM_TIMEOUT_FALLBACK: &str = "⚠️ System notice: the request timed out before the assistant produced a response. Please retry or narrow the request.";
 const TELEGRAM_HELP_COMMANDS: [(&str, &str); 33] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
@@ -3126,7 +3126,8 @@ mod tests {
         assert!(!timed_out.trim().is_empty());
         assert_ne!(no_response, "⏳");
         assert_ne!(timed_out, "⏳");
-        assert!(timed_out.contains("took too long"));
+        assert!(timed_out.starts_with("⚠️ System notice:"));
+        assert!(!timed_out.contains("this turn took too long and was stopped"));
     }
 
     #[test]
