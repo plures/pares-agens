@@ -1,0 +1,20 @@
+fix(telegram): wire real routing_mode/fast_model/last_route_tier for /status
+
+Root cause of "Routing: unknown" in /status: TelegramModelControl's
+trait defaults return "unknown" / None for routing_mode(), fast_model(),
+and last_route_tier(). agens-plugin's RuntimeModelControl (added in
+94faff2, Defects A+B) properly overrides these using a live Agent
+handle, but the CLI binary's OWN separate RuntimeModelControl struct
+in crates/cli/src/main.rs never got the same treatment -- it only
+implemented the trait's required methods and silently fell through to
+the "unknown" defaults for everything else. This is what's actually
+wired into TelegramConfig and running on praxisbot.
+
+Fix: give the CLI's RuntimeModelControl a fast_model field and an
+agent_ref (Arc<RwLock<Option<Arc<Agent>>>>) populated right after
+agent_handle construction, then override fast_model(), 
+last_route_tier(), and routing_mode() the same way agens-plugin does.
+
+Verified: cargo check/clippy -p pares-agens-cli clean (incl.
+--all-targets for the 3 test-only construction sites), and the 3
+runtime_model_control_* unit tests still pass.
