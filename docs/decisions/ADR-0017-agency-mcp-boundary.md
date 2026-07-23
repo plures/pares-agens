@@ -300,9 +300,9 @@ acceptance criteria for whichever follow-up PR implements Option 3.
 ## Links
 
 - [ADR-0014: Full Plures Stack Integration](./ADR-0014-full-plures-stack.md)
-- [ADR-0015: Distributed Procedure Evolution](./ADR-0015-distributed-procedure-evolution.md)
-- [PluresDB Service Boundaries](../../../development-guide/design/PLURESDB-SERVICE-BOUNDARIES.md)
-- [PARES-AGENS Architecture](../../../development-guide/design/PARES-AGENS.md)
+- ADR-0015: Distributed Procedure Evolution (link TBD)
+- [PluresDB Service Boundaries](https://github.com/plures/development-guide/blob/main/design/PLURESDB-SERVICE-BOUNDARIES.md)
+- [PARES-AGENS Architecture](https://github.com/plures/development-guide/blob/main/design/PARES-AGENS.md)
 - pluresLM-mcp README (tool contract: `pluresLM_store`, `pluresLM_search`,
   `pluresLM_forget`, `pluresLM_index`, `pluresLM_status`, `pluresLM_profile`)
 - `crates/mcp-client` (`client.rs`, `openai.rs`, `transport/{stdio,http}.rs`)
