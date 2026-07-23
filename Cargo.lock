@@ -117,6 +117,7 @@ dependencies = [
  "tracing-subscriber",
  "unicode-segmentation",
  "uuid",
+ "wiremock",
 ]
 
 [[package]]
