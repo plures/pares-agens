@@ -1,3 +1,29 @@
+## [1.57.0] — 2026-07-23
+
+- docs(praxis): ADR-0016 - unified permission-mode + exec-approval design (#627) (19a16cf)
+- ci(release): trigger release on merge to main (#626) (66bea52)
+- fix(telegram): wire tool_count into /status (#625) (9cb686d)
+- fix(agens): repair three amnesia/timeout bugs in the live conversation loop (#624) (bc447f4)
+- fix(nix): vendor BGE ONNX model hermetically for offline embedder test (#623) (5f2ff08)
+- chore(deps): bump pares-radix pin v1.55.33 -> v1.55.34 (carries #475 task-runner-loop fix) (#622) (685d6c4)
+- feat(approval): wire Telegram callback -> ApprovalRegistry resolve (v1.55.33 pin + #472 seam) (#621) (e6b2905)
+- fix(clippy): drop redundant reference in format args (channels telegram) (fe57071)
+- fix(ci): exclude GUI crate from workspace clippy/check (ADR-0015) (942d15c)
+- fix(ci): put zlib.pc on PKG_CONFIG_PATH via devShell shellHook (353f284)
+- fix(ci): resolve gdk-sys zlib pkg-config failure on self-hosted Nix runner (14c2ee2)
+- Fix ci/rust failure by adding missing zlib system dependency to Nix dev environment (#620) (71b9022)
+- feat(memory): local native bge-small-en-v1.5 embedder via pluresdb FastEmbedder (OpenClaw parity #3, Sovereignty pillar); 2/2 semantic tests (90bb510)
+- feat(parity): runtime skill discovery + <available_skills> injection (OpenClaw parity #1); 4/4 tests (ff5a5cf)
+- feat(memory): add local native bge-small-en-v1.5 embedder (sovereign, no external API) (ce06324)
+- feat(parity): runtime skill discovery + <available_skills> injection (b394f63)
+- chore(deps): bump pares-radix pin v1.55.28 -> v1.55.31 (carries HeartbeatTick W3 variant + milestone reactive proof) (3fe8119)
+- feat(heartbeat): emit heartbeat_tick into spine gated by has_pending_work (W3) (ae3e903)
+- fix(serve): wire TaskManager into Telegram config (#619) (a542f82)
+- feat(telegram): progress-status UX + mid-turn steering + control buttons (#618) (7005eba)
+- feat(prompt): add execution-bias directives to system prompt (#617) (6f9bfa2)
+- fix(ci): exclude GUI crates from ADR-0015 workspace collision-guard build (#616) (61a6c70)
+- ci: migrate Tech Doc Writer to shared reusable (db79fbd)
+
 ## [1.14.0] — 2026-06-18
 
 - ci: reduce scheduled workflow frequency to cut Actions spend (91d3e73)
