@@ -1,0 +1,92 @@
+# types.px — Shared type definitions for headroom-px
+#
+# All data structures used across the compression pipeline.
+# Follows Rust struct/enum conventions: explicit types, sum types for variants,
+# no stringly-typed fields.
+#
+# Enums are inline: enum(variant_a, variant_b) as type expressions in facts.
+# Optional fields use optional[T].
+
+# ═══════════════════════════════════════════════════════════════════════
+# CORE DATA STRUCTURES
+# ═══════════════════════════════════════════════════════════════════════
+
+fact ContentBlock:
+  id: string
+  content_type: enum(json, code, prose, log, mixed, structured_output, error_trace)
+  source: string
+  raw_tokens: int
+  raw_hash: string
+  language: optional[enum(rust, python, typescript, go, java, cpp, shell, unknown)]
+
+fact ScoredBlock:
+  block_id: string
+  relevance_score: float
+  recency_score: float
+  composite_score: float
+  severity: enum(critical, high, medium, low, negligible)
+
+fact CompressedBlock:
+  block_id: string
+  strategy_used: enum(structural, ast_summary, extractive, log_dedup, pass_through, hybrid)
+  compressed_tokens: int
+  compression_ratio: float
+  ccr_ref: optional[string]
+  content: string
+
+fact CachePrefix:
+  hash: string
+  stable_bytes: int
+  provider: string
+  last_hit: int
+
+# ═══════════════════════════════════════════════════════════════════════
+# PIPELINE STATE
+# ═══════════════════════════════════════════════════════════════════════
+
+fact PlanEntry:
+  block_id: string
+  strategy: enum(structural, ast_summary, extractive, log_dedup, pass_through, hybrid)
+  priority: int
+  max_output_tokens: int
+
+fact PipelineResult:
+  input_tokens: int
+  output_tokens: int
+  compression_ratio: float
+  blocks_processed: int
+  blocks_dropped: int
+  ccr_refs_created: int
+  cache_prefix_stable: bool
+  latency_ms: int
+
+# ═══════════════════════════════════════════════════════════════════════
+# BUDGET AND CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════
+
+fact TokenBudget:
+  max_context_tokens: int
+  reserved_for_response: int
+  reserved_for_system: int
+  available_for_content: int
+
+# ═══════════════════════════════════════════════════════════════════════
+# CROSS-AGENT MEMORY
+# ═══════════════════════════════════════════════════════════════════════
+
+fact MemoryEntry:
+  id: string
+  content_hash: string
+  source_agent: string
+  compressed_content: string
+  original_tokens: int
+  compressed_tokens: int
+  access_count: int
+  last_accessed: int
+  created_at: int
+
+fact DeduplicationResult:
+  total_entries: int
+  unique_entries: int
+  duplicates_merged: int
+  tokens_saved: int

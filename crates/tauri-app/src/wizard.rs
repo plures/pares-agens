@@ -147,7 +147,7 @@ pub async fn verify_swarm_join(topic: String, shared_key: String) -> Result<(), 
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let base = std::env::temp_dir().join(format!(
-        "pares-agens-swarm-verify-{}-{stamp}",
+        "pares-radix-swarm-verify-{}-{stamp}",
         std::process::id()
     ));
     let dir_a = base.join("a");

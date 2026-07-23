@@ -22,13 +22,13 @@ use crate::{
 /// # Example
 /// ```no_run
 /// use std::collections::HashMap;
-/// use pares_models::{
+/// use pares_agens_models::{
 ///     config::{ProviderConfig, RouterConfig},
 ///     router::ModelRouter,
 ///     types::{ChatCompletionRequest, ChatMessage, Role},
 /// };
 ///
-/// # async fn example() -> Result<(), pares_models::error::Error> {
+/// # async fn example() -> Result<(), pares_agens_models::error::Error> {
 /// let config = RouterConfig::single(
 ///     "local",
 ///     ProviderConfig::new("http://localhost:12434", None),
@@ -66,16 +66,16 @@ impl ModelRouter {
     ///
     /// Use this constructor when `config` contains more than one provider or
     /// at least one routing rule — both are Pro features.  Returns
-    /// [`pares_agens_core::license::LicenseError`] if the license check fails.
+    /// [`pares_radix_core::license::LicenseError`] if the license check fails.
     ///
     /// Single-provider configs (no rules) are always permitted regardless of
     /// tier; use the plain [`ModelRouter::new`] for those cases.
     pub fn new_multi(
         config: RouterConfig,
-        license: &pares_agens_core::license::License,
-    ) -> Result<Self, pares_agens_core::license::LicenseError> {
+        license: &pares_radix_core::license::License,
+    ) -> Result<Self, pares_radix_core::license::LicenseError> {
         if config.providers.len() > 1 || !config.rules.is_empty() {
-            license.check_feature(pares_agens_core::license::Feature::MultipleModelProviders)?;
+            license.check_feature(pares_radix_core::license::Feature::MultipleModelProviders)?;
         }
         Ok(Self::new(config))
     }
@@ -132,7 +132,11 @@ impl ModelRouter {
         request: &ChatCompletionRequest,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatCompletionChunk, Error>> + Send>>, Error> {
         let provider = self.select_provider(&request.model).to_owned();
-        match self.get_client(&provider)?.chat_completion_stream(request).await {
+        match self
+            .get_client(&provider)?
+            .chat_completion_stream(request)
+            .await
+        {
             Ok(stream) => Ok(Box::pin(stream)),
             Err(ref e) if Self::is_client_error(e) && !self.config.fallback_models.is_empty() => {
                 tracing::warn!(
@@ -187,7 +191,11 @@ impl ModelRouter {
             let mut req = original.clone();
             req.model = fallback_model.clone();
             tracing::info!(model = %fallback_model, "trying fallback model (stream)");
-            match self.get_client(&provider)?.chat_completion_stream(&req).await {
+            match self
+                .get_client(&provider)?
+                .chat_completion_stream(&req)
+                .await
+            {
                 Ok(stream) => {
                     tracing::info!(model = %fallback_model, "fallback model succeeded (stream)");
                     return Ok(Box::pin(stream));

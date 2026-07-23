@@ -1,4 +1,4 @@
-//! Feature-gate helpers — thin, ergonomic wrappers over [`crate::license`].
+//! Feature-gate helpers — thin, ergonomic wrappers over [`pares_radix_core::license`].
 //!
 //! Prefer the convenience functions here over calling
 //! [`License::check_feature`] directly when you only need a boolean check or a
@@ -8,7 +8,7 @@
 //!
 //! ```rust
 //! use pares_agens_core::features;
-//! use pares_agens_core::license::{Feature, License};
+//! use pares_radix_core::license::{Feature, License};
 //!
 //! let free = License::free();
 //! assert!(!features::is_available(&free, Feature::MultipleChannels));
@@ -17,7 +17,7 @@
 //! assert!(features::is_available(&pro, Feature::MultipleChannels));
 //! ```
 
-use crate::license::{Feature, License, LicenseError};
+use pares_radix_core::license::{Feature, License, LicenseError};
 
 /// Assert that `feature` is available under `license`.
 ///

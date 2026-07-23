@@ -1,0 +1,228 @@
+# autonomous-dispatch.px — Task dispatch decisions (v3 dataflow)
+#
+# Replaces the Rust-side TaskExecutor.try_execute_next() logic.
+# Pure decision logic: given evaluable tasks + clock, choose what to execute.
+# The ONLY Rust boundary is emit_inbound_message (IO).
+#
+# Queue topology:
+#
+#   heartbeat_tick ─→ [evaluate_dispatch] ─→ dispatch_decision
+#                           │                       │
+#                           │                       ▼
+#                           │            (Rust IO: emit_inbound_message)
+#                           │
+#                           └─ reads: evaluable tasks, cooldown state
+#
+#   task_dispatch ─→ [build_task_prompt] ─→ task_prompt
+#        (from task-steering.px)                │
+#                                              ▼
+#                                   (Rust IO: emit_inbound_message)
+#
+
+# ═══════════════════════════════════════════════════════════════════
+# Facts
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] fact DispatchDecision:
+# [parser-skip]   should_dispatch: bool
+# [parser-skip]   task_id: optional[string]
+# [parser-skip]   reason: string
+# [parser-skip]   prompt: optional[string]
+# [parser-skip] 
+# [parser-skip] fact EvaluableTask:
+# [parser-skip]   id: string
+# [parser-skip]   description: string
+# [parser-skip]   priority: int
+# [parser-skip]   created_at: int
+# [parser-skip]   last_evaluated_at: optional[int]
+# [parser-skip]   attempts: int
+# [parser-skip]   conditions: list
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Config
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] config autonomous_dispatch:
+# [parser-skip]   min_evaluation_interval_ms: int = 60000   # 1 minute cooldown per task
+# [parser-skip]   max_evaluations_per_tick: int = 1         # one task per heartbeat
+# [parser-skip]   max_attempts: int = 5                     # give up after 5 tries
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint dispatch_respects_cooldown:
+# [parser-skip]   given: "Tasks cannot be dispatched more frequently than the minimum interval"
+# [parser-skip]   check: |
+# [parser-skip]     when DispatchDecision.should_dispatch == true:
+# [parser-skip]       task.last_evaluated_at == null OR
+# [parser-skip]       (now_ms() - task.last_evaluated_at) > config.min_evaluation_interval_ms
+# [parser-skip]   severity: error
+# [parser-skip] 
+# [parser-skip] constraint dispatch_respects_max_attempts:
+# [parser-skip]   given: "Tasks that have failed too many times should not be retried"
+# [parser-skip]   check: |
+# [parser-skip]     when DispatchDecision.should_dispatch == true:
+# [parser-skip]       task.attempts < config.max_attempts
+# [parser-skip]   severity: error
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Dataflow Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# Heartbeat entry: should we dispatch a task this tick?
+procedure evaluate_dispatch(tick: int from "heartbeat_tick") -> decision into "dispatch_decision":
+  given: "Decide whether to dispatch an autonomous task on this heartbeat tick"
+
+  # Load all evaluable tasks
+  db_query {prefix: "task:", filter: {status: "pending"}} -> $all_tasks
+
+  when length($all_tasks) == 0:
+    return {should_dispatch: false, task_id: null, reason: "no_pending_tasks", prompt: null}
+  end
+
+  timestamp_now {} -> $now
+
+  # Filter by cooldown
+  filter_ready_tasks {tasks: $all_tasks, now: $now, cooldown: config.min_evaluation_interval_ms} -> $ready
+
+  when length($ready) == 0:
+    return {should_dispatch: false, task_id: null, reason: "all_cooling_down", prompt: null}
+  end
+
+  # Filter by max attempts
+  filter_retriable {tasks: $ready, max: config.max_attempts} -> $retriable
+
+  when length($retriable) == 0:
+    return {should_dispatch: false, task_id: null, reason: "all_exhausted", prompt: null}
+  end
+
+  # Select highest priority (lowest number), then oldest
+  select_best_task {tasks: $retriable} -> $best
+
+  # Build the execution prompt
+  build_task_prompt {task: $best} -> $prompt
+
+  # Mark as in-progress
+  pluresdb_write {key: "task:{$best.id}:status", value: "in_progress"}
+  pluresdb_write {key: "task:{$best.id}:last_evaluated_at", value: $now}
+  add {a: $best.attempts, b: 1} -> $next_attempts
+  pluresdb_write {key: "task:{$best.id}:attempts", value: $next_attempts}
+
+  return {
+    should_dispatch: true,
+    task_id: $best.id,
+    reason: "task_ready",
+    prompt: $prompt
+  }
+
+
+# Steering entry: user confirmed/redirected a task — build prompt and dispatch
+procedure build_steered_prompt(steer: SteerResult from "task_dispatch") -> prompt into "task_prompt":
+  given: "Build execution prompt for a steered task"
+
+  when steer.message_to_agent == null:
+    return null  # cancelled task — don't dispatch
+  end
+
+  db_get {key: "task:{steer.task_id}"} -> $task
+
+  when $task == null:
+    return null
+  end
+
+  # Mark dispatched
+  timestamp_now {} -> $now
+  pluresdb_write {key: "task:{steer.task_id}:status", value: "in_progress"}
+  pluresdb_write {key: "task:{steer.task_id}:last_evaluated_at", value: $now}
+
+  return steer.message_to_agent
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Utility Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# utility: called by evaluate_dispatch
+procedure filter_ready_tasks(tasks: list, now: int, cooldown: int) -> filtered:
+  given: "Filter tasks that have cooled down enough for re-evaluation"
+  define $ready = []
+  loop over $tasks as task:
+    when task.last_evaluated_at == null:
+      append $ready $task
+    end
+    when task.last_evaluated_at != null:
+      compute_elapsed {start: $task.last_evaluated_at, end: $now} -> $elapsed
+      when $elapsed > $cooldown:
+        append $ready $task
+      end
+    end
+  end
+  return $ready
+
+# utility: called by evaluate_dispatch
+procedure filter_retriable(tasks: list, max: int) -> filtered:
+  given: "Filter tasks that haven't exhausted their retry budget"
+  define $retriable = []
+  loop over $tasks as task:
+    when task.attempts < $max:
+      append $retriable $task
+    end
+  end
+  return $retriable
+
+# utility: called by evaluate_dispatch
+procedure select_best_task(tasks: list) -> best:
+  given: "Select highest-priority task (lowest number = highest priority), then oldest"
+  sort_by {items: $tasks, keys: ["priority", "created_at"], orders: ["asc", "asc"]} -> $sorted
+  return $sorted[0]
+
+# utility: called by evaluate_dispatch, build_steered_prompt
+procedure build_task_prompt(task: EvaluableTask) -> prompt:
+  given: "Build the execution prompt string for an autonomous task"
+
+  format_conditions {conditions: $task.conditions} -> $cond_text
+
+  format_string {
+    template: "[autonomous-task] Execute this task:
+Task: {description}
+ID: {id}
+Priority: {priority}
+Attempts: {attempts}
+Conditions:
+{conditions}
+
+Work on this task using available tools. When complete, indicate which conditions are satisfied. If blocked, explain why.",
+    vars: {
+      description: $task.description,
+      id: $task.id,
+      priority: $task.priority,
+      attempts: $task.attempts,
+      conditions: $cond_text
+    }
+  } -> $prompt
+
+  return $prompt
+
+# utility: called by build_task_prompt
+procedure format_conditions(conditions: list) -> text:
+  given: "Format task conditions into a readable checklist"
+  when length($conditions) == 0:
+    return "No specific conditions — use your judgment."
+  end
+  define $lines = []
+  loop over $conditions as c:
+    define $status = "⏳"
+    when c.satisfied:
+      define $status = "✅"
+    end
+    compute_index {offset: 1} -> $i
+    format_string {
+      template: "  {i}. {status} {description}",
+      vars: {i: $i, status: $status, description: $c.description}
+    } -> $line
+    append $lines $line
+  end
+  join {items: $lines, separator: "
+"} -> $text
+  return $text

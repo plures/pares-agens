@@ -1,0 +1,35 @@
+[package]
+name = "pares-agens-bitnet"
+description = "Safe Rust wrapper for bitnet.cpp — local BitNet CPU inference for Pares Agens"
+# Stage S-D: pinned to match agens-plugin's git pin lock (1.47.2) so the root
+# [patch] redirect from git -> this local crate applies.
+version = "1.47.2"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+# Enable native bitnet.cpp FFI linkage.  Requires the third_party/bitnet
+# submodule and CMake ≥ 3.21 to be present.  Without this feature every
+# public function returns InferenceError::NativeUnavailable.
+inference = ["pares-agens-bitnet-sys/native"]
+# GPU acceleration backends (each implies `inference`).
+rocm = ["inference", "pares-agens-bitnet-sys/rocm"]
+cuda = ["inference", "pares-agens-bitnet-sys/cuda"]
+vulkan = ["inference", "pares-agens-bitnet-sys/vulkan"]
+model-client = ["dep:pares-radix-core", "dep:async-trait", "dep:tokio", "dep:tracing"]
+# Enable the ClassifierBackend implementation for cerebellum message classification.
+classifier = ["model-client"]
+
+[dependencies]
+pares-agens-bitnet-sys = { path = "../bitnet-sys" }
+# bitnet implements the PLATFORM traits (model::ModelClient, classifier::ClassifierBackend),
+# which live in pares-radix-core. Referenced via git+[patch] redirect to the local
+# pares-radix checkout (same pattern as crates/core — Stage S-C scaffolding).
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.34", optional = true }
+async-trait = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+thiserror = "2"
+
+[dev-dependencies]

@@ -1,0 +1,129 @@
+# memory.px — Cross-agent memory deduplication and sharing
+#
+# When multiple agents (agens instances, sub-agents, or external agents)
+# produce overlapping context, this module deduplicates and shares it.
+#
+# Pattern: content-addressable storage in PluresDB. Hash the content,
+# check for existing entries, merge provenance metadata if duplicate.
+#
+# All state lives in PluresDB. This is NOT a separate memory service —
+# it's procedures that react to PluresDB writes (C-PLURES-003/004).
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONSTRAINTS
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint no_duplicate_entries:
+  require: memory_store.duplicate_count == 0
+  severity: error
+  message: "Memory store must not contain duplicate entries (same content hash)"
+
+constraint provenance_tracked:
+  require: memory_entry.source_agent != ""
+  severity: error
+  message: "Every memory entry must track which agent produced it"
+
+constraint memory_within_limit:
+  require: memory_store.total_entries <= 500
+  severity: error
+  message: "Cross-agent memory capped at 500 entries — evict before adding"
+
+# ═══════════════════════════════════════════════════════════════════════
+# INGEST AND DEDUP
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure ingest_memory:
+  trigger: on_write {pattern: "headroom:memory:ingest:*"}
+  given: "Ingest a compressed block into cross-agent memory with dedup"
+  get_compressed_block {block_id: "incoming"} -> $block
+  compute_content_hash {content: "block_content"} -> $hash
+  lookup_by_hash {hash: "computed"} -> $existing
+  when existing.found == true:
+    merge_provenance {
+      existing_id: "found",
+      new_agent: "source_agent"
+    }
+    increment_access_count {entry_id: "found"}
+    emit {type: "headroom.memory_deduped", hash: "computed", agents: 2}
+  end
+  when existing.found == false:
+    check_capacity {} -> $capacity
+    when capacity.at_limit == true:
+      evict_lru_entry {}
+    end
+    store_memory_entry {
+      content_hash: "computed",
+      source_agent: "current",
+      compressed_content: "block_content",
+      original_tokens: 500,
+      compressed_tokens: 100
+    }
+    emit {type: "headroom.memory_stored", hash: "computed", tokens: 100}
+  end
+
+# ═══════════════════════════════════════════════════════════════════════
+# RETRIEVAL
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure retrieve_shared_memory:
+  trigger: manual
+  given: "Retrieve compressed context from shared memory by relevance"
+  get_current_query {} -> $query
+  search_memory_by_relevance {query: "current", limit: 10} -> $results
+  loop over $results as entry:
+    refresh_access {entry_id: "current"}
+  end
+  emit {type: "headroom.memory_retrieved", count: 10, tokens: 800}
+
+procedure retrieve_by_agent:
+  trigger: manual
+  given: "Retrieve all memory entries produced by a specific agent"
+  list_by_agent {agent_id: "target"} -> $entries
+  emit {type: "headroom.memory_by_agent", agent: "target", count: 15}
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONSOLIDATION
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure consolidate_memory:
+  trigger: cron {schedule: "0 * * * *"}
+  given: "Periodically merge near-duplicates and evict stale entries"
+  find_near_duplicates {similarity_threshold: 0.92} -> $near_dupes
+  when near_dupes.count > 0:
+    loop over $near_dupes as pair:
+      merge_entries {keep: "higher_score", drop: "lower_score"}
+    end
+    emit {type: "headroom.memory_consolidated", merged: 5}
+  end
+  find_stale_entries {max_age_seconds: 86400, min_accesses: 2} -> $stale
+  when stale.count > 0:
+    loop over $stale as entry:
+      evict_entry {entry_id: "stale"}
+    end
+    emit {type: "headroom.memory_evicted_stale", count: 3}
+  end
+  emit {type: "headroom.consolidation_complete"}
+
+# ═══════════════════════════════════════════════════════════════════════
+# STATISTICS
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure memory_stats:
+  trigger: manual
+  given: "Compute and emit memory store statistics"
+  count_entries {} -> $total
+  count_unique_agents {} -> $agents
+  sum_tokens {scope: "compressed"} -> $compressed_tokens
+  sum_tokens {scope: "original"} -> $original_tokens
+  compute_savings {
+    original: 50000,
+    compressed: 10000
+  } -> $savings
+  emit {
+    type: "headroom.memory_stats",
+    entries: 100,
+    agents: 3,
+    original_tokens: 50000,
+    compressed_tokens: 10000,
+    savings_ratio: 0.8
+  }

@@ -1,6 +1,6 @@
 //! Core adapter trait and shared error type for channel adapters.
 use async_trait::async_trait;
-use pares_agens_core::Event;
+use pares_radix_core::Event;
 
 /// A channel adapter bridges an external communication channel to the agent event loop.
 #[async_trait]

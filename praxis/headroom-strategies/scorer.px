@@ -1,0 +1,107 @@
+# scorer.px — Relevance scoring and importance ranking
+#
+# Scores each content block on multiple dimensions to determine compression
+# aggressiveness. High-scoring blocks get preserved; low-scoring blocks get
+# aggressively compressed or dropped entirely.
+#
+# Scoring is pure logic — no IO. Inputs are block metadata + query context.
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONSTRAINTS
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint score_in_range:
+  require: scored_block.composite_score >= 0.0 and scored_block.composite_score <= 1.0
+  severity: error
+  message: "Composite score must be normalized to [0.0, 1.0]"
+
+constraint critical_never_dropped:
+  when: scored_block.severity == "critical"
+  require: scored_block.composite_score >= 0.95
+  severity: error
+  message: "Critical-severity blocks must score high enough to never be dropped"
+
+constraint negligible_below_threshold:
+  when: scored_block.severity == "negligible"
+  require: scored_block.composite_score < 0.2
+  severity: error
+  message: "Negligible blocks must score below the drop threshold"
+
+# ═══════════════════════════════════════════════════════════════════════
+# SCORING PROCEDURES
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure score_block:
+  trigger: on_write {pattern: "headroom:plan_entry:*"}
+  given: "Compute composite importance score for a content block"
+  get_block_metadata {block_id: "target"} -> $block
+  compute_relevance_score {block_id: "target", query_context: "current"} -> $relevance
+  compute_recency_score {block_id: "target", decay_factor: 0.9} -> $recency
+  compute_source_score {source: "tool_output"} -> $source
+  compute_composite {
+    relevance_weight: 0.6,
+    recency_weight: 0.3,
+    source_weight: 0.1
+  } -> $composite
+  assign_severity {composite_score: 0.75} -> $severity
+  write_scored_block {
+    block_id: "target",
+    relevance_score: 0.8,
+    recency_score: 0.7,
+    composite_score: 0.75,
+    severity: "high"
+  }
+  emit {type: "headroom.scored", block_id: "target"}
+
+procedure assign_severity:
+  trigger: manual
+  given: "Map composite score to severity tier for compression decisions"
+  get_composite_score {block_id: "target"} -> $score
+  when score.value >= 0.95:
+    update_severity {block_id: "target", severity: "critical"}
+    emit {type: "headroom.severity_assigned", severity: "critical"}
+  end
+  when score.value >= 0.75 and score.value < 0.95:
+    update_severity {block_id: "target", severity: "high"}
+    emit {type: "headroom.severity_assigned", severity: "high"}
+  end
+  when score.value >= 0.45 and score.value < 0.75:
+    update_severity {block_id: "target", severity: "medium"}
+    emit {type: "headroom.severity_assigned", severity: "medium"}
+  end
+  when score.value >= 0.2 and score.value < 0.45:
+    update_severity {block_id: "target", severity: "low"}
+    emit {type: "headroom.severity_assigned", severity: "low"}
+  end
+  when score.value < 0.2:
+    update_severity {block_id: "target", severity: "negligible"}
+    emit {type: "headroom.severity_assigned", severity: "negligible"}
+  end
+
+# ═══════════════════════════════════════════════════════════════════════
+# BATCH SCORING
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure score_all_blocks:
+  trigger: manual
+  given: "Score all pending blocks in a compression batch"
+  list_unscored_blocks {} -> $blocks
+  loop over $blocks as block:
+    compute_relevance_score {block_id: "block", query_context: "current"} -> $rel
+    compute_recency_score {block_id: "block", decay_factor: 0.9} -> $rec
+    compute_source_score {source: "block_source"} -> $src
+    compute_composite {
+      relevance_weight: 0.6,
+      recency_weight: 0.3,
+      source_weight: 0.1
+    } -> $score
+    write_scored_block {
+      block_id: "block",
+      relevance_score: 0.0,
+      recency_score: 0.0,
+      composite_score: 0.0,
+      severity: "medium"
+    }
+  end
+  sort_blocks_by_score {} -> $sorted
+  emit {type: "headroom.batch_scored"}

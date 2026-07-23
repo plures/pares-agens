@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 use tokio::sync::{Mutex, RwLock};
-use tracing::info;
+use tracing::{info, instrument};
 
 use pares_agens_channels::adapter::ChannelAdapter;
 use pares_agens_channels::tauri_ipc::tauri_ipc_channel;
@@ -13,16 +13,18 @@ use pares_agens_core::memory::embed::MockEmbedder;
 use pares_agens_core::memory::store::PluresDbStore;
 use pares_agens_core::memory::store::{InMemoryStore, MemoryStore};
 use pares_agens_core::memory::PluresLm;
-use pares_agens_core::model::{
-    ChatMessage, ChatOptions, ModelClient, ModelCompletion, ToolDefinition, ToolDispatcher,
+use pares_radix_core::model::{
+    ChatMessage, ChatOptions, ModelClient, ModelCompletion, StreamDelta, StreamSender,
+    ToolDefinition, ToolDispatcher,
 };
-use pares_agens_core::optimization::OptimizationSafetyGate;
-use pares_agens_core::praxis::GuidanceService;
-use pares_agens_core::secrets::InMemorySecretStore;
-use pares_agens_core::Event;
-use pares_agens_core::{PluresDbStateStore, StateStore};
-use pares_models::types::{ChatCompletionRequest, Role, Tool};
-use pares_models::ModelRouter;
+use pares_radix_core::optimization::OptimizationSafetyGate;
+use pares_radix_core::plugins::PluginRuntime;
+use pares_radix_core::praxis::GuidanceService;
+use pares_radix_core::secrets::{provider_api_key, InMemorySecretStore, SecretStore};
+use pares_radix_core::Event;
+use pares_radix_core::{PluresDbStateStore, StateStore};
+use pares_agens_models::types::{ChatCompletionRequest, Role, Tool};
+use pares_agens_models::ModelRouter;
 
 use crate::state::{
     build_router_config, rebuild_model_router, sanitize_activation_hotkey, AppState, Settings,
@@ -33,6 +35,7 @@ mod commands;
 mod mcp;
 mod migration;
 mod notifications;
+mod plugins;
 mod procedures;
 mod settings;
 mod state;
@@ -59,6 +62,7 @@ struct ModelErrorPayload {
     error: String,
 }
 
+#[cfg(test)]
 fn split_stream_chunks(content: &str) -> Vec<String> {
     if content.is_empty() {
         return Vec::new();
@@ -118,10 +122,12 @@ pub(crate) fn apply_activation_hotkey(_: &tauri::AppHandle, _: &str) -> Result<(
 struct AppModelClient {
     router: Arc<RwLock<ModelRouter>>,
     settings: Arc<Mutex<Settings>>,
+    telemetry_service: Arc<TelemetryService>,
 }
 
 #[async_trait::async_trait]
 impl ModelClient for AppModelClient {
+    #[instrument(skip_all, fields(model, provider = "router"))]
     async fn complete(
         &self,
         messages: &[ChatMessage],
@@ -137,6 +143,7 @@ impl ModelClient for AppModelClient {
                 .map(|r| r.model.clone())
                 .unwrap_or_else(|| settings.model.clone())
         };
+        tracing::Span::current().record("model", model.as_str());
 
         let converted_messages = messages
             .iter()
@@ -148,19 +155,20 @@ impl ModelClient for AppModelClient {
                     "tool" => Role::Tool,
                     _ => Role::User,
                 };
-                pares_models::types::ChatMessage {
+                pares_agens_models::types::ChatMessage {
                     role,
                     content: Some(m.content.clone()),
                     tool_calls: m.tool_calls.clone().map(|calls| {
                         calls
                             .into_iter()
-                            .map(|call| pares_models::types::ToolCall {
+                            .map(|call| pares_agens_models::types::ToolCall {
                                 id: call.id,
                                 kind: "function".into(),
-                                function: pares_models::types::FunctionCall {
+                                function: pares_agens_models::types::FunctionCall {
                                     name: call.name,
                                     arguments: call.arguments.to_string(),
                                 },
+                                index: None,
                             })
                             .collect()
                     }),
@@ -192,12 +200,18 @@ impl ModelClient for AppModelClient {
             request.logprobs = Some(true);
         }
 
+        let start = std::time::Instant::now();
         let router_guard = self.router.read().await;
         let response = router_guard
             .chat(&request)
             .await
             .map_err(|e| e.to_string())?;
         drop(router_guard);
+        let latency_ms = start.elapsed().as_millis();
+        info!(latency_ms, model = %model, "model call completed");
+        self.telemetry_service
+            .record_model_call(latency_ms as u64)
+            .await;
 
         let choice = response
             .choices
@@ -212,7 +226,7 @@ impl ModelClient for AppModelClient {
             .into_iter()
             .map(|call| {
                 let args = call.function.arguments;
-                pares_agens_core::model::ToolCall {
+                pares_radix_core::model::ToolCall {
                     id: call.id,
                     name: call.function.name,
                     arguments: serde_json::from_str(&args)
@@ -232,6 +246,178 @@ impl ModelClient for AppModelClient {
             content: choice.message.content.clone(),
             tool_calls,
             logprobs,
+            model: Some(response.model),
+        })
+    }
+
+    #[instrument(skip_all, fields(model, provider = "router"))]
+    async fn complete_stream(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolDefinition],
+        options: &ChatOptions,
+        tx: StreamSender,
+    ) -> Result<ModelCompletion, String> {
+        use futures_util::StreamExt;
+
+        let model = {
+            let settings = self.settings.lock().await;
+            settings
+                .routing
+                .interactive
+                .as_ref()
+                .map(|r| r.model.clone())
+                .unwrap_or_else(|| settings.model.clone())
+        };
+        tracing::Span::current().record("model", model.as_str());
+
+        let converted_messages: Vec<pares_agens_models::types::ChatMessage> = messages
+            .iter()
+            .map(|m| {
+                let role = match m.role.as_str() {
+                    "system" => Role::System,
+                    "user" => Role::User,
+                    "assistant" => Role::Assistant,
+                    "tool" => Role::Tool,
+                    _ => Role::User,
+                };
+                pares_agens_models::types::ChatMessage {
+                    role,
+                    content: Some(m.content.clone()),
+                    tool_calls: m.tool_calls.clone().map(|calls| {
+                        calls
+                            .into_iter()
+                            .map(|call| pares_agens_models::types::ToolCall {
+                                id: call.id,
+                                kind: "function".into(),
+                                function: pares_agens_models::types::FunctionCall {
+                                    name: call.name,
+                                    arguments: call.arguments.to_string(),
+                                },
+                                index: None,
+                            })
+                            .collect()
+                    }),
+                    tool_call_id: m.tool_call_id.clone(),
+                    name: None,
+                }
+            })
+            .collect();
+
+        let mut request = ChatCompletionRequest::new(&model, converted_messages);
+        if !tools.is_empty() {
+            request.tools = Some(
+                tools
+                    .iter()
+                    .map(|tool| {
+                        Tool::function(
+                            tool.name.clone(),
+                            tool.description.clone(),
+                            tool.parameters.clone(),
+                        )
+                    })
+                    .collect(),
+            );
+        }
+        if let Some(temp) = options.temperature {
+            request.temperature = Some(temp as f32);
+        }
+
+        let start = std::time::Instant::now();
+        let router_guard = self.router.read().await;
+        let stream_result = router_guard.chat_stream(&request).await;
+        drop(router_guard);
+
+        let mut stream = match stream_result {
+            Ok(s) => s,
+            Err(e) => {
+                // Fall back to non-streaming on stream error.
+                let _ = tx.send(StreamDelta::Done);
+                return Err(e.to_string());
+            }
+        };
+
+        let mut full_content = String::new();
+        let mut tool_calls: Vec<pares_radix_core::model::ToolCall> = Vec::new();
+        // Buffer partial tool call arguments by index.
+        let mut tc_args: std::collections::HashMap<usize, (String, String, String)> =
+            std::collections::HashMap::new();
+        let mut response_model: Option<String> = None;
+
+        while let Some(chunk_result) = stream.next().await {
+            match chunk_result {
+                Ok(chunk) => {
+                    if response_model.is_none() {
+                        response_model = Some(chunk.model.clone());
+                    }
+                    for choice in &chunk.choices {
+                        // Text content delta.
+                        if let Some(ref content) = choice.delta.content {
+                            full_content.push_str(content);
+                            let _ = tx.send(StreamDelta::Content(content.clone()));
+                        }
+                        // Tool call deltas.
+                        if let Some(ref tc_deltas) = choice.delta.tool_calls {
+                            for tc in tc_deltas {
+                                let idx = tc.index.unwrap_or(0) as usize;
+                                let func = &tc.function;
+                                if !tc.id.is_empty() {
+                                    // New tool call start.
+                                    let name = func.name.clone();
+                                    tc_args
+                                        .insert(idx, (tc.id.clone(), name.clone(), String::new()));
+                                    let _ = tx.send(StreamDelta::ToolCallStart {
+                                        index: idx,
+                                        id: tc.id.clone(),
+                                        name,
+                                    });
+                                }
+                                if !func.arguments.is_empty() {
+                                    if let Some(entry) = tc_args.get_mut(&idx) {
+                                        entry.2.push_str(&func.arguments);
+                                    }
+                                    let _ = tx.send(StreamDelta::ToolCallDelta {
+                                        index: idx,
+                                        arguments: func.arguments.clone(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "stream chunk error");
+                    break;
+                }
+            }
+        }
+
+        let _ = tx.send(StreamDelta::Done);
+
+        let latency_ms = start.elapsed().as_millis();
+        info!(latency_ms, model = %model, "streaming model call completed");
+        self.telemetry_service
+            .record_model_call(latency_ms as u64)
+            .await;
+
+        // Assemble tool calls from buffered fragments.
+        for (_idx, (id, name, args)) in tc_args {
+            tool_calls.push(pares_radix_core::model::ToolCall {
+                id,
+                name,
+                arguments: serde_json::from_str(&args).unwrap_or(serde_json::Value::String(args)),
+            });
+        }
+
+        Ok(ModelCompletion {
+            content: if full_content.is_empty() {
+                None
+            } else {
+                Some(full_content)
+            },
+            tool_calls,
+            logprobs: None,
+            model: response_model,
         })
     }
 }
@@ -282,7 +468,9 @@ impl ToolDispatcher for McpToolDispatcher {
                         .content
                         .into_iter()
                         .filter_map(|c| match c {
-                            mcp_client::protocol::ToolContent::Text { text } => Some(text),
+                            mcp_client::protocol::ToolContent::Text { text } => {
+                                Some(text)
+                            }
                             _ => None,
                         })
                         .collect::<Vec<_>>()
@@ -308,14 +496,25 @@ impl ToolDispatcher for McpToolDispatcher {
 /// - Shared [`AppState`] exposed to every Tauri command
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_notification::init());
+
+    // Activate TUI mode when --tui flag is passed
+    #[cfg(feature = "tui")]
+    {
+        let args: Vec<String> = std::env::args().collect();
+        if args.contains(&"--tui".to_string()) {
+            builder = builder.plugin(tauri_plugin_tui::init());
+        }
+    }
+
+    builder
         .setup(|app| {
             // ── Memory store ──────────────────────────────────────────────
             // Open a persistent PluresDB-backed memory store under the app data
@@ -380,6 +579,7 @@ pub fn run() {
             let model_client = Arc::new(AppModelClient {
                 router: Arc::clone(&model_router),
                 settings: Arc::clone(&settings),
+                telemetry_service: Arc::clone(&telemetry_service),
             });
             let tool_dispatcher = Arc::new(McpToolDispatcher {
                 mcp_tools: Arc::clone(&mcp_tools),
@@ -415,7 +615,42 @@ pub fn run() {
                                 _ => None,
                             };
 
-                            let response = agent.handle_event(event).await;
+                            // Use streaming path for messages (real-time token emission).
+                            let response = if let Some(ref req_id) = request_id {
+                                let (tx, mut rx) =
+                                    tokio::sync::mpsc::unbounded_channel::<StreamDelta>();
+                                let stream_handle = app_handle.clone();
+                                let stream_req_id = req_id.clone();
+
+                                // Spawn a task to forward stream deltas to the frontend.
+                                let forwarder = tokio::spawn(async move {
+                                    while let Some(delta) = rx.recv().await {
+                                        match delta {
+                                            StreamDelta::Content(content) => {
+                                                emit_with_warn(
+                                                    &stream_handle,
+                                                    "model-chunk",
+                                                    &ModelChunkPayload {
+                                                        request_id: stream_req_id.clone(),
+                                                        content,
+                                                        done: false,
+                                                    },
+                                                );
+                                            }
+                                            StreamDelta::Done => break,
+                                            _ => {} // ToolCallStart/Delta handled internally
+                                        }
+                                    }
+                                });
+
+                                let resp = agent.handle_event_streaming(event, tx).await;
+                                // Ensure forwarder completes.
+                                let _ = forwarder.await;
+                                resp
+                            } else {
+                                agent.handle_event(event).await
+                            };
+
                             if let Some(content) =
                                 response.as_ref().and_then(notifications::response_content)
                             {
@@ -436,18 +671,7 @@ pub fn run() {
                                 match &response {
                                     Some(Event::ModelResponse { content, .. })
                                     | Some(Event::Message { content, .. }) => {
-                                        for chunk in split_stream_chunks(content) {
-                                            emit_with_warn(
-                                                &app_handle,
-                                                "model-chunk",
-                                                &ModelChunkPayload {
-                                                    request_id: request_id.clone(),
-                                                    content: chunk,
-                                                    done: false,
-                                                },
-                                            );
-                                        }
-
+                                        // Emit the final done marker and full response.
                                         emit_with_warn(
                                             &app_handle,
                                             "model-chunk",
@@ -510,6 +734,40 @@ pub fn run() {
             // used for the default build so that no external dependencies or
             // vault unlocking are required on startup.
             let secret_store = Arc::new(InMemorySecretStore::new());
+
+            // Pre-seed Copilot provider API key from `gh auth token` if available.
+            #[allow(clippy::let_underscore_future)]
+            if let Ok(output) = std::process::Command::new("gh")
+                .args(["auth", "token"])
+                .output()
+            {
+                if output.status.success() {
+                    let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if !token.is_empty() {
+                        let _ = secret_store.set(&provider_api_key("copilot"), &token);
+                        info!("Pre-seeded copilot provider from gh auth token");
+                    }
+                }
+            }
+
+            // Pre-seed Anthropic API key from ANTHROPIC_API_KEY env var.
+            #[allow(clippy::let_underscore_future)]
+            if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+                if !key.is_empty() {
+                    let _ = secret_store.set(&provider_api_key("anthropic"), &key);
+                    info!("Pre-seeded anthropic provider from ANTHROPIC_API_KEY");
+                }
+            }
+
+            // Pre-seed OpenAI API key from OPENAI_API_KEY env var.
+            #[allow(clippy::let_underscore_future)]
+            if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+                if !key.is_empty() {
+                    let _ = secret_store.set(&provider_api_key("openai"), &key);
+                    info!("Pre-seeded openai provider from OPENAI_API_KEY");
+                }
+            }
+            let plugin_runtime = Arc::new(PluginRuntime::new());
             app.manage(AppState {
                 ipc_handle: handle,
                 memory_store,
@@ -523,8 +781,10 @@ pub fn run() {
                 optimization_safety_gate,
                 mcp_clients: Arc::clone(&mcp_clients),
                 mcp_tools: Arc::clone(&mcp_tools),
-                license: Mutex::new(pares_agens_core::license::License::free()),
+                license: Mutex::new(pares_radix_core::license::License::free()),
                 telemetry_service: Arc::clone(&telemetry_service),
+                plugin_runtime,
+                plugin_executor: None, // TODO: wire CrdtStore when available
             });
 
             // ── Initial router rebuild ─────────────────────────────────────
@@ -590,9 +850,18 @@ pub fn run() {
             commands::get_conversation_history,
             commands::get_telemetry_snapshot,
             commands::upload_telemetry_snapshot,
+            plugins::plugin_install,
+            plugins::plugin_list,
+            plugins::plugin_uninstall,
+            plugins::plugin_schema,
+            plugins::plugin_crud_create,
+            plugins::plugin_crud_list,
+            plugins::plugin_crud_update,
+            plugins::plugin_crud_delete,
+            plugins::plugin_crud_search,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Pares Agens");
+        .expect("error while running Pares Radix");
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

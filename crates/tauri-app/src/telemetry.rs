@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use pares_agens_core::telemetry::{TelemetryAggregate, TelemetrySnapshot};
-use pares_agens_core::StateStore;
+use pares_radix_core::telemetry::{TelemetryAggregate, TelemetrySnapshot};
+use pares_radix_core::StateStore;
 use tokio::sync::Mutex;
 
 const TELEMETRY_KEY: &str = "telemetry.aggregate.v1";

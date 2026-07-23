@@ -270,4 +270,179 @@ mod tests {
         assert!(summary.contains("my-drill"));
         assert!(summary.contains("50%"));
     }
+
+    // -----------------------------------------------------------------------
+    // Additional mutation-gap tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn total_loss_constructor_sets_fraction_to_one() {
+        let drill = SimulationDrill::total_loss(MemoryCategory::CodePattern, "reason");
+        assert_eq!(drill.fraction, 1.0);
+        assert_ne!(drill.fraction, 0.0);
+    }
+
+    #[test]
+    fn total_loss_constructor_sets_name_with_category() {
+        let drill = SimulationDrill::total_loss(MemoryCategory::CodePattern, "r");
+        assert_eq!(drill.name, "total-loss-code-pattern");
+        assert_eq!(drill.categories.len(), 1);
+        assert_eq!(drill.categories[0], MemoryCategory::CodePattern);
+    }
+
+    #[test]
+    fn total_loss_constructor_sets_reason() {
+        let drill = SimulationDrill::total_loss(MemoryCategory::Decision, "my-reason");
+        assert_eq!(drill.reason, "my-reason");
+    }
+
+    #[test]
+    fn drill_result_loss_count_matches_vec_len() {
+        let result = DrillResult {
+            drill_name: "test".into(),
+            simulated_losses: vec![],
+            impact_summary: String::new(),
+        };
+        assert_eq!(result.loss_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn drill_negative_fraction_clamped_to_zero() {
+        let entries: Vec<MemoryEntry> = (0..5)
+            .map(|i| make_entry(&format!("e{i}"), MemoryCategory::Conversation))
+            .collect();
+        let log = AuditLog::new();
+        let drill = SimulationDrill {
+            name: "neg-fraction".into(),
+            categories: vec![MemoryCategory::Conversation],
+            fraction: -0.5,
+            reason: "test".into(),
+        };
+        let result = run_drill(&entries, &drill, &log).await.unwrap();
+        assert_eq!(result.loss_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn drill_zero_fraction_loses_nothing() {
+        let entries: Vec<MemoryEntry> = (0..5)
+            .map(|i| make_entry(&format!("e{i}"), MemoryCategory::Conversation))
+            .collect();
+        let log = AuditLog::new();
+        let drill = SimulationDrill {
+            name: "zero".into(),
+            categories: vec![MemoryCategory::Conversation],
+            fraction: 0.0,
+            reason: "test".into(),
+        };
+        let result = run_drill(&entries, &drill, &log).await.unwrap();
+        assert_eq!(result.loss_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn drill_fraction_one_loses_all() {
+        let entries: Vec<MemoryEntry> = (0..7)
+            .map(|i| make_entry(&format!("e{i}"), MemoryCategory::ErrorFix))
+            .collect();
+        let log = AuditLog::new();
+        let drill = SimulationDrill {
+            name: "full".into(),
+            categories: vec![MemoryCategory::ErrorFix],
+            fraction: 1.0,
+            reason: "test".into(),
+        };
+        let result = run_drill(&entries, &drill, &log).await.unwrap();
+        assert_eq!(result.loss_count(), 7);
+    }
+
+    #[tokio::test]
+    async fn drill_result_contains_drill_name() {
+        let entries = vec![make_entry("a", MemoryCategory::Fact)];
+        let log = AuditLog::new();
+        let drill = SimulationDrill::total_loss(MemoryCategory::Fact, "x");
+        let result = run_drill(&entries, &drill, &log).await.unwrap();
+        assert_eq!(result.drill_name, "total-loss-fact");
+        assert!(result.impact_summary.contains("total-loss-fact"));
+    }
+
+    #[tokio::test]
+    async fn drill_audit_entries_have_correct_memory_id() {
+        let entries = vec![
+            make_entry("mem-001", MemoryCategory::Conversation),
+            make_entry("mem-002", MemoryCategory::Conversation),
+        ];
+        let log = AuditLog::new();
+        let drill = SimulationDrill::total_loss(MemoryCategory::Conversation, "id-check");
+        let result = run_drill(&entries, &drill, &log).await.unwrap();
+        let ids: Vec<&str> = result
+            .simulated_losses
+            .iter()
+            .map(|a| a.memory_id.as_str())
+            .collect();
+        assert!(ids.contains(&"mem-001"));
+        assert!(ids.contains(&"mem-002"));
+    }
+
+    #[tokio::test]
+    async fn drill_audit_entries_have_correct_category() {
+        let entries = vec![make_entry("a", MemoryCategory::Preference)];
+        let log = AuditLog::new();
+        let drill = SimulationDrill::total_loss(MemoryCategory::Preference, "cat-check");
+        let result = run_drill(&entries, &drill, &log).await.unwrap();
+        assert_eq!(
+            result.simulated_losses[0].category,
+            Some(MemoryCategory::Preference)
+        );
+    }
+
+    #[tokio::test]
+    async fn drill_unmatched_category_returns_no_losses() {
+        let entries = vec![
+            make_entry("a", MemoryCategory::Conversation),
+            make_entry("b", MemoryCategory::CodePattern),
+        ];
+        let log = AuditLog::new();
+        let drill = SimulationDrill {
+            name: "miss".into(),
+            categories: vec![MemoryCategory::ScreenCapture],
+            fraction: 1.0,
+            reason: "test".into(),
+        };
+        let result = run_drill(&entries, &drill, &log).await.unwrap();
+        assert_eq!(result.loss_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn drill_multi_category_targets_union() {
+        let entries = vec![
+            make_entry("a", MemoryCategory::Conversation),
+            make_entry("b", MemoryCategory::CodePattern),
+            make_entry("c", MemoryCategory::Decision),
+        ];
+        let log = AuditLog::new();
+        let drill = SimulationDrill {
+            name: "multi".into(),
+            categories: vec![MemoryCategory::Conversation, MemoryCategory::Decision],
+            fraction: 1.0,
+            reason: "test".into(),
+        };
+        let result = run_drill(&entries, &drill, &log).await.unwrap();
+        assert_eq!(result.loss_count(), 2); // a + c, not b
+    }
+
+    #[tokio::test]
+    async fn drill_impact_summary_shows_percentage() {
+        let entries: Vec<MemoryEntry> = (0..10)
+            .map(|i| make_entry(&format!("e{i}"), MemoryCategory::Conversation))
+            .collect();
+        let log = AuditLog::new();
+        let drill = SimulationDrill {
+            name: "pct-test".into(),
+            categories: vec![MemoryCategory::Conversation],
+            fraction: 0.3,
+            reason: "test".into(),
+        };
+        let result = run_drill(&entries, &drill, &log).await.unwrap();
+        assert!(result.impact_summary.contains("30%"));
+        assert!(result.impact_summary.contains("pct-test"));
+    }
 }

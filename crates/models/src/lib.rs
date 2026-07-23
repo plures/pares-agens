@@ -1,15 +1,15 @@
-//! `pares-models` — OpenAI-compatible model router for Pares Agens.
+//! `pares-agens-models` — OpenAI-compatible model router for Pares Radix.
 //!
 //! ## Quick start
 //!
 //! ```no_run
-//! use pares_models::{
+//! use pares_agens_models::{
 //!     config::{ProviderConfig, RouterConfig},
 //!     router::ModelRouter,
 //!     types::{ChatCompletionRequest, ChatMessage, Role},
 //! };
 //!
-//! # async fn example() -> Result<(), pares_models::error::Error> {
+//! # async fn example() -> Result<(), pares_agens_models::error::Error> {
 //! let config = RouterConfig::single(
 //!     "docker-model-runner",
 //!     ProviderConfig::new("http://localhost:12434", None),

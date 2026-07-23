@@ -17,11 +17,13 @@
 //! ```
 
 use async_trait::async_trait;
-use pares_agens_core::Event;
+use pares_agens_core::diagnostics::current_process_rss_kib;
 use pares_agens_marketplace::{installer::Installer, SkillCategory, SkillMetadata};
+use pares_radix_core::Event;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use teloxide::{
     prelude::*,
     types::{
@@ -35,10 +37,11 @@ use uuid::Uuid;
 
 use crate::adapter::{ChannelAdapter, ChannelError};
 use crate::group_context::{GroupContextBuffer, GroupMessage};
-use pares_agens_core::channel_contract::{ChannelContract, GroupChatPolicy};
-use pares_agens_core::event_spine::EventSpineHandle;
-use pares_agens_core::renderers::telegram as html_renderer;
 use pares_agens_agenda::scheduler::Scheduler;
+use pares_radix_core::channel_contract::{ChannelContract, GroupChatPolicy};
+use pares_radix_core::event_spine::EventSpineHandle;
+use pares_radix_core::renderers::telegram as html_renderer;
+use pares_radix_core::task_manager::TaskManager;
 
 const PARES_MODULUS_INDEX_URL: &str =
     "https://raw.githubusercontent.com/plures/pares-modulus/main/index.json";
@@ -46,13 +49,25 @@ const DEFAULT_MARKETPLACE_INSTALL_DIR: &str = "/skills";
 const MAX_INDEX_LISTING_ITEMS: usize = 10;
 const DEFAULT_NIX_FLAKE_DIR: &str = "nixos-config";
 const DEFAULT_NIX_HOST: &str = "praxisbot";
+/// Directory containing the pares-radix source for rebuilding the binary.
+#[allow(dead_code)]
+const DEFAULT_PARES_RADIX_DIR: &str = "pares-radix";
+/// Subdirectory under $HOME/projects for defaults, or override with env vars.
+#[allow(dead_code)]
+const PROJECTS_SUBDIR: &str = "projects";
 const TELEGRAM_MAX_MESSAGE_CHARS: usize = 3900;
 /// Internal prefix added by the Telegram adapter when `/verbose` is enabled.
 ///
 /// The runtime strips this marker before model processing and uses it only to
 /// decide whether to append tool execution details to the Telegram reply.
 pub const TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER: &str = "__PARES_VERBOSE_TOOL_DETAILS__:";
-const TELEGRAM_HELP_COMMANDS: [(&str, &str); 22] = [
+const TELEGRAM_AGENT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(180);
+const TELEGRAM_BLANK_RESPONSE_FALLBACK: &str =
+    "I’m sorry — I received an empty response from the model. Please try again.";
+const TELEGRAM_NO_RESPONSE_FALLBACK: &str =
+    "I’m sorry — I finished processing, but no visible response was produced. Please try again.";
+const TELEGRAM_TIMEOUT_FALLBACK: &str = "⚠️ System notice: the request timed out before the assistant produced a response. Please retry or narrow the request.";
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 33] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
     ("/status", "status + health snapshot"),
@@ -66,6 +81,7 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 22] = [
         "toggle deep model escalation (or /reasoning on|off)",
     ),
     ("/model", "show current primary + deep model"),
+    ("/models", "list all discovered models with tier + context"),
     ("/model <name>", "switch primary model at runtime"),
     ("/model deep <name>", "switch deep model at runtime"),
     (
@@ -77,15 +93,14 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 22] = [
     ("/config log-level <level>", "set runtime log level"),
     ("/reset", "full runtime reset (new session + config reload)"),
     ("/clear", "start a fresh conversation session"),
-    (
-        "/version",
-        "show version and build info",
-    ),
-    ("/logs [n]", "tail recent pares-agens service logs"),
+    ("/resume", "resume last session (or /resume list)"),
+    ("/sessions", "list recent sessions (alias for /resume list)"),
+    ("/version", "show version and build info"),
+    ("/logs [n]", "tail recent pares-radix service logs"),
     ("/tools", "show tool governance policies"),
     (
         "/update",
-        "run NixOS self-update and rebuild if pares-agens changed",
+        "run NixOS self-update and rebuild if pares-radix changed",
     ),
     (
         "/personality",
@@ -99,6 +114,23 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 22] = [
         "/plugin",
         "manage plugins (list, install <path>, uninstall <name>, schema <name>)",
     ),
+    (
+        "/praxis",
+        "write gate: constraints, log [n], violations [n]",
+    ),
+    (
+        "/tasks",
+        "list open tasks (or /tasks all to include completed)",
+    ),
+    (
+        "/task <id>",
+        "show task details, complete, or cancel (/task <id> complete|cancel)",
+    ),
+    ("/cluster status", "show cluster state"),
+    ("/cluster nodes", "list discovered nodes with capabilities"),
+    ("/cluster info", "show local node capabilities"),
+    ("/cluster deploy <file>", "deploy workloads from a .px file"),
+    ("/cluster workloads", "list running workloads"),
 ];
 const DEFAULT_LOG_TAIL_LINES: usize = 80;
 const MAX_LOG_TAIL_LINES: usize = 400;
@@ -250,10 +282,25 @@ fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-/// Delegate to the canonical self-update command builder in `pares_agens_agenda`.
-/// See ADR-0010: no duplicated operational logic across crates.
-fn build_nixos_update_command(flake_dir: &str, host: &str) -> String {
-    pares_agens_agenda::self_update::build_update_command(flake_dir, host)
+fn build_nixos_update_command(_flake_dir: &str, _host: &str) -> String {
+    // Self-update = pull latest config then nixos-rebuild from local checkout.
+    // Uses the local git repo (SSH access) instead of github: URI
+    // because the repo may be private (no GitHub API token for Nix).
+    let host = std::env::var("PARES_NIX_HOST").unwrap_or_else(|_| "praxisbot".into());
+    let flake_dir = std::env::var("PARES_NIX_FLAKE_DIR").unwrap_or_else(|_| "/etc/nixos".into());
+    let flake_dir_q = shell_single_quote(&flake_dir);
+    let host_q = shell_single_quote(&host);
+    format!(
+        "set -eu; \
+         cd {flake_dir_q}; \
+         echo 'Pulling latest config...'; \
+         git fetch origin && git pull --ff-only; \
+         echo 'Updating flake inputs...'; \
+         sudo nix flake update pares-radix pares-arca; \
+         echo 'Rebuilding NixOS...'; \
+         sudo nixos-rebuild switch --flake .#{host_q} --refresh; \
+         echo 'Self-update complete.'"
+    )
 }
 
 fn truncate_telegram_message(content: String) -> String {
@@ -334,7 +381,7 @@ fn format_update_command_output(output: &std::process::Output) -> String {
 }
 
 fn telegram_help_text() -> String {
-    let mut lines = vec!["Pares Agens commands:".to_string()];
+    let mut lines = vec!["Pares Radix commands:".to_string()];
     lines.extend(
         TELEGRAM_HELP_COMMANDS
             .iter()
@@ -343,25 +390,6 @@ fn telegram_help_text() -> String {
     lines.push(String::new());
     lines.push("Or just send a message.".to_string());
     lines.join("\n")
-}
-
-fn current_process_rss_kib() -> Option<u64> {
-    #[cfg(target_os = "linux")]
-    {
-        let status = std::fs::read_to_string("/proc/self/status").ok()?;
-        status.lines().find_map(|line| {
-            let line = line.trim();
-            if !line.starts_with("VmRSS:") {
-                return None;
-            }
-            line.split_whitespace().nth(1)?.parse::<u64>().ok()
-        })
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        None
-    }
 }
 
 fn is_update_authorized(msg: &Message) -> bool {
@@ -413,9 +441,17 @@ pub struct TelegramConfig {
     /// Policy for group chat participation.
     pub group_chat_policy: GroupChatPolicy,
     /// Optional plugin runtime for `/plugin` commands.
-    pub plugin_runtime: Option<Arc<pares_agens_core::plugins::PluginRuntime>>,
+    pub plugin_runtime: Option<Arc<pares_radix_core::plugins::PluginRuntime>>,
     /// Optional plugin CRUD executor for entity counts.
-    pub plugin_executor: Option<Arc<pares_agens_core::plugins::PluginCrudExecutor>>,
+    pub plugin_executor: Option<Arc<pares_radix_core::plugins::PluginCrudExecutor>>,
+    /// Optional praxis write gate for `/praxis` command.
+    pub write_gate: Option<Arc<pares_radix_core::praxis::write_gate::PraxisWriteGate>>,
+    /// Optional task manager for `/tasks` and `/task` commands.
+    pub task_manager: Option<Arc<TaskManager>>,
+    /// Number of registered tools/procedures (for `/status` display).
+    pub tool_count: Option<usize>,
+    /// Optional pool-aware model control (replaces model_control when set).
+    pub pool_control: Option<Arc<dyn pares_radix_core::model_pool::PoolControl>>,
 }
 
 impl TelegramConfig {
@@ -433,6 +469,10 @@ impl TelegramConfig {
             group_chat_policy: GroupChatPolicy::default(),
             plugin_runtime: None,
             plugin_executor: None,
+            write_gate: None,
+            task_manager: None,
+            tool_count: None,
+            pool_control: None,
         }
     }
 
@@ -457,6 +497,24 @@ impl TelegramConfig {
         self
     }
 
+    /// Enable pool-aware `/model` commands (replaces legacy model_control).
+    #[must_use]
+    pub fn with_pool_control(
+        mut self,
+        pool_control: Arc<dyn pares_radix_core::model_pool::PoolControl>,
+    ) -> Self {
+        self.pool_control = Some(pool_control);
+        self
+    }
+
+    /// Provide a fixed tool count for `/status` reporting (used when the count
+    /// is known at startup and isn't otherwise dynamically queryable here).
+    #[must_use]
+    pub fn with_tool_count(mut self, tool_count: usize) -> Self {
+        self.tool_count = Some(tool_count);
+        self
+    }
+
     /// Enable `/reset` runtime reset support.
     #[must_use]
     pub fn with_runtime_control(
@@ -476,7 +534,10 @@ impl TelegramConfig {
 
     /// Enable `/personality` runtime personality control.
     #[must_use]
-    pub fn with_personality_control(mut self, control: Arc<dyn TelegramPersonalityControl>) -> Self {
+    pub fn with_personality_control(
+        mut self,
+        control: Arc<dyn TelegramPersonalityControl>,
+    ) -> Self {
         self.personality_control = Some(control);
         self
     }
@@ -485,6 +546,13 @@ impl TelegramConfig {
     #[must_use]
     pub fn with_scheduler(mut self, scheduler: Arc<Scheduler>) -> Self {
         self.scheduler = Some(scheduler);
+        self
+    }
+
+    /// Enable `/tasks` and `/task` commands.
+    #[must_use]
+    pub fn with_task_manager(mut self, task_manager: Arc<TaskManager>) -> Self {
+        self.task_manager = Some(task_manager);
         self
     }
 
@@ -499,8 +567,8 @@ impl TelegramConfig {
     #[must_use]
     pub fn with_plugin_runtime(
         mut self,
-        runtime: Arc<pares_agens_core::plugins::PluginRuntime>,
-        executor: Arc<pares_agens_core::plugins::PluginCrudExecutor>,
+        runtime: Arc<pares_radix_core::plugins::PluginRuntime>,
+        executor: Arc<pares_radix_core::plugins::PluginCrudExecutor>,
     ) -> Self {
         self.plugin_runtime = Some(runtime);
         self.plugin_executor = Some(executor);
@@ -508,11 +576,50 @@ impl TelegramConfig {
     }
 }
 
+/// Metadata for a single discovered model, surfaced by `/models`.
+///
+/// Backed entirely by real boot-discovery data; there is no synthetic/default
+/// instance. `context_window` is `None` only when no estimate is available.
+#[derive(Debug, Clone)]
+pub struct DiscoveredModelInfo {
+    /// Model identifier (e.g. "claude-sonnet-4.5").
+    pub id: String,
+    /// Human-readable name, if the provider reported one.
+    pub name: String,
+    /// Context window in tokens (discovered `max_input_tokens` preferred).
+    pub context_window: Option<u64>,
+    /// Tier classification: "Fast" | "Standard" | "Premium".
+    pub tier: String,
+    /// Active selection slot for this model: `Some("fast"|"standard"|"deep")`.
+    pub selected_slot: Option<&'static str>,
+}
+
 /// Runtime model control hooks used by the `/model` Telegram command.
 #[async_trait]
 pub trait TelegramModelControl: Send + Sync {
     /// Return the current `(primary_model, deep_model)` pair.
     async fn current_models(&self) -> (String, String);
+    /// Return the current auto-selected fast-tier model, if any was selected.
+    /// Empty string / `None` means no fast tier is active (honest absence).
+    async fn fast_model(&self) -> Option<String> {
+        None
+    }
+    /// Return the tier that served the most recent turn, e.g. "Fast",
+    /// "Standard", "Premium", or `None` if no turn has been routed yet.
+    async fn last_route_tier(&self) -> Option<String> {
+        None
+    }
+    /// Return a static description of the routing mode in effect.
+    async fn routing_mode(&self) -> String {
+        "unknown".to_string()
+    }
+    /// Return the models discovered at boot, as `(id, context_window, tier,
+    /// selected_slot)` tuples. `selected_slot` is `Some("fast"|"standard"|
+    /// "deep")` when the model is the active pick for that slot. Empty vec =
+    /// nothing discovered (honest absence, never a fabricated list).
+    async fn available_models(&self) -> Vec<DiscoveredModelInfo> {
+        Vec::new()
+    }
     /// Update the primary model.
     async fn set_primary_model(&self, model: &str) -> Result<(), String>;
     /// Update the deep model.
@@ -580,7 +687,20 @@ pub struct TelegramRuntimeConfig {
 /// Telegram messages.
 pub struct TelegramAdapter {
     config: TelegramConfig,
-    event_spine: Option<EventSpineHandle>,
+    /// Handle to the event spine for spine-driven message delivery.
+    pub event_spine: Option<EventSpineHandle>,
+    /// Broadcast sender for model streaming deltas.
+    /// Channel handlers subscribe to receive progressive token delivery.
+    /// When None, progressive editing is disabled (placeholder → full edit).
+    pub stream_tx: Option<tokio::sync::broadcast::Sender<pares_radix_core::model::StreamDelta>>,
+    /// Shared registry of in-flight tool approvals (block-and-await seam, #472).
+    ///
+    /// When set, an Allow/Deny button press whose `callback_data` id is a live
+    /// approval token is routed into [`pares_radix_core::approval::ApprovalRegistry::resolve`],
+    /// waking the tool call blocked on that token. Shared (cloned `Arc`) with the
+    /// tool dispatcher that registered the pending approval. Channel-agnostic:
+    /// the decision logic lives in radix-core; this adapter only routes the token.
+    pub approval_registry: Option<Arc<pares_radix_core::approval::ApprovalRegistry>>,
 }
 
 #[derive(Debug)]
@@ -601,17 +721,22 @@ enum ConfigCommand {
 impl TelegramAdapter {
     /// Create a new [`TelegramAdapter`] with the given configuration.
     pub fn new(config: TelegramConfig) -> Self {
-        Self { config, event_spine: None }
+        Self {
+            config,
+            event_spine: None,
+            stream_tx: None,
+            approval_registry: None,
+        }
     }
 
     /// Create a new [`TelegramAdapter`] with an event spine handle.
     pub fn with_event_spine(config: TelegramConfig, spine: EventSpineHandle) -> Self {
-        Self { config, event_spine: Some(spine) }
-    }
-
-    /// Get a reference to the event spine handle, if configured.
-    pub fn event_spine(&self) -> Option<&EventSpineHandle> {
-        self.event_spine.as_ref()
+        Self {
+            config,
+            event_spine: Some(spine),
+            stream_tx: None,
+            approval_registry: None,
+        }
     }
 
     fn parse_model_command(args: Vec<&str>) -> Result<ModelCommand, &'static str> {
@@ -811,7 +936,8 @@ impl TelegramAdapter {
 
             // Find a split point: prefer double-newline (paragraph), then single newline, then space
             let search_range = &remaining[..max_len];
-            let split_at = search_range.rfind("\n\n")
+            let split_at = search_range
+                .rfind("\n\n")
                 .map(|i| i + 2)
                 .or_else(|| search_range.rfind('\n').map(|i| i + 1))
                 .or_else(|| search_range.rfind(' ').map(|i| i + 1))
@@ -858,6 +984,82 @@ impl TelegramAdapter {
         Ok(())
     }
 
+    fn progressive_response_timeout() -> Duration {
+        TELEGRAM_AGENT_RESPONSE_TIMEOUT
+    }
+
+    fn normalize_progressive_response_content(content: String) -> String {
+        if content.trim().is_empty() {
+            TELEGRAM_BLANK_RESPONSE_FALLBACK.to_string()
+        } else {
+            content
+        }
+    }
+
+    fn progressive_no_response_fallback() -> &'static str {
+        TELEGRAM_NO_RESPONSE_FALLBACK
+    }
+
+    fn progressive_timeout_fallback() -> &'static str {
+        TELEGRAM_TIMEOUT_FALLBACK
+    }
+
+    async fn deliver_progressive_reply(
+        bot: &Bot,
+        msg: &Message,
+        placeholder_id: Option<teloxide::types::MessageId>,
+        content: &str,
+        reply_markup: Option<InlineKeyboardMarkup>,
+        event_spine: Option<&EventSpineHandle>,
+        acknowledge: bool,
+    ) {
+        let delivered_via_edit = if let Some(pid) = placeholder_id {
+            Self::edit_placeholder_with_response(
+                bot,
+                msg.chat.id,
+                pid,
+                content,
+                reply_markup.clone(),
+                event_spine,
+            )
+            .await
+        } else {
+            None
+        };
+
+        if let Some((format_used, msg_ids)) = delivered_via_edit {
+            if let Some(spine) = event_spine {
+                for mid in &msg_ids {
+                    spine.emit_delivery_success(msg.chat.id.0, "telegram", *mid, format_used);
+                }
+            }
+            if acknowledge {
+                Self::acknowledge_message(bot, msg).await;
+            }
+            return;
+        }
+
+        // Placeholder edit failed or wasn't possible — delete placeholder and send fresh.
+        if let Some(pid) = placeholder_id {
+            let _ = bot.delete_message(msg.chat.id, pid).await;
+        }
+        match Self::send_html_reply(bot, msg, content, reply_markup, event_spine).await {
+            Ok((format_used, msg_ids)) => {
+                if let Some(spine) = event_spine {
+                    for mid in &msg_ids {
+                        spine.emit_delivery_success(msg.chat.id.0, "telegram", *mid, format_used);
+                    }
+                }
+                if acknowledge {
+                    Self::acknowledge_message(bot, msg).await;
+                }
+            }
+            Err(e) => {
+                error!("Failed to send Telegram reply: {e}");
+            }
+        }
+    }
+
     /// Edit a placeholder message with the full response.
     ///
     /// If the response fits in one message, edits the placeholder in-place.
@@ -878,7 +1080,8 @@ impl TelegramAdapter {
 
         // Try editing placeholder with first HTML chunk
         let first_html = html_chunks.first()?;
-        let mut edit_req = bot.edit_message_text(chat_id, placeholder_id, first_html.clone())
+        let mut edit_req = bot
+            .edit_message_text(chat_id, placeholder_id, first_html.clone())
             .parse_mode(ParseMode::Html);
         if html_chunks.len() == 1 {
             if let Some(ref markup) = reply_markup {
@@ -889,7 +1092,8 @@ impl TelegramAdapter {
             Ok(_) => {
                 // Send remaining HTML chunks as new messages
                 for (i, chunk) in html_chunks.iter().skip(1).enumerate() {
-                    let mut req = bot.send_message(chat_id, chunk.clone())
+                    let mut req = bot
+                        .send_message(chat_id, chunk.clone())
                         .parse_mode(ParseMode::Html);
                     if i == html_chunks.len() - 2 {
                         if let Some(ref markup) = reply_markup {
@@ -910,7 +1114,8 @@ impl TelegramAdapter {
                 debug!(error = %e, "HTML edit of placeholder failed, trying plain text");
                 // Try plain text edit
                 let first_plain = plain_chunks.first()?;
-                let mut plain_edit = bot.edit_message_text(chat_id, placeholder_id, first_plain.clone());
+                let mut plain_edit =
+                    bot.edit_message_text(chat_id, placeholder_id, first_plain.clone());
                 if plain_chunks.len() == 1 {
                     if let Some(ref markup) = reply_markup {
                         plain_edit = plain_edit.reply_markup(markup.clone());
@@ -1115,11 +1320,7 @@ impl TelegramAdapter {
     #[allow(dead_code)]
     async fn react_contextually(bot: &Bot, msg: &Message) {
         let text = msg.text().unwrap_or_default().to_lowercase();
-        let emoji = if text.contains('?') {
-            "🤔"
-        } else {
-            "👀"
-        };
+        let emoji = if text.contains('?') { "🤔" } else { "👀" };
         if let Err(e) = bot
             .set_message_reaction(msg.chat.id, msg.id)
             .reaction(vec![ReactionType::Emoji {
@@ -1149,25 +1350,38 @@ impl ChannelAdapter for TelegramAdapter {
         let bot = Bot::new(self.config.token.clone());
 
         // Fetch bot username for group mention detection
-        let bot_me = bot.get_me().await.map_err(|e| ChannelError::Telegram(format!("failed to get bot info: {e}")))?;
+        let bot_me = bot
+            .get_me()
+            .await
+            .map_err(|e| ChannelError::Telegram(format!("failed to get bot info: {e}")))?;
         let bot_username: Arc<str> = Arc::from(
-            bot_me.username.as_deref().unwrap_or("bot").to_string().into_boxed_str()
+            bot_me
+                .username
+                .as_deref()
+                .unwrap_or("bot")
+                .to_string()
+                .into_boxed_str(),
         );
 
         let group_policy = Arc::new(self.config.group_chat_policy.clone());
-        let group_context = Arc::new(TokioMutex::new(
-            GroupContextBuffer::new(self.config.group_chat_policy.context_window),
-        ));
+        let group_context = Arc::new(TokioMutex::new(GroupContextBuffer::new(
+            self.config.group_chat_policy.context_window,
+        )));
 
         let index_url = self.config.marketplace_index_url.clone();
         let model_control = self.config.model_control.clone();
+        let pool_control = self.config.pool_control.clone();
         let runtime_control = self.config.runtime_control.clone();
         let config_control = self.config.config_control.clone();
         let personality_control = self.config.personality_control.clone();
         let scheduler = self.config.scheduler.clone();
         let plugin_runtime = self.config.plugin_runtime.clone();
         let plugin_executor = self.config.plugin_executor.clone();
+        let write_gate = self.config.write_gate.clone();
+        let task_manager = self.config.task_manager.clone();
+        let tool_count = self.config.tool_count;
         let event_spine = self.event_spine.clone();
+        let stream_tx = self.stream_tx.clone();
         let verbose_by_chat = Arc::new(TokioMutex::new(HashMap::<i64, bool>::new()));
         let installer = std::sync::Arc::new(TokioMutex::new(
             Installer::new(&self.config.marketplace_install_dir)
@@ -1175,23 +1389,40 @@ impl ChannelAdapter for TelegramAdapter {
         ));
 
         let on_event = std::sync::Arc::new(on_event);
+        // Per-chat active-turn registry: shared seam for mid-turn steering (S2)
+        // and control buttons (S3).
+        let active_turns = crate::active_turns::ActiveTurns::new();
+        let active_turns_msg = active_turns.clone();
+        // Clones for the callback_query branch (S3), taken BEFORE the message
+        // handler moves its own clones in.
+        let active_turns_cb = active_turns.clone();
+        let on_event_cb = on_event.clone();
+        // Shared approval registry for the block-and-await resolve seam (#472).
+        // Cloned into the callback closure so an Allow/Deny press can wake a
+        // tool call blocked on the token carried in `callback_data`.
+        let approval_registry_cb = self.approval_registry.clone();
         let handler = Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
             let event = Self::message_to_event(&msg);
             let on_event = on_event.clone();
             let installer = installer.clone();
             let index_url = index_url.clone();
             let model_control = model_control.clone();
+            let pool_control = pool_control.clone();
             let runtime_control = runtime_control.clone();
             let config_control = config_control.clone();
             let personality_control = personality_control.clone();
             let scheduler = scheduler.clone();
             let plugin_runtime = plugin_runtime.clone();
             let plugin_executor = plugin_executor.clone();
+            let write_gate = write_gate.clone();
+            let task_manager = task_manager.clone();
             let verbose_by_chat = verbose_by_chat.clone();
             let event_spine = event_spine.clone();
+            let stream_tx = stream_tx.clone();
             let bot_username = bot_username.clone();
             let group_policy = group_policy.clone();
             let group_context = group_context.clone();
+            let active_turns = active_turns_msg.clone();
             let update_flake_dir =
                 std::env::var("PARES_NIX_FLAKE_DIR").unwrap_or_else(|_| DEFAULT_NIX_FLAKE_DIR.into());
             let update_host =
@@ -1213,45 +1444,139 @@ impl ChannelAdapter for TelegramAdapter {
                                 return respond(());
                             }
                             "status" | "health" => {
+                                // Show subsystem health from PluresDB if available
+                                let health_section = if cmd == "health" {
+                                    event_spine.as_ref().and_then(|es| {
+                                        pares_radix_core::health::SystemHealth::load_from_store(es.store())
+                                    }).map(|h| h.telegram_report())
+                                } else {
+                                    None
+                                };
                                 let memory = current_process_rss_kib()
                                     .map(|rss| format!("{rss} KiB"))
                                     .unwrap_or_else(|| "n/a".to_string());
-                                let model_line = if let Some(control) = &model_control {
+                                let model_line = if let Some(pc) = &pool_control {
+                                    pc.status_line().await
+                                } else if let Some(control) = &model_control {
                                     let (primary, deep) = control.current_models().await;
                                     format!("{primary} + {deep}")
                                 } else {
-                                    "GPT-4.1 + Opus 4.6".to_string()
+                                    "unknown (no model control wired)".to_string()
+                                };
+                                // Auto-selected picks + routing visibility (legacy control path).
+                                let routing_line = if let Some(control) = &model_control {
+                                    let (primary, deep) = control.current_models().await;
+                                    let fast = control
+                                        .fast_model()
+                                        .await
+                                        .unwrap_or_else(|| "(none)".to_string());
+                                    let mode = control.routing_mode().await;
+                                    let last = control
+                                        .last_route_tier()
+                                        .await
+                                        .unwrap_or_else(|| "(none yet)".to_string());
+                                    Some(format!(
+                                        "⚙️ Routing: {mode}\n\
+                                         🧠 fast=<code>{fast}</code> · std=<code>{primary}</code> · deep=<code>{deep}</code>\n\
+                                         🎯 Last turn: {last}"
+                                    ))
+                                } else {
+                                    None
                                 };
                                 let version = env!("CARGO_PKG_VERSION");
                                 let commit = option_env!("GIT_COMMIT_HASH").unwrap_or("unknown");
                                 let event_spine_status = if event_spine.is_some() { "active" } else { "disabled" };
                                 let uptime = {
-                                    use std::time::SystemTime;
-                                    let secs = SystemTime::now()
-                                        .duration_since(SystemTime::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                        .as_secs();
-                                    let pid_start = std::fs::read_to_string(format!("/proc/{}/stat", std::process::id()))
+                                    // /proc/<pid>/stat field 22 = starttime in clock ticks since boot
+                                    // /proc/uptime first field = seconds since boot
+                                    let system_uptime = std::fs::read_to_string("/proc/uptime")
+                                        .ok()
+                                        .and_then(|s| s.split_whitespace().next().and_then(|t| t.parse::<f64>().ok()))
+                                        .unwrap_or(0.0);
+                                    let clk_tck: u64 = 100; // sysconf(_SC_CLK_TCK), almost always 100 on Linux
+                                    let proc_start_ticks = std::fs::read_to_string(format!("/proc/{}/stat", std::process::id()))
                                         .ok()
                                         .and_then(|s| s.split_whitespace().nth(21).and_then(|t| t.parse::<u64>().ok()))
-                                        .map(|ticks| secs.saturating_sub(ticks / 100))
                                         .unwrap_or(0);
-                                    let hours = pid_start / 3600;
-                                    let mins = (pid_start % 3600) / 60;
+                                    let proc_start_secs = proc_start_ticks / clk_tck;
+                                    let proc_uptime = (system_uptime as u64).saturating_sub(proc_start_secs);
+                                    let hours = proc_uptime / 3600;
+                                    let mins = (proc_uptime % 3600) / 60;
                                     format!("{hours}h {mins}m")
                                 };
                                 let home = std::env::var("HOME").unwrap_or_else(|_| "~".into());
+                                let tools_line = if let Some(count) = tool_count {
+                                    format!("Tools: {count} registered")
+                                } else {
+                                    "Tools: unknown".to_string()
+                                };
+                                let cerebellum_line = if std::path::Path::new(&format!("{home}/.pares-radix/models/bitnet")).exists() {
+                                    "Cerebellum: BitNet (local)"
+                                } else {
+                                    "Cerebellum: heuristic"
+                                };
+                                let hostname = std::fs::read_to_string("/etc/hostname")
+                                    .unwrap_or_else(|_| "unknown".into())
+                                    .trim().to_string();
                                 let status = format!(
-                                    "Pares Agens v{version} ({commit})\n\
-                                     PID: {} | RSS: {memory} | Uptime: {uptime}\n\
-                                     Model: {model_line}\n\
-                                     Event Spine: {event_spine_status}\n\
-                                     Rendering: HTML + plain text fallback\n\
-                                     Tool Governance: active (30s timeout)\n\
-                                     PluresDB: {home}/.pares-agens/memory/",
+                                    "🤖 <b>Pares Radix v{version}</b> (<code>{commit}</code>)\n\
+                                     ⏱️ Uptime: {uptime} · PID: {} · RSS: {memory}\n\
+                                     🧠 Model: <code>{model_line}</code>\n\
+                                     {routing_block}\
+                                     🔑 {cerebellum_line}\n\
+                                     ⚡️ Event Spine: {event_spine_status}\n\
+                                     🔧 {tools_line}\n\
+                                     🗄 PluresDB: <code>{home}/.pares-radix/memory/</code>\n\
+                                     🖥 Host: <code>{hostname}</code>",
                                     std::process::id(),
+                                    routing_block = routing_line
+                                        .map(|l| format!("{l}\n"))
+                                        .unwrap_or_default(),
                                 );
-                                Self::send_reply_with_fallback(&bot, &msg, &status, None, event_spine.as_ref()).await;
+                                let full_status = if let Some(health) = health_section {
+                                    format!("{}\n\n{}", status, health)
+                                } else {
+                                    status
+                                };
+                                Self::send_reply_with_fallback(&bot, &msg, &full_status, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            "models" => {
+                                let reply = if let Some(control) = &model_control {
+                                    let models = control.available_models().await;
+                                    if models.is_empty() {
+                                        "🧠 <b>Discovered models</b>\n\nNo models discovered at boot (discovery empty, failed, or not in auto mode).".to_string()
+                                    } else {
+                                        let mut lines = vec![format!(
+                                            "🧠 <b>Discovered models</b> ({} total)\n",
+                                            models.len()
+                                        )];
+                                        for m in &models {
+                                            let ctx = m
+                                                .context_window
+                                                .map(|c| format!("{}k tok", c / 1000))
+                                                .unwrap_or_else(|| "ctx unknown".to_string());
+                                            let sel = match m.selected_slot {
+                                                Some(slot) => format!(" ✅ [{slot}]"),
+                                                None => String::new(),
+                                            };
+                                            let name = if m.name.is_empty() {
+                                                String::new()
+                                            } else {
+                                                format!(" — {}", m.name)
+                                            };
+                                            lines.push(format!(
+                                                "<code>{}</code>{name} · {ctx} · {}{sel}",
+                                                m.id, m.tier
+                                            ));
+                                        }
+                                        lines.join("\n")
+                                    }
+                                } else {
+                                    "Model control not available on this deployment.".to_string()
+                                };
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
@@ -1311,7 +1636,7 @@ impl ChannelAdapter for TelegramAdapter {
                                             }
                                         }
                                         Err(e) => {
-                                            format!("Failed to update deep model escalation: {e}")
+                                            format!("⚠️ Failed to update deep model escalation: {e}")
                                         }
                                     },
                                     Err(usage) => usage.to_string(),
@@ -1320,7 +1645,39 @@ impl ChannelAdapter for TelegramAdapter {
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
-                            "model" | "models" => {
+                            "model" => {
+                                // Pool-aware model commands (new)
+                                if let Some(pc) = &pool_control {
+                                    let args: Vec<&str> = cmd_parts.collect();
+                                    let reply = match args.as_slice() {
+                                        [] | ["list"] => pc.model_list().await,
+                                        ["stats"] => pc.stats(None).await,
+                                        ["stats", id] => pc.stats(Some(id)).await,
+                                        ["disable", id] => {
+                                            pc.disable(id, None).await.unwrap_or_else(|e| format!("⚠️ {e}"))
+                                        }
+                                        ["disable", id, rest @ ..] => {
+                                            let reason = rest.join(" ");
+                                            pc.disable(id, Some(&reason)).await.unwrap_or_else(|e| format!("⚠️ {e}"))
+                                        }
+                                        ["enable", id] => {
+                                            pc.enable(id).await.unwrap_or_else(|e| format!("⚠️ {e}"))
+                                        }
+                                        ["prefer", id] => {
+                                            pc.prefer(id).await.unwrap_or_else(|e| format!("⚠️ {e}"))
+                                        }
+                                        ["reset"] => {
+                                            pc.reset().await.unwrap_or_else(|e| format!("⚠️ {e}"))
+                                        }
+                                        ["refresh"] => pc.refresh().await,
+                                        _ => "Usage: /model [list|disable <id> [reason]|enable <id>|prefer <id>|stats [id]|reset|refresh]".to_string(),
+                                    };
+                                    Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                    Self::acknowledge_message(&bot, &msg).await;
+                                    return respond(());
+                                }
+
+                                // Legacy fallback (old model_control trait)
                                 let Some(control) = &model_control else {
                                     Self::send_reply_with_fallback(
                                         &bot,
@@ -1334,21 +1691,7 @@ impl ChannelAdapter for TelegramAdapter {
                                 let reply = match Self::parse_model_command(cmd_parts.collect()) {
                                     Ok(ModelCommand::Show) => {
                                         let (primary, deep) = control.current_models().await;
-                                        format!(
-                                            "Current models:\n\
-                                             • Primary: {primary}\n\
-                                             • Deep: {deep}\n\
-                                             \n\
-                                             Available (Copilot):\n\
-                                             • gpt-4.1 — fast, tool-capable\n\
-                                             • gpt-5.2 — deep reasoning\n\
-                                             • claude-sonnet-4.5 — balanced\n\
-                                             • claude-opus-4.6 — strongest\n\
-                                             • o3 — reasoning specialist\n\
-                                             \n\
-                                             Switch: /model <name>\n\
-                                             Switch deep: /model deep <name>"
-                                        )
+                                        format!("Current models\nPrimary: {primary}\nDeep: {deep}")
                                     }
                                     Ok(ModelCommand::SetPrimary(model)) => {
                                         match control.set_primary_model(&model).await {
@@ -1356,7 +1699,7 @@ impl ChannelAdapter for TelegramAdapter {
                                                 let (_, deep) = control.current_models().await;
                                                 format!("Updated primary model to {model}\nDeep: {deep}")
                                             }
-                                            Err(e) => format!("Failed to update primary model: {e}"),
+                                            Err(e) => format!("⚠️ Failed to update primary model: {e}"),
                                         }
                                     }
                                     Ok(ModelCommand::SetDeep(model)) => {
@@ -1365,7 +1708,7 @@ impl ChannelAdapter for TelegramAdapter {
                                                 let (primary, _) = control.current_models().await;
                                                 format!("Updated deep model to {model}\nPrimary: {primary}")
                                             }
-                                            Err(e) => format!("Failed to update deep model: {e}"),
+                                            Err(e) => format!("⚠️ Failed to update deep model: {e}"),
                                         }
                                     }
                                     Err(e) => e.to_string(),
@@ -1415,7 +1758,7 @@ impl ChannelAdapter for TelegramAdapter {
                                     Ok(ConfigCommand::SetModel(model)) => {
                                         match control.set_model(&model).await {
                                             Ok(()) => format!("Updated runtime model to {model}"),
-                                            Err(e) => format!("Failed to update model: {e}"),
+                                            Err(e) => format!("⚠️ Failed to update model: {e}"),
                                         }
                                     }
                                     Ok(ConfigCommand::SetEndpoint(endpoint)) => {
@@ -1423,7 +1766,7 @@ impl ChannelAdapter for TelegramAdapter {
                                             Ok(()) => {
                                                 format!("Updated runtime endpoint to {endpoint}")
                                             }
-                                            Err(e) => format!("Failed to update endpoint: {e}"),
+                                            Err(e) => format!("⚠️ Failed to update endpoint: {e}"),
                                         }
                                     }
                                     Ok(ConfigCommand::SetLogLevel(log_level)) => {
@@ -1431,7 +1774,7 @@ impl ChannelAdapter for TelegramAdapter {
                                             Ok(()) => {
                                                 format!("Updated runtime log level to {log_level}")
                                             }
-                                            Err(e) => format!("Failed to update log level: {e}"),
+                                            Err(e) => format!("⚠️ Failed to update log level: {e}"),
                                         }
                                     }
                                     Err(e) => e.to_string(),
@@ -1491,7 +1834,7 @@ impl ChannelAdapter for TelegramAdapter {
                                 return respond(());
                             }
                             "tools" => {
-                                use pares_agens_core::tool_governance::ToolGovernor;
+                                use pares_radix_core::tool_governance::ToolGovernor;
                                 let gov = ToolGovernor::with_defaults();
                                 let reply = gov.format_policies();
                                 Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
@@ -1519,11 +1862,11 @@ impl ChannelAdapter for TelegramAdapter {
 
                                 info!(
                                     tail_lines,
-                                    "telegram /logs requested for pares-agens service"
+                                    "telegram /logs requested for pares-radix service"
                                 );
                                 let reply = match tokio::process::Command::new("journalctl")
                                     .arg("-u")
-                                    .arg("pares-agens")
+                                    .arg("pares-radix")
                                     .arg("-n")
                                     .arg(tail_lines.to_string())
                                     .arg("--no-pager")
@@ -1539,7 +1882,7 @@ impl ChannelAdapter for TelegramAdapter {
                                             "telegram /logs command completed"
                                         );
                                         truncate_telegram_message(format!(
-                                            "Recent pares-agens logs (last {tail_lines} lines):\n{}",
+                                            "Recent pares-radix logs (last {tail_lines} lines):\n{}",
                                             format_service_logs_output(&output)
                                         ))
                                     }
@@ -1555,6 +1898,28 @@ impl ChannelAdapter for TelegramAdapter {
                                         &bot,
                                         &msg,
                                         "Update denied. Configure PARES_TELEGRAM_UPDATE_ALLOWED_USERS with approved Telegram usernames or numeric IDs.",
+                                        None, event_spine.as_ref(),).await;
+                                    return respond(());
+                                }
+                                // Preflight: check if sudo is available for nixos-rebuild
+                                let sudo_check = tokio::process::Command::new("sudo")
+                                    .args(["-n", "/run/current-system/sw/bin/nixos-rebuild", "--help"])
+                                    .stdout(std::process::Stdio::null())
+                                    .stderr(std::process::Stdio::null())
+                                    .output()
+                                    .await;
+                                let has_sudo = sudo_check.map(|o| o.status.success()).unwrap_or(false);
+                                if !has_sudo {
+                                    Self::send_reply_with_fallback(
+                                        &bot,
+                                        &msg,
+                                        "⚠️ Cannot update: `sudo` access is not configured for this user.\n\n\
+                                        The `/update` command requires passwordless sudo for `nixos-rebuild` and `nix`.\n\n\
+                                        To enable, add to your NixOS config:\n```nix\nsecurity.sudo.extraRules = [{\n  users = [ \"<your-user>\" ];\n  commands = [\n    { command = \"/run/current-system/sw/bin/nixos-rebuild\"; options = [ \"NOPASSWD\" ]; }\n    { command = \"/run/current-system/sw/bin/nix\"; options = [ \"NOPASSWD\" ]; }\n  ];\n}];\n```\n\n\
+                                        ⚠️ **Security note:** This grants the pares-radix service user the ability to \
+                                        rebuild and activate system configurations. Only enable this on machines you trust \
+                                        and where the Telegram update users list (PARES_TELEGRAM_UPDATE_ALLOWED_USERS) is \
+                                        properly restricted.",
                                         None, event_spine.as_ref(),).await;
                                     return respond(());
                                 }
@@ -1705,7 +2070,7 @@ impl ChannelAdapter for TelegramAdapter {
                                                 sched.add(task).await;
                                                 reply
                                             }
-                                            Err(e) => format!("Error: {e}\nUsage: /cron add '<schedule>' '<command>'"),
+                                            Err(e) => format!("⚠️ {e}\nUsage: /cron add '<schedule>' '<command>'"),
                                         }
                                     }
                                     Some("remove") | Some("rm") | Some("delete") => {
@@ -1841,7 +2206,257 @@ impl ChannelAdapter for TelegramAdapter {
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
-                            _ => {} // fall through to agent
+                            "tasks" => {
+                                let Some(mgr) = &task_manager else {
+                                    Self::send_reply_with_fallback(&bot, &msg, "Task manager is unavailable.", None, event_spine.as_ref()).await;
+                                    Self::acknowledge_message(&bot, &msg).await;
+                                    return respond(());
+                                };
+                                let args: Vec<&str> = cmd_parts.collect();
+                                let include_all = args.first().copied() == Some("all");
+                                let chat_id_str = msg.chat.id.0.to_string();
+                                let tasks = mgr.tasks_for_chat(&chat_id_str, include_all);
+                                let reply = if tasks.is_empty() {
+                                    if include_all { "No tasks found.".to_string() } else { "No open tasks.".to_string() }
+                                } else {
+                                    let mut out = String::new();
+                                    for t in &tasks {
+                                        let status = match &t.status {
+                                            pares_radix_core::task::TaskStatus::Open => "⏳",
+                                            pares_radix_core::task::TaskStatus::InProgress => "🔄",
+                                            pares_radix_core::task::TaskStatus::Blocked => "🚫",
+                                            pares_radix_core::task::TaskStatus::Delegated => "👥",
+                                            pares_radix_core::task::TaskStatus::Completed => "✅",
+                                            pares_radix_core::task::TaskStatus::Failed => "❌",
+                                            pares_radix_core::task::TaskStatus::Cancelled => "🚮",
+                                        };
+                                        let short_id = &t.id[..8.min(t.id.len())];
+                                        let conds = t.completion_conditions.len();
+                                        let satisfied = t.completion_conditions.iter().filter(|c| c.satisfied).count();
+                                        if !out.is_empty() { out.push('\n'); }
+                                        out.push_str(&format!("{status} {short_id} — {} [{satisfied}/{conds}]", t.description));
+                                    }
+                                    out
+                                };
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            "task" => {
+                                let Some(mgr) = &task_manager else {
+                                    Self::send_reply_with_fallback(&bot, &msg, "Task manager is unavailable.", None, event_spine.as_ref()).await;
+                                    Self::acknowledge_message(&bot, &msg).await;
+                                    return respond(());
+                                };
+                                let args: Vec<&str> = cmd_parts.collect();
+                                let reply = if args.is_empty() {
+                                    "Usage: /task <id> [complete|cancel]".to_string()
+                                } else {
+                                    let id_prefix = args[0];
+                                    // Find task by prefix match
+                                    let chat_id_str = msg.chat.id.0.to_string();
+                                    let all_tasks = mgr.tasks_for_chat(&chat_id_str, true);
+                                    let matched: Vec<_> = all_tasks.iter().filter(|t| t.id.starts_with(id_prefix)).collect();
+                                    if matched.is_empty() {
+                                        format!("No task found matching '{id_prefix}'.")
+                                    } else if matched.len() > 1 {
+                                        format!("Ambiguous prefix '{id_prefix}' — matches {} tasks. Be more specific.", matched.len())
+                                    } else {
+                                        let task = matched[0];
+                                        match args.get(1).copied() {
+                                            Some("complete") => {
+                                                // Satisfy RequesterAck conditions and check completion
+                                                for (i, cond) in task.completion_conditions.iter().enumerate() {
+                                                    if matches!(cond.condition_type, pares_radix_core::task::ConditionType::RequesterAck) && !cond.satisfied {
+                                                        mgr.satisfy_condition(&task.id, i);
+                                                    }
+                                                }
+                                                let completed = mgr.check_completion(&task.id);
+                                                if completed {
+                                                    format!("✅ Task {} completed.", &task.id[..8.min(task.id.len())])
+                                                } else {
+                                                    format!("👍 RequesterAck satisfied for {}. Other conditions still pending.", &task.id[..8.min(task.id.len())])
+                                                }
+                                            }
+                                            Some("cancel") => {
+                                                mgr.cancel_task(&task.id);
+                                                format!("🚮 Task {} cancelled.", &task.id[..8.min(task.id.len())])
+                                            }
+                                            None => {
+                                                // Show task details
+                                                let status = format!("{:?}", task.status);
+                                                let short_id = &task.id[..8.min(task.id.len())];
+                                                let mut out = format!("Task {short_id}\nStatus: {status}\nDescription: {}\nPriority: {}\nAttempts: {}",
+                                                    task.description, task.priority, task.attempts);
+                                                if let Some(ref parent) = task.parent_task {
+                                                    out.push_str(&format!("\nParent: {}", &parent[..8.min(parent.len())]));
+                                                }
+                                                if !task.subtasks.is_empty() {
+                                                    out.push_str(&format!("\nSubtasks: {}", task.subtasks.len()));
+                                                }
+                                                match &task.assigned_to {
+                                                    pares_radix_core::task::Assignment::Self_ => out.push_str("\nAssigned: self"),
+                                                    pares_radix_core::task::Assignment::Subagent(name) => out.push_str(&format!("\nAssigned: subagent({name})")),
+                                                    pares_radix_core::task::Assignment::User => out.push_str("\nAssigned: user"),
+                                                    pares_radix_core::task::Assignment::Unassigned => out.push_str("\nAssigned: unassigned"),
+                                                }
+                                                if !task.completion_conditions.is_empty() {
+                                                    out.push_str("\n\nConditions:");
+                                                    for cond in &task.completion_conditions {
+                                                        let icon = if cond.satisfied { "✅" } else { "⬜" };
+                                                        out.push_str(&format!("\n  {icon} {}", cond.description));
+                                                    }
+                                                }
+                                                out
+                                            }
+                                            Some(other) => format!("Unknown subcommand '{other}'. Usage: /task <id> [complete|cancel]"),
+                                        }
+                                    }
+                                };
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            "praxis" => {
+                                let args: Vec<&str> = cmd_parts.collect();
+                                let reply = match args.first().copied() {
+                                    Some("constraints") => {
+                                        if let Some(gate) = &write_gate {
+                                            let cs = gate.list_constraints();
+                                            if cs.is_empty() {
+                                                "No write constraints registered.".to_string()
+                                            } else {
+                                                cs.iter().map(|c| {
+                                                    let sev = match c.severity {
+                                                        pares_radix_core::praxis::write_gate::WriteSeverity::Error => "error",
+                                                        pares_radix_core::praxis::write_gate::WriteSeverity::Warning => "warn",
+                                                    };
+                                                    let en = if c.enabled { "✓" } else { "✗" };
+                                                    format!("{en} [{sev}] {} — {}", c.name, c.description)
+                                                }).collect::<Vec<_>>().join("\n")
+                                            }
+                                        } else {
+                                            "Write gate not initialized.".to_string()
+                                        }
+                                    }
+                                    Some("log") => {
+                                        let n: usize = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(10);
+                                        if let Some(gate) = &write_gate {
+                                            let entries = gate.recent_decisions(n);
+                                            if entries.is_empty() {
+                                                "No decisions logged yet.".to_string()
+                                            } else {
+                                                entries.iter().map(|e| {
+                                                    let icon = if e.passed { "✓" } else { "✗" };
+                                                    let reason = e.reason.as_deref().unwrap_or("");
+                                                    format!("{icon} {} [{}] {reason}", e.key, e.constraint_id)
+                                                }).collect::<Vec<_>>().join("\n")
+                                            }
+                                        } else {
+                                            "Write gate not initialized.".to_string()
+                                        }
+                                    }
+                                    Some("violations") => {
+                                        let n: usize = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(10);
+                                        if let Some(gate) = &write_gate {
+                                            let entries = gate.violations(n);
+                                            if entries.is_empty() {
+                                                "No violations recorded.".to_string()
+                                            } else {
+                                                entries.iter().map(|e| {
+                                                    let reason = e.reason.as_deref().unwrap_or("");
+                                                    format!("✗ {} [{}] {reason}", e.key, e.constraint_id)
+                                                }).collect::<Vec<_>>().join("\n")
+                                            }
+                                        } else {
+                                            "Write gate not initialized.".to_string()
+                                        }
+                                    }
+                                    _ => "Usage: /praxis constraints | log [n] | violations [n]".to_string(),
+                                };
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            "cluster" => {
+                                let args: Vec<&str> = cmd_parts.collect();
+                                let reply = match args.first().copied() {
+                                    None | Some("status") => {
+                                        // Detect local capabilities as a single-node fallback
+                                        let caps = pares_rector::discovery::PluresDbDiscovery::detect_local_capabilities();
+                                        let local_node = pares_rector::node::ClusterNode {
+                                            id: "local".to_string(),
+                                            hostname: crate::cluster_hostname(),
+                                            addresses: vec![],
+                                            capabilities: caps,
+                                            status: pares_rector::node::NodeStatus::Online,
+                                            workloads: vec![],
+                                            last_seen: 0,
+                                            cpu_usage: 0.0,
+                                        };
+                                        let summary = pares_rector::cluster::ClusterSummary::from_nodes(&[local_node]);
+                                        pares_rector::cluster::format_cluster_status(&summary)
+                                    }
+                                    Some("nodes") => {
+                                        let caps = pares_rector::discovery::PluresDbDiscovery::detect_local_capabilities();
+                                        let local_node = pares_rector::node::ClusterNode {
+                                            id: "local".to_string(),
+                                            hostname: crate::cluster_hostname(),
+                                            addresses: vec![],
+                                            capabilities: caps,
+                                            status: pares_rector::node::NodeStatus::Online,
+                                            workloads: vec![],
+                                            last_seen: 0,
+                                            cpu_usage: 0.0,
+                                        };
+                                        pares_rector::cluster::format_cluster_nodes(&[local_node])
+                                    }
+                                    Some("info") => {
+                                        let caps = pares_rector::discovery::PluresDbDiscovery::detect_local_capabilities();
+                                        pares_rector::cluster::format_node_info(&caps)
+                                    }
+                                    Some("deploy") => {
+                                        if let Some(px_path) = args.get(1) {
+                                            match std::fs::read_to_string(px_path) {
+                                                Ok(content) => {
+                                                    let caps = pares_rector::discovery::PluresDbDiscovery::detect_local_capabilities();
+                                                    let local_node = pares_rector::node::ClusterNode {
+                                                        id: "local".to_string(),
+                                                        hostname: crate::cluster_hostname(),
+                                                        addresses: vec![],
+                                                        capabilities: caps,
+                                                        status: pares_rector::node::NodeStatus::Online,
+                                                        workloads: vec![],
+                                                        last_seen: 0,
+                                                        cpu_usage: 0.0,
+                                                    };
+                                                    pares_rector::cluster::format_deploy_result(&content, &[local_node])
+                                                }
+                                                Err(e) => format!("Failed to read .px file: {e}"),
+                                            }
+                                        } else {
+                                            "Usage: /cluster deploy <px-file>".to_string()
+                                        }
+                                    }
+                                    Some("workloads") => {
+                                        "No active workloads.".to_string()
+                                    }
+                                    _ => "Usage: /cluster [status | nodes | info | deploy <file> | workloads]".to_string(),
+                                };
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            _ => {
+                                // Unknown slash command — respond immediately
+                                // instead of falling through to model
+                                let reply = format!(
+                                    "Unknown command: /{cmd}\nType /help for available commands."
+                                );
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
                         }
                     }
                 }
@@ -1877,8 +2492,8 @@ impl ChannelAdapter for TelegramAdapter {
                         if group_policy.passive_observe {
                             if let Event::Message { content, .. } = &mut event {
                                 let ctx_lock = group_context.lock().await;
-                                if let Some(context_str) = ctx_lock.format_context(msg.chat.id.0) {
-                                    *content = format!("{context_str}\n\n---\nTriggered message: {content}");
+                                if let Some(context_str) = ctx_lock.format_context(msg.chat.id.0, Some(&bot_username)) {
+                                    *content = format!("{context_str}\n\n---\nTriggered message (respond to THIS): {content}");
                                 }
                             }
                         }
@@ -1902,14 +2517,56 @@ impl ChannelAdapter for TelegramAdapter {
                             *content = format!("{TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER}{content}");
                         }
                     }
+                    // ── Mid-turn steering (S2, option b) ─────────────────
+                    // If a turn is already live for this chat, inject this
+                    // message into it instead of spawning a competing turn.
+                    let steer_chat = msg.chat.id.0;
+                    let steer_text = match &event {
+                        Event::Message { content, .. } => content.clone(),
+                        _ => String::new(),
+                    };
+                    if !steer_text.is_empty() && active_turns.steer(steer_chat, steer_text).await {
+                        debug!(chat_id = steer_chat, "steered mid-turn message into running turn");
+                        Self::acknowledge_message(&bot, &msg).await;
+                        return respond(());
+                    }
+
                     // Progressive delivery: send placeholder, keep typing, edit when done
                     let placeholder_bot = bot.clone();
                     let placeholder_msg = placeholder_bot
-                        .send_message(msg.chat.id, "⏳")
+                        .send_message(msg.chat.id, crate::turn_ux::render_turn_status("Working", None, 0, None))
                         .reply_parameters(ReplyParameters::new(msg.id))
                         .await;
 
                     let placeholder_id = placeholder_msg.as_ref().ok().map(|m| m.id);
+
+                    // ── Register this turn (S2/S3) ──────────────────────
+                    // request_id = inbound message id (chat_id:msg_id form), the
+                    // same id the core turn traces under. The turn is cancellable
+                    // via the Stop button (S3) and steerable via SteeringTx (S2).
+                    let turn_request_id = match &event {
+                        Event::Message { id, .. } => id.clone(),
+                        _ => msg.chat.id.0.to_string(),
+                    };
+                    let turn_cancel = tokio_util::sync::CancellationToken::new();
+                    let steering_rx = active_turns
+                        .register(msg.chat.id.0, turn_cancel.clone(), turn_request_id.clone())
+                        .await;
+
+                    // Add a Stop button to the status message so the user can
+                    // cooperatively cancel a long turn.
+                    if let Some(pid) = placeholder_id {
+                        let stop_kb = teloxide::types::InlineKeyboardMarkup::new(vec![vec![
+                            InlineKeyboardButton::callback(
+                                "\u{1f6d1} Stop",
+                                crate::turn_ux::stop_callback_data(&turn_request_id),
+                            ),
+                        ]]);
+                        let _ = bot
+                            .edit_message_reply_markup(msg.chat.id, pid)
+                            .reply_markup(stop_kb)
+                            .await;
+                    }
 
                     // Keep typing indicator alive while agent processes
                     let typing_bot = bot.clone();
@@ -1926,64 +2583,178 @@ impl ChannelAdapter for TelegramAdapter {
                         }
                     });
 
-                    if let Some(Event::ModelResponse {
-                        request_id, content, ..
-                    }) = on_event(event).await
-                    {
-                        typing_cancel.cancel();
+                    // Progressive streaming: subscribe to model deltas and
+                    // debounce edit_message_text calls every ~500ms.
+                    let progressive_cancel = tokio_util::sync::CancellationToken::new();
+                    let progressive_token = progressive_cancel.clone();
+                    if let (Some(ref stx), Some(pid)) = (&stream_tx, placeholder_id) {
+                        let mut stream_rx = stx.subscribe();
+                        let edit_bot = bot.clone();
+                        let edit_chat_id = msg.chat.id;
+                        tokio::spawn(async move {
+                            let mut accumulated = String::new();
+                            let mut last_edit = tokio::time::Instant::now();
+                            let debounce = std::time::Duration::from_millis(500);
+                            let min_chars = 20; // Don't edit for tiny fragments
+                            // Surface tool activity so long agentic turns (many tool
+                            // calls, little/no interim text) don't look frozen. We show
+                            // the running tool + a step counter until real text streams.
+                            let mut tool_steps: usize = 0;
 
-                        // Emit model response to event spine
-                        if let Some(ref spine) = event_spine {
-                            spine.emit_model_response(msg.chat.id.0, "telegram", &content);
-                        }
-
-                        let reply_markup = if Self::is_approval_prompt(&content) {
-                            Some(Self::approval_keyboard(&request_id))
-                        } else {
-                            None
-                        };
-
-                        // Try to edit the placeholder with the response
-                        let delivered_via_edit = if let Some(pid) = placeholder_id {
-                            Self::edit_placeholder_with_response(
-                                &bot, msg.chat.id, pid, &content, reply_markup.clone(), event_spine.as_ref()
-                            ).await
-                        } else {
-                            None
-                        };
-
-                        if let Some((format_used, msg_ids)) = delivered_via_edit {
-                            // Delivered by editing the placeholder
-                            if let Some(ref spine) = event_spine {
-                                for mid in &msg_ids {
-                                    spine.emit_delivery_success(msg.chat.id.0, "telegram", *mid, format_used);
-                                }
-                            }
-                            Self::acknowledge_message(&bot, &msg).await;
-                        } else {
-                            // Placeholder edit failed or wasn't possible — delete placeholder and send fresh
-                            if let Some(pid) = placeholder_id {
-                                let _ = bot.delete_message(msg.chat.id, pid).await;
-                            }
-                            match Self::send_html_reply(&bot, &msg, &content, reply_markup, event_spine.as_ref()).await {
-                                Ok((format_used, msg_ids)) => {
-                                    if let Some(ref spine) = event_spine {
-                                        for mid in &msg_ids {
-                                            spine.emit_delivery_success(msg.chat.id.0, "telegram", *mid, format_used);
+                            loop {
+                                tokio::select! {
+                                    delta = stream_rx.recv() => {
+                                        match delta {
+                                            Ok(pares_radix_core::model::StreamDelta::Content(chunk)) => {
+                                                accumulated.push_str(&chunk);
+                                                // Debounce: only edit if enough time passed AND enough content
+                                                if last_edit.elapsed() >= debounce && accumulated.len() >= min_chars {
+                                                    let display = format!("{}\u{25cf}", accumulated); // ● = cursor
+                                                    let _ = edit_bot
+                                                        .edit_message_text(edit_chat_id, pid, &display)
+                                                        .await;
+                                                    last_edit = tokio::time::Instant::now();
+                                                }
+                                            }
+                                            Ok(pares_radix_core::model::StreamDelta::Done) => break,
+                                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                                                // Missed some deltas — skip to latest
+                                                continue;
+                                            }
+                                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                                            Ok(pares_radix_core::model::StreamDelta::ToolCallStart { name, .. })
+                                                if accumulated.is_empty() =>
+                                            {
+                                                // Only surface tool progress while no text has
+                                                // streamed yet (once real content arrives we
+                                                // switch to showing the answer). This is what
+                                                // keeps long tool-only turns from looking frozen.
+                                                tool_steps += 1;
+                                                if last_edit.elapsed() >= debounce {
+                                                    // Stable single-line status: compact spinner
+                                                    // frame + phase + tool. No raw ever-incrementing
+                                                    // "(step N)" dominance — tool_steps only drives
+                                                    // the spinner frame so the line breathes.
+                                                    let display = crate::turn_ux::render_turn_status(
+                                                        "Working",
+                                                        Some(&name),
+                                                        tool_steps,
+                                                        None,
+                                                    );
+                                                    let _ = edit_bot
+                                                        .edit_message_text(edit_chat_id, pid, &display)
+                                                        .await;
+                                                    last_edit = tokio::time::Instant::now();
+                                                }
+                                            }
+                                            _ => {} // ToolCallDelta / tool activity after content — no user-visible value
                                         }
                                     }
-                                    Self::acknowledge_message(&bot, &msg).await;
-                                }
-                                Err(e) => {
-                                    error!("Failed to send Telegram reply: {e}");
+                                    _ = progressive_token.cancelled() => break,
                                 }
                             }
+                        });
+                    }
+
+                    let agent_result = tokio::select! {
+                        r = tokio::time::timeout(
+                            Self::progressive_response_timeout(),
+                            on_event(event),
+                        ) => r,
+                        _ = turn_cancel.cancelled() => {
+                            // Stop button pressed — cooperatively abort the turn.
+                            typing_cancel.cancel();
+                            progressive_cancel.cancel();
+                            active_turns.remove(msg.chat.id.0).await;
+                            if let Some(pid) = placeholder_id {
+                                let _ = bot
+                                    .edit_message_text(msg.chat.id, pid, "\u{1f6d1} Stopped.")
+                                    .await;
+                            }
+                            return respond(());
                         }
-                    } else {
-                        typing_cancel.cancel();
-                        // No response — delete the placeholder
-                        if let Some(pid) = placeholder_id {
-                            let _ = bot.delete_message(msg.chat.id, pid).await;
+                    };
+
+                    typing_cancel.cancel();
+                    progressive_cancel.cancel(); // Stop progressive editor before final edit/fallback.
+
+                    // Turn finished — deregister. Any messages steered in after the
+                    // turn began are drained and re-dispatched as a follow-up turn
+                    // (handle_event is atomic per message, so late-arriving steering
+                    // is delivered as the next turn rather than lost).
+                    active_turns.remove(msg.chat.id.0).await;
+                    let steered_late = steering_rx.drain().await;
+                    if !steered_late.is_empty() {
+                        let combined = steered_late.join("\n");
+                        // Re-dispatch the steered text as its own turn.
+                        if let Some(mut followup) = Self::message_to_event(&msg) {
+                            if let Event::Message { content, .. } = &mut followup {
+                                *content = combined;
+                            }
+                            let _ = on_event(followup).await;
+                        }
+                    }
+
+                    match agent_result {
+                        Ok(Some(Event::ModelResponse {
+                            request_id, content, ..
+                        })) => {
+                            let content = Self::normalize_progressive_response_content(content);
+
+                            // Emit model response to event spine
+                            if let Some(ref spine) = event_spine {
+                                spine.emit_model_response(msg.chat.id.0, "telegram", &content);
+                            }
+
+                            let reply_markup = if Self::is_approval_prompt(&content) {
+                                Some(Self::approval_keyboard(&request_id))
+                            } else {
+                                None
+                            };
+
+                            Self::deliver_progressive_reply(
+                                &bot,
+                                &msg,
+                                placeholder_id,
+                                &content,
+                                reply_markup,
+                                event_spine.as_ref(),
+                                true,
+                            )
+                            .await;
+                        }
+                        Ok(_) => {
+                            warn!(
+                                chat_id = msg.chat.id.0,
+                                "Telegram progressive turn completed without a model response; sending fallback"
+                            );
+                            Self::deliver_progressive_reply(
+                                &bot,
+                                &msg,
+                                placeholder_id,
+                                Self::progressive_no_response_fallback(),
+                                None,
+                                event_spine.as_ref(),
+                                false,
+                            )
+                            .await;
+                        }
+                        Err(_) => {
+                            warn!(
+                                chat_id = msg.chat.id.0,
+                                timeout_secs = Self::progressive_response_timeout().as_secs(),
+                                "Telegram progressive turn timed out; sending fallback"
+                            );
+                            Self::deliver_progressive_reply(
+                                &bot,
+                                &msg,
+                                placeholder_id,
+                                Self::progressive_timeout_fallback(),
+                                None,
+                                event_spine.as_ref(),
+                                false,
+                            )
+                            .await;
                         }
                     }
                 }
@@ -1991,7 +2762,91 @@ impl ChannelAdapter for TelegramAdapter {
             }
         });
 
-        Dispatcher::builder(bot, handler)
+        // ── Control-button branch (S3): callback_query dispatch ──────────
+        // Parses callback_data (stop:{id} / approval:yes|no:{id}), acts on the
+        // live turn, and ALWAYS answers the callback so Telegram clears the
+        // spinner. Previously these buttons were dead (no consumer).
+        let callback_handler = Update::filter_callback_query().endpoint(
+            move |bot: Bot, q: teloxide::types::CallbackQuery| {
+                let active_turns = active_turns_cb.clone();
+                let on_event = on_event_cb.clone();
+                let approval_registry = approval_registry_cb.clone();
+                async move {
+                    let data = q.data.clone().unwrap_or_default();
+                    let chat_id = q.message.as_ref().map(|m| m.chat().id.0);
+                    let action = crate::turn_ux::parse_callback(&data);
+                    let ack = match (&action, chat_id) {
+                        (Some(crate::turn_ux::ControlAction::Stop { request_id }), Some(cid)) => {
+                            if active_turns.cancel(cid, request_id).await {
+                                "Stopping\u{2026}"
+                            } else {
+                                "No active turn"
+                            }
+                        }
+                        (Some(crate::turn_ux::ControlAction::Approve { request_id }), Some(cid))
+                        | (Some(crate::turn_ux::ControlAction::Reject { request_id }), Some(cid)) => {
+                            let decision = match action.as_ref().unwrap() {
+                                crate::turn_ux::ControlAction::Approve { .. } => "approved",
+                                _ => "rejected",
+                            };
+                            // #472 resolve seam (channel-agnostic): if the button's
+                            // id is a live approval token, wake the tool call blocked
+                            // on it. `resolve` is idempotent and returns false for
+                            // non-token ids (e.g. turn-level prompts), so this is safe
+                            // to try first and fall through when it is not a token.
+                            let mut resolved = false;
+                            if let Some(reg) = approval_registry.as_ref() {
+                                let core_decision = match action.as_ref().unwrap() {
+                                    crate::turn_ux::ControlAction::Approve { .. } => {
+                                        pares_radix_core::approval::ApprovalDecision::Allow
+                                    }
+                                    _ => pares_radix_core::approval::ApprovalDecision::Deny,
+                                };
+                                resolved = reg.resolve(request_id, core_decision).await;
+                            }
+                            if !resolved {
+                                // Not a live tool-approval token: fall back to the
+                                // turn-level path — steer the live turn if one exists,
+                                // otherwise dispatch the decision as a fresh turn.
+                                let injected = format!(
+                                    "[approval decision]: the pending approval request was {decision} by the user"
+                                );
+                                if !active_turns.steer(cid, injected.clone()).await {
+                                    let ev = pares_radix_core::Event::Message {
+                                        id: cid.to_string(),
+                                        sender: "user".to_string(),
+                                        content: injected,
+                                        channel: "telegram".to_string(),
+                                    };
+                                    if let Some(pares_radix_core::Event::ModelResponse { content, .. }) =
+                                        on_event(ev).await
+                                    {
+                                        let _ = bot
+                                            .send_message(teloxide::types::ChatId(cid), content)
+                                            .await;
+                                    }
+                                }
+                            }
+                            if decision == "approved" { "Approved" } else { "Rejected" }
+                        }
+                        _ => "",
+                    };
+                    // ALWAYS answer so the client-side spinner clears.
+                    let mut answer = bot.answer_callback_query(q.id.clone());
+                    if !ack.is_empty() {
+                        answer = answer.text(ack);
+                    }
+                    let _ = answer.await;
+                    respond(())
+                }
+            },
+        );
+
+        let dispatch_handler = dptree::entry()
+            .branch(handler)
+            .branch(callback_handler);
+
+        Dispatcher::builder(bot, dispatch_handler)
             .enable_ctrlc_handler()
             .build()
             .dispatch()
@@ -2262,6 +3117,35 @@ mod tests {
     }
 
     #[test]
+    fn blank_progressive_response_is_normalized_to_visible_fallback() {
+        let normalized =
+            TelegramAdapter::normalize_progressive_response_content("  \n\t  ".to_string());
+        assert!(!normalized.trim().is_empty());
+        assert_ne!(normalized, "⏳");
+        assert!(normalized.contains("empty response"));
+    }
+
+    #[test]
+    fn progressive_missing_response_fallbacks_are_visible() {
+        let no_response = TelegramAdapter::progressive_no_response_fallback();
+        let timed_out = TelegramAdapter::progressive_timeout_fallback();
+
+        assert!(!no_response.trim().is_empty());
+        assert!(!timed_out.trim().is_empty());
+        assert_ne!(no_response, "⏳");
+        assert_ne!(timed_out, "⏳");
+        assert!(timed_out.starts_with("⚠️ System notice:"));
+        assert!(!timed_out.contains("this turn took too long and was stopped"));
+    }
+
+    #[test]
+    fn progressive_response_timeout_is_bounded() {
+        let timeout = TelegramAdapter::progressive_response_timeout();
+        assert!(timeout > std::time::Duration::ZERO);
+        assert!(timeout <= std::time::Duration::from_secs(300));
+    }
+
+    #[test]
     fn parse_modulus_index_accepts_array_root() {
         let json = r#"
         [
@@ -2318,11 +3202,15 @@ mod tests {
     }
 
     #[test]
-    fn build_nixos_update_command_delegates_to_agenda() {
-        // The function is a thin delegate to pares_agens_agenda::self_update.
-        // Full behavioral tests live in the agenda crate (ADR-0010).
+    fn build_nixos_update_command_contains_required_steps() {
         let command = build_nixos_update_command("/etc/nixos", "praxisbot");
-        assert!(command.contains("nixos-rebuild switch"), "must delegate to shared impl");
+        assert!(command.contains("git pull --ff-only"), "must pull latest");
+        assert!(command.contains("nix flake update"), "must update inputs");
+        assert!(
+            command.contains("nixos-rebuild switch --flake"),
+            "must rebuild"
+        );
+        assert!(command.contains("--refresh"), "must refresh");
     }
 
     #[test]
@@ -2398,8 +3286,8 @@ mod tests {
 
     #[test]
     fn html_render_typical_model_output() {
-        use pares_agens_core::channel_contract::ChannelContract;
-        use pares_agens_core::renderers::telegram as renderer;
+        use pares_radix_core::channel_contract::ChannelContract;
+        use pares_radix_core::renderers::telegram as renderer;
 
         let contract = ChannelContract::telegram();
         let content = "**Bold text** and *italic* with `code` and a [link](https://example.com)\n\n```rust\nfn main() {}\n```";
@@ -2416,8 +3304,8 @@ mod tests {
 
     #[test]
     fn html_render_chunking_long_message() {
-        use pares_agens_core::channel_contract::ChannelContract;
-        use pares_agens_core::renderers::telegram as renderer;
+        use pares_radix_core::channel_contract::ChannelContract;
+        use pares_radix_core::renderers::telegram as renderer;
 
         let contract = ChannelContract::telegram();
         // Create a message that's definitely > 4096 chars
@@ -2433,8 +3321,8 @@ mod tests {
 
     #[test]
     fn html_render_html_entities_escaped() {
-        use pares_agens_core::channel_contract::ChannelContract;
-        use pares_agens_core::renderers::telegram as renderer;
+        use pares_radix_core::channel_contract::ChannelContract;
+        use pares_radix_core::renderers::telegram as renderer;
 
         let contract = ChannelContract::telegram();
         let content = "Use a < b && c > d for comparison";
@@ -2446,7 +3334,7 @@ mod tests {
 
     #[test]
     fn telegram_adapter_with_event_spine() {
-        use pares_agens_core::event_spine::EventSpineHandle;
+        use pares_radix_core::event_spine::EventSpineHandle;
         use pluresdb::CrdtStore;
 
         let store = std::sync::Arc::new(CrdtStore::default());

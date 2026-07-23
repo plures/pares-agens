@@ -1,0 +1,128 @@
+# ccr.px — Compressed Context Retrieval (reversible compression)
+#
+# CCR stores original content locally with a short reference token.
+# The compressed output includes a retrieval hint so the LLM can request
+# the original if the compressed version lacks detail.
+#
+# Pattern: compress → store original in PluresDB → insert ref token →
+#          LLM calls headroom_retrieve(ref) if it needs the full version
+#
+# This is the "reversible" in headroom's pitch. We get aggressive compression
+# without permanent information loss.
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONSTRAINTS
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint ccr_ref_is_unique:
+  require: ccr_ref.id != "" and ccr_ref.collision_count == 0
+  severity: error
+  message: "CCR references must be globally unique — no collisions"
+
+constraint ccr_original_stored:
+  when: block.ccr_ref != ""
+  require: ccr_store.has_original == true
+  severity: error
+  message: "Every CCR reference must have a stored original in PluresDB"
+
+constraint ccr_respects_ttl:
+  when: ccr_entry.age_seconds > ccr_config.ttl_seconds
+  require: ccr_entry.evicted == true
+  severity: error
+  message: "CCR entries past TTL must be evicted — no unbounded growth"
+
+constraint ccr_retrieval_under_budget:
+  require: ccr_retrieval.token_cost <= ccr_config.retrieval_cost_tokens
+  severity: error
+  message: "CCR retrieval overhead must stay under the configured token budget"
+
+# ═══════════════════════════════════════════════════════════════════════
+# STORE ORIGINALS
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure store_for_retrieval:
+  trigger: manual
+  given: "Store original content for later retrieval via CCR reference"
+  generate_ccr_ref {block_id: "target"} -> $ref
+  get_original_content {block_id: "target"} -> $original
+  compute_content_hash {content: "original"} -> $hash
+  check_duplicate {hash: "computed"} -> $existing
+  when existing.found == true:
+    reuse_existing_ref {existing_ref: "found"}
+    emit {type: "headroom.ccr_reused", ref: "existing"}
+  end
+  when existing.found == false:
+    store_in_pluresdb {
+      key: "headroom:ccr:ref_id",
+      content: "original",
+      hash: "computed",
+      ttl: 3600
+    }
+    emit {type: "headroom.ccr_stored", ref: "new", tokens: 500}
+  end
+
+# ═══════════════════════════════════════════════════════════════════════
+# RETRIEVE ORIGINALS
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure retrieve_original:
+  trigger: on_write {pattern: "headroom:retrieve:*"}
+  given: "LLM requested full content via CCR ref — fetch and return original"
+  parse_retrieval_request {request_id: "incoming"} -> $request
+  lookup_ccr_entry {ref: "requested"} -> $entry
+  when entry.found == true:
+    refresh_ttl {ref: "requested"}
+    increment_access_count {ref: "requested"}
+    emit {type: "headroom.ccr_retrieved", ref: "requested", tokens: 500}
+  end
+  when entry.found == false:
+    emit {type: "headroom.ccr_miss", ref: "requested", reason: "expired_or_invalid"}
+  end
+
+# ═══════════════════════════════════════════════════════════════════════
+# EVICTION
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure evict_expired:
+  trigger: cron {schedule: "*/15 * * * *"}
+  given: "Remove CCR entries past their TTL to prevent unbounded storage growth"
+  list_expired_entries {ttl_seconds: 3600} -> $expired
+  when expired.count > 0:
+    loop over $expired as entry:
+      delete_from_pluresdb {key: "headroom:ccr:entry_id"}
+    end
+    emit {type: "headroom.ccr_evicted", count: 10}
+  end
+  when expired.count == 0:
+    emit {type: "headroom.ccr_eviction_skipped", reason: "none_expired"}
+  end
+
+procedure evict_over_limit:
+  trigger: manual
+  given: "Evict least-recently-used entries when over max storage count"
+  count_ccr_entries {} -> $count
+  when count.total > 100:
+    list_lru_entries {limit: 10} -> $lru
+    loop over $lru as entry:
+      delete_from_pluresdb {key: "headroom:ccr:entry_id"}
+    end
+    emit {type: "headroom.ccr_lru_evicted", freed: 10}
+  end
+
+# ═══════════════════════════════════════════════════════════════════════
+# HINT INJECTION
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure inject_retrieval_hints:
+  trigger: manual
+  given: "Add retrieval hints to compressed output so LLM knows it can request more"
+  get_compressed_blocks_with_ccr {} -> $blocks
+  loop over $blocks as block:
+    when block.ccr_ref != "":
+      append_hint {
+        block_id: "block",
+        hint: "[Full content available: call headroom_retrieve(ref)]"
+      }
+    end
+  end
+  emit {type: "headroom.hints_injected", count: 5}

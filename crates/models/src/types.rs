@@ -60,20 +60,26 @@ impl ChatMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     /// Unique identifier for this specific call (used to correlate tool results).
+    #[serde(default)]
     pub id: String,
     /// Always `"function"` in the current spec.
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default)]
     pub kind: String,
     /// The function being invoked.
     pub function: FunctionCall,
+    /// Zero-based index in the tool_calls array (present in streaming chunks).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<u32>,
 }
 
 /// The function name and arguments from a tool call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionCall {
     /// Name of the function.
+    #[serde(default)]
     pub name: String,
     /// JSON-encoded arguments string.
+    #[serde(default)]
     pub arguments: String,
 }
 

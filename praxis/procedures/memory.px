@@ -1,0 +1,70 @@
+# memory.px — Memory management as v3 dataflow procedures
+#
+# Handles memory extraction, storage, and retrieval.
+# Conversation memories are stored on response, session context on start.
+#
+# Queue topology:
+#
+#   conversation_response ─→ [extract_memories] ─→ memory_store
+#   session_start ─→ [init_session_memory] ─→ session_context
+#                         │
+#                         ├─ calls [periodic_memory_maintenance] (utility)
+#                         └─ calls [correct_memory] (utility)
+#
+
+# [parser-skip] fact MemoryEntry:
+# [parser-skip]   facts: list[string]
+# [parser-skip]   embedding: list[float]
+# [parser-skip]   timestamp: int
+# [parser-skip] 
+# [parser-skip] fact SessionContext:
+# [parser-skip]   memories: list[MemoryEntry]
+# [parser-skip]   relevance_scores: list[float]
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint memory_extraction_requires_embedding:
+# [parser-skip]   given: "Every extracted memory must include a computed embedding"
+# [parser-skip]   check: MemoryEntry.embedding != []
+# [parser-skip]   severity: error
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Dataflow Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# Extract memorable facts from a conversation response
+procedure extract_memories(response: string from "conversation_response") -> memories into "memory_store":
+  given: "Extract memorable facts from a conversation response"
+  identify_facts {text: $response} -> $facts
+  compute_embedding {text: $response} -> $embedding
+  format_memory_entry {facts: $facts, embedding: $embedding} -> $entry
+  return $entry
+
+# Load relevant memories for a new session
+procedure init_session_memory(session_start: string from "session_start") -> session_context into "session_context":
+  given: "Load relevant memories for a new session"
+  db_get_prefix {prefix: "memory:long_term:"} -> $memories
+  compute_embedding {text: $session_start} -> $session_embedding
+  rank_by_relevance {memories: $memories, embedding: $session_embedding, top_k: 10} -> $relevant
+  return $relevant
+
+# ═══════════════════════════════════════════════════════════════════
+# Utility Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# utility: called by heartbeat (periodic maintenance cycle)
+procedure periodic_memory_maintenance(all_memories: list) -> maintenance_results:
+  given: "Run periodic memory maintenance: decay, consolidation, cleanup"
+  evaluate_retention {all_memories: $all_memories} -> $retention
+  consolidate_memories {all_memories: $all_memories} -> $consolidation
+  return {retention: $retention, consolidation: $consolidation}
+
+# utility: called by memory-correction procedures
+procedure correct_memory(correction: string, memory_key: string) -> corrected_memory:
+  given: "Apply a user correction to an existing memory entry"
+  db_get {key: $memory_key} -> $existing
+  apply_correction {memory: $existing, correction: $correction} -> $corrected
+  pluresdb_write {key: $memory_key, value: $corrected}
+  return $corrected

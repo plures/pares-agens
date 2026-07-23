@@ -1,0 +1,58 @@
+# heartbeat-logic.px — Heartbeat evaluation as v3 dataflow procedures
+#
+# Determines what to do on each heartbeat tick: check services,
+# evaluate proactive actions, decide whether to speak or stay quiet.
+#
+# Queue topology:
+#
+#   heartbeat_tick ─→ [evaluate_heartbeat] ─→ heartbeat_action
+#                          │
+#                          └─ calls [process_heartbeat_check] (utility)
+#
+
+# [parser-skip] fact HeartbeatAction:
+# [parser-skip]   action: enum(silent, check)
+# [parser-skip]   targets: optional[list[string]]
+# [parser-skip] 
+# [parser-skip] fact HeartbeatResult:
+# [parser-skip]   notify: bool
+# [parser-skip]   message: optional[string]
+# [parser-skip]   urgency: optional[int]
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint heartbeat_respects_quiet_hours:
+# [parser-skip]   given: "Heartbeat must not produce notifications during quiet hours (23:00-08:00)"
+# [parser-skip]   check: HeartbeatResult.notify == false OR current_hour >= 8 AND current_hour < 23
+# [parser-skip]   severity: error
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Dataflow Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# Evaluate what actions to take on a heartbeat tick
+procedure evaluate_heartbeat(tick: string from "heartbeat_tick") -> heartbeat_action into "heartbeat_action":
+  given: "Evaluate what actions to take on a heartbeat tick"
+  db_get {key: "heartbeat:last_checks"} -> $last_checks
+  timestamp_now {} -> $now
+  determine_checks_due {last_checks: $last_checks, now: $now} -> $due
+  when due.empty:
+    return {action: "silent"}
+  end
+  return {action: "check", targets: $due}
+
+# ═══════════════════════════════════════════════════════════════════
+# Utility Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# utility: called by evaluate_heartbeat
+procedure process_heartbeat_check(check_type: string, config: string) -> heartbeat_result:
+  given: "Execute a specific heartbeat check and determine if notification is needed"
+  run_check {type: $check_type, config: $config} -> $result
+  evaluate_urgency {result: $result} -> $urgency
+  when urgency.level > 2:
+    return {notify: true, message: $result, urgency: $urgency}
+  end
+  return {notify: false, result: $result}

@@ -262,4 +262,11 @@ mod tests {
         assert_eq!(e.category, Some(MemoryCategory::Conversation));
         assert_eq!(e.memory_id, "mem-1");
     }
+
+    #[tokio::test]
+    async fn non_empty_log_is_not_empty() {
+        let log = AuditLog::new();
+        log.append(conv_entry("m1", AuditAction::SoftDeleted)).await;
+        assert!(!log.is_empty().await);
+    }
 }

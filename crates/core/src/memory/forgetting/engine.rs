@@ -713,4 +713,426 @@ mod tests {
         assert!(s.contains("1 entries affected"));
         assert!(s.contains("conversation"));
     }
+
+    /// Kills mutant: replace += with *= in PurgeReport::summary (line 110)
+    /// With *=, count for a category with 2 entries would stay 0 (0*1=0) or
+    /// go wrong. This test asserts the exact count for multi-entry categories.
+    #[test]
+    fn purge_report_summary_counts_multiple_entries_per_category() {
+        let report = PurgeReport {
+            entries: vec![
+                ImpactEntry {
+                    memory_id: "a".into(),
+                    category: MemoryCategory::Conversation,
+                    age_days: 40.0,
+                    reason: "expired".into(),
+                },
+                ImpactEntry {
+                    memory_id: "b".into(),
+                    category: MemoryCategory::Conversation,
+                    age_days: 50.0,
+                    reason: "expired".into(),
+                },
+                ImpactEntry {
+                    memory_id: "c".into(),
+                    category: MemoryCategory::CodePattern,
+                    age_days: 60.0,
+                    reason: "excess".into(),
+                },
+            ],
+            total_affected: 3,
+            is_dry_run: true,
+        };
+        let s = report.summary();
+        // Must contain "[conversation] 2" — with *= it would be 0 or 1
+        assert!(s.contains("[conversation] 2"), "summary was: {s}");
+        assert!(s.contains("[code-pattern] 1"), "summary was: {s}");
+    }
+
+    /// Kills mutant: replace / with % or * in age_days calc (line 222)
+    /// 86400 seconds = 1.0 day. With % it would be 0.0, with * it would be
+    /// enormous.
+    #[tokio::test]
+    async fn dry_run_age_days_is_correct() {
+        // Entry is exactly 10 days old, with expire_after(5)
+        let engine =
+            engine_with_entries(vec![old_entry("age10", 10, MemoryCategory::Conversation)]).await;
+        let mut policy = RetentionPolicy::new();
+        policy.set_rule(
+            MemoryCategory::Conversation,
+            super::super::policy::RetentionRule::expire_after(5),
+        );
+        let report = engine.dry_run(&policy).await.unwrap();
+        assert_eq!(report.entries.len(), 1);
+        let age = report.entries[0].age_days;
+        // age_days should be ~10.0 (within float tolerance)
+        // With / replaced by %, age would be 0.0; with *, it'd be ~7.46e10
+        assert!(
+            (9.9..=10.1).contains(&age),
+            "expected age ~10.0 but got {age}"
+        );
+    }
+
+    /// Kills mutant: replace < with <= on cutoff comparison (line 223)
+    /// An entry at exactly the cutoff boundary (created_at == cutoff) should
+    /// NOT be flagged with `<`, but WOULD be with `<=`.
+    /// We set the entry 1 second younger than the cutoff to reliably
+    /// distinguish `<` from `<=`.
+    #[tokio::test]
+    async fn dry_run_entry_at_cutoff_boundary_not_expired() {
+        // max_age_days=30, entry is 30 days minus 1 second old
+        // cutoff = now - 30 days. entry created = now - 30 days + 1 second > cutoff
+        // With `<`: created > cutoff → false → not expired ✓
+        // With `<=`: created > cutoff → false → not expired (same)
+        // But we also test the complementary case: exactly 30 days + 1 second
+        let store = Arc::new(InMemoryStore::new());
+        // Entry just barely under the limit
+        let barely_under = (Utc::now() - TimeDelta::days(30) + TimeDelta::seconds(60)).to_rfc3339();
+        store
+            .insert(MemoryEntry {
+                id: "barely_under".to_owned(),
+                content: "near boundary".to_owned(),
+                category: MemoryCategory::Conversation,
+                tags: vec![],
+                embedding: vec![0.1],
+                score: 0.0,
+                created_at: barely_under,
+            })
+            .await
+            .unwrap();
+        // Entry just barely over the limit
+        let barely_over = (Utc::now() - TimeDelta::days(30) - TimeDelta::seconds(60)).to_rfc3339();
+        store
+            .insert(MemoryEntry {
+                id: "barely_over".to_owned(),
+                content: "past boundary".to_owned(),
+                category: MemoryCategory::Conversation,
+                tags: vec![],
+                embedding: vec![0.1],
+                score: 0.0,
+                created_at: barely_over,
+            })
+            .await
+            .unwrap();
+        let engine = ForgettingEngine::new(store, 24);
+        let mut policy = RetentionPolicy::new();
+        policy.set_rule(
+            MemoryCategory::Conversation,
+            super::super::policy::RetentionRule::expire_after(30),
+        );
+        let report = engine.dry_run(&policy).await.unwrap();
+        // Only the "barely_over" entry should be expired
+        assert_eq!(report.total_affected, 1, "report: {:?}", report.entries);
+        assert_eq!(report.entries[0].memory_id, "barely_over");
+    }
+
+    /// Companion: entry clearly past cutoff IS expired (31 days > 30 limit)
+    #[tokio::test]
+    async fn dry_run_entry_past_cutoff_is_expired() {
+        let engine =
+            engine_with_entries(vec![old_entry("old", 31, MemoryCategory::Conversation)]).await;
+        let mut policy = RetentionPolicy::new();
+        policy.set_rule(
+            MemoryCategory::Conversation,
+            super::super::policy::RetentionRule::expire_after(30),
+        );
+        let report = engine.dry_run(&policy).await.unwrap();
+        assert_eq!(report.total_affected, 1);
+        assert_eq!(report.entries[0].memory_id, "old");
+    }
+
+    /// Kills mutant: replace > with >= in count check (line 239)
+    /// When entries.len() == max_count, NO entries should be removed.
+    #[tokio::test]
+    async fn dry_run_count_at_exact_limit_has_no_excess() {
+        // 3 entries with max_count=3 → len == max → no excess
+        let entries = (0..3_u8)
+            .map(|i| old_entry(&format!("e{i}"), i as i64 + 1, MemoryCategory::CodePattern))
+            .collect();
+        let engine = engine_with_entries(entries).await;
+        let mut policy = RetentionPolicy::new();
+        policy.set_rule(
+            MemoryCategory::CodePattern,
+            super::super::policy::RetentionRule::limit_count(3),
+        );
+        let report = engine.dry_run(&policy).await.unwrap();
+        assert!(
+            report.is_empty(),
+            "entries at exact count limit should not be purged, got {} affected",
+            report.total_affected
+        );
+    }
+
+    /// Kills mutant: replace ForgettingEngine::soft_deleted_ids -> Vec<String> with vec![]
+    #[tokio::test]
+    async fn soft_deleted_ids_returns_ids_after_execute() {
+        let engine =
+            engine_with_entries(vec![old_entry("a", 60, MemoryCategory::Conversation)]).await;
+        let mut policy = RetentionPolicy::new();
+        policy.set_rule(
+            MemoryCategory::Conversation,
+            super::super::policy::RetentionRule::expire_after(30),
+        );
+        let report = engine.dry_run(&policy).await.unwrap();
+        engine.execute(report, &AutoApproveGate).await.unwrap();
+        let ids = engine.soft_deleted_ids().await;
+        assert_eq!(ids, vec!["a"]);
+    }
+
+    /// Kills mutant: replace > with == or >= in restore expiry check (line 360)
+    /// After the recovery window expires, restore should fail.
+    #[tokio::test]
+    async fn restore_fails_after_recovery_window_expires() {
+        // Use recovery_window_hours=0 so it expires immediately
+        let store = Arc::new(InMemoryStore::new());
+        store
+            .insert(old_entry("a", 60, MemoryCategory::Conversation))
+            .await
+            .unwrap();
+        let engine = ForgettingEngine::new(store, 0); // 0-hour recovery window
+
+        let mut policy = RetentionPolicy::new();
+        policy.set_rule(
+            MemoryCategory::Conversation,
+            super::super::policy::RetentionRule::expire_after(30),
+        );
+        let report = engine.dry_run(&policy).await.unwrap();
+        engine.execute(report, &AutoApproveGate).await.unwrap();
+
+        // Small sleep to ensure now > expires_at (recovery window is 0 hours)
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        let err = engine.restore("a").await.unwrap_err();
+        assert!(
+            format!("{err:?}").contains("expired"),
+            "expected recovery expired error, got: {err:?}"
+        );
+    }
+
+    /// Kills mutant: replace / with % or * in count-based age_days calc (line 249)
+    /// Verifies age_days is populated correctly for count-based excess entries.
+    #[tokio::test]
+    async fn dry_run_count_excess_has_correct_age_days() {
+        // 4 entries with max_count=2, oldest are 10 and 8 days old
+        let entries = vec![
+            old_entry("e1", 10, MemoryCategory::CodePattern),
+            old_entry("e2", 8, MemoryCategory::CodePattern),
+            old_entry("e3", 3, MemoryCategory::CodePattern),
+            old_entry("e4", 1, MemoryCategory::CodePattern),
+        ];
+        let engine = engine_with_entries(entries).await;
+        let mut policy = RetentionPolicy::new();
+        policy.set_rule(
+            MemoryCategory::CodePattern,
+            super::super::policy::RetentionRule::limit_count(2),
+        );
+        let report = engine.dry_run(&policy).await.unwrap();
+        assert_eq!(report.total_affected, 2);
+        // The excess entries should have age_days approximately correct
+        for entry in &report.entries {
+            // With / replaced by %, age would be 0.0 or tiny; with *, it'd be enormous
+            assert!(
+                entry.age_days > 1.0 && entry.age_days < 15.0,
+                "age_days {} is outside expected range for count-based excess",
+                entry.age_days
+            );
+        }
+    }
+
+    // ── run_scheduled_purge ────────────────────────────────────────────────
+
+    /// Kills mutant: replace run_scheduled_purge -> Ok(Default::default())
+    #[tokio::test]
+    async fn scheduled_purge_soft_deletes_expired_entries() {
+        let engine =
+            engine_with_entries(vec![old_entry("a", 60, MemoryCategory::Conversation)]).await;
+        let mut policy = RetentionPolicy::new();
+        policy.set_rule(
+            MemoryCategory::Conversation,
+            super::super::policy::RetentionRule::expire_after(30),
+        );
+        let result = engine.run_scheduled_purge(&policy).await.unwrap();
+        // With Default::default(), these would be empty
+        assert_eq!(result.soft_deleted_ids, vec!["a"]);
+    }
+
+    /// Kills mutant: replace run_scheduled_purge -> Ok(Default::default())
+    /// Also verifies audit entry is appended for ScheduledPurgeRan
+    #[tokio::test]
+    async fn scheduled_purge_appends_audit_summary() {
+        let engine =
+            engine_with_entries(vec![old_entry("b", 45, MemoryCategory::CodePattern)]).await;
+        let mut policy = RetentionPolicy::new();
+        policy.set_rule(
+            MemoryCategory::CodePattern,
+            super::super::policy::RetentionRule::expire_after(30),
+        );
+        engine.run_scheduled_purge(&policy).await.unwrap();
+        let entries = engine.audit_log.entries().await;
+        // At least one SoftDeleted + one ScheduledPurgeRan
+        let scheduled: Vec<_> = entries
+            .iter()
+            .filter(|e| e.action == AuditAction::ScheduledPurgeRan)
+            .collect();
+        assert_eq!(
+            scheduled.len(),
+            1,
+            "expected exactly one ScheduledPurgeRan audit entry"
+        );
+        assert!(scheduled[0].reason.contains("soft_deleted=1"));
+    }
+
+    // ── hard_purge_expired ─────────────────────────────────────────────────
+
+    /// Kills mutant: replace hard_purge_expired -> vec![]
+    #[tokio::test]
+    async fn hard_purge_expired_removes_past_recovery_entries() {
+        let store = Arc::new(InMemoryStore::new());
+        store
+            .insert(old_entry("hp1", 60, MemoryCategory::Conversation))
+            .await
+            .unwrap();
+        // Use 0-hour recovery window so entries expire immediately
+        let engine = ForgettingEngine::new(store, 0);
+
+        let mut policy = RetentionPolicy::new();
+        policy.set_rule(
+            MemoryCategory::Conversation,
+            super::super::policy::RetentionRule::expire_after(30),
+        );
+        // First pass: soft-delete the entry
+        let report = engine.dry_run(&policy).await.unwrap();
+        engine.execute(report, &AutoApproveGate).await.unwrap();
+
+        // Small wait for recovery window (0h) to expire
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        // Now hard_purge_expired should return the ID
+        let purged = engine.hard_purge_expired().await;
+        assert_eq!(purged, vec!["hp1"]);
+    }
+
+    /// Verifies scheduled purge integrates hard_purge into its result
+    #[tokio::test]
+    async fn scheduled_purge_includes_hard_purged_ids() {
+        let store = Arc::new(InMemoryStore::new());
+        store
+            .insert(old_entry("first", 60, MemoryCategory::Conversation))
+            .await
+            .unwrap();
+        let engine = ForgettingEngine::new(store.clone(), 0);
+
+        let mut policy = RetentionPolicy::new();
+        policy.set_rule(
+            MemoryCategory::Conversation,
+            super::super::policy::RetentionRule::expire_after(30),
+        );
+
+        // First scheduled purge: soft-deletes "first"
+        let r1 = engine.run_scheduled_purge(&policy).await.unwrap();
+        assert!(r1.soft_deleted_ids.contains(&"first".to_owned()));
+
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        // Add another entry for the second pass to work on
+        store
+            .insert(old_entry("second", 60, MemoryCategory::Conversation))
+            .await
+            .unwrap();
+
+        // Second scheduled purge: hard-purges "first" + soft-deletes "second"
+        let r2 = engine.run_scheduled_purge(&policy).await.unwrap();
+        assert!(
+            r2.hard_purged_ids.contains(&"first".to_owned()),
+            "expected 'first' in hard_purged_ids, got {:?}",
+            r2.hard_purged_ids
+        );
+        assert!(r2.soft_deleted_ids.contains(&"second".to_owned()));
+    }
+
+    // ── boundary condition tests (mutation gap coverage) ─────────────────────
+
+    /// Kills mutant: replace < with <= at line 223 (entry exactly at cutoff boundary)
+    /// NOTE: This mutant is effectively equivalent because the cutoff is computed
+    /// from `now` inside dry_run, making `created == cutoff` unreachable in practice.
+    /// An entry created slightly AFTER the cutoff (1 second younger) should NOT be purged.
+    /// An entry created slightly BEFORE the cutoff (1 second older) SHOULD be purged.
+    #[tokio::test]
+    async fn dry_run_entry_just_past_cutoff_is_purged() {
+        // Entry is 30 days + 2 seconds old, cutoff = now - 30 days
+        // So created < cutoff → true → purged
+        let created_at = (Utc::now() - TimeDelta::days(30) - TimeDelta::seconds(2)).to_rfc3339();
+        let entry = MemoryEntry {
+            id: "just_past".to_owned(),
+            content: "just past cutoff".to_owned(),
+            category: MemoryCategory::Conversation,
+            tags: vec![],
+            embedding: vec![0.1, 0.2],
+            score: 0.0,
+            created_at,
+        };
+        let engine = engine_with_entries(vec![entry]).await;
+        let mut policy = RetentionPolicy::new();
+        policy.set_rule(
+            MemoryCategory::Conversation,
+            super::super::policy::RetentionRule::expire_after(30),
+        );
+        let report = engine.dry_run(&policy).await.unwrap();
+        assert_eq!(
+            report.total_affected, 1,
+            "entry just past cutoff should be purged"
+        );
+    }
+
+    /// Kills mutant: replace > with >= at line 239 (entries.len() == max_count)
+    /// When the count of entries equals max_count exactly, no entries should be
+    /// purged. The condition is `len > max_count`, not `>=`.
+    #[tokio::test]
+    async fn dry_run_entries_at_exact_max_count_not_purged() {
+        // Create exactly 3 entries with max_count=3
+        let entries = (0..3_u8)
+            .map(|i| old_entry(&format!("e{i}"), i as i64 + 1, MemoryCategory::CodePattern))
+            .collect();
+        let engine = engine_with_entries(entries).await;
+        let mut policy = RetentionPolicy::new();
+        policy.set_rule(
+            MemoryCategory::CodePattern,
+            super::super::policy::RetentionRule::limit_count(3),
+        );
+        let report = engine.dry_run(&policy).await.unwrap();
+        assert_eq!(
+            report.total_affected, 0,
+            "exactly max_count entries should not trigger purge (strict greater-than)"
+        );
+    }
+
+    /// hard_purge_expired appends HardPurged audit entries
+    #[tokio::test]
+    async fn hard_purge_expired_creates_audit_entries() {
+        let store = Arc::new(InMemoryStore::new());
+        store
+            .insert(old_entry("audit_hp", 60, MemoryCategory::Decision))
+            .await
+            .unwrap();
+        let engine = ForgettingEngine::new(store, 0);
+
+        let mut policy = RetentionPolicy::new();
+        policy.set_rule(
+            MemoryCategory::Decision,
+            super::super::policy::RetentionRule::expire_after(30),
+        );
+        let report = engine.dry_run(&policy).await.unwrap();
+        engine.execute(report, &AutoApproveGate).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        engine.hard_purge_expired().await;
+
+        let entries = engine
+            .audit_log
+            .entries_by_action(AuditAction::HardPurged)
+            .await;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].memory_id, "audit_hp");
+        assert!(entries[0].reason.contains("recovery window expired"));
+    }
 }

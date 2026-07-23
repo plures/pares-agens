@@ -1,13 +1,13 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client", "crates/cli", "crates/privacy", "crates/marketplace", "crates/agenda", "crates/praxis", "crates/sync", "crates/audit", "crates/tauri-app", "crates/tui"]
+members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client", "crates/cli", "crates/privacy", "crates/marketplace", "crates/agenda", "crates/sync", "crates/audit", "crates/tauri-app", "crates/tui", "crates/agens-plugin", "crates/bitnet-sys", "crates/bitnet", "crates/mcp-server", "crates/agens-hostkit", "crates/agens-buildinfo"]
 # Keep the Tauri desktop app crates in the workspace so their dependency graph
 # is captured in the root Cargo.lock. They may still be built separately by
 # installer workflows via `cargo tauri build --locked`, but the lockfile must
 # already include the Tauri/GTK/WebKit dependencies for locked builds to work.
 
 [workspace.package]
-version = "1.12.1"
+version = "1.14.0"
 edition = "2021"
 license = "BSL-1.1"
 repository = "https://github.com/plures/pares-agens"
@@ -23,5 +23,10 @@ uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
+# SQLite reader for importing OpenClaw's `memory/main.sqlite` chunk index during
+# migration. `bundled` compiles SQLite from source so no system libsqlite3 is
+# required (verified building on x86_64-pc-windows-msvc).
+rusqlite = { version = "0.32", features = ["bundled"] }
 teloxide = { version = "0.17", features = ["macros", "throttle"] }
 clap = { version = "4", features = ["derive", "env"] }
+

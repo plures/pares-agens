@@ -2,7 +2,7 @@
 
 use super::{CerebellumConfig, Route};
 use crate::delegation::broker::SubTask;
-use crate::event::Event;
+use pares_radix_core::event::Event;
 
 /// Complexity signals extracted from an event.
 struct Signals {
@@ -18,6 +18,10 @@ struct Signals {
     research: bool,
     /// Whether the request should be decomposed into sub-tasks.
     decomposable: bool,
+    /// Whether the message is pure noise (bare ack with no actionable content).
+    noise: bool,
+    /// Whether the message is conversational/social (greetings, check-ins).
+    conversational: bool,
 }
 
 /// Decide routing for an event.
@@ -37,9 +41,14 @@ pub fn decide(event: &Event, learned_context: &str, config: &CerebellumConfig) -
 fn decide_message(content: &str, learned_context: &str, config: &CerebellumConfig) -> Route {
     let signals = analyze(content);
 
-    // Drop noise (exact single-word acks like "ok", "yes", "no")
-    if signals.simple && signals.token_estimate == 1 {
+    // Pure noise gets dropped
+    if signals.noise {
         return Route::Drop;
+    }
+
+    // Conversational/social messages go straight to conscious — never delegate
+    if signals.conversational && !signals.code {
+        return Route::Conscious;
     }
 
     // Short commands go to conscious
@@ -51,7 +60,8 @@ fn decide_message(content: &str, learned_context: &str, config: &CerebellumConfi
         let tasks = build_subtasks(content, learned_context, &signals);
         if !tasks.is_empty() {
             return Route::Delegate {
-                reason: "decomposition signals detected (multi-part or cross-domain request)".into(),
+                reason: "decomposition signals detected (multi-part or cross-domain request)"
+                    .into(),
                 tasks,
             };
         }
@@ -126,6 +136,40 @@ fn analyze(content: &str) -> Signals {
     ];
     let research = research_keywords.iter().any(|kw| lower.contains(kw));
 
+    let noise_patterns = [
+        "ok", "sure", "thanks", "got it", "k", "cool", "np", "ty", "thx", "okay", "alright",
+    ];
+    let noise = noise_patterns.iter().any(|p| lower.trim() == *p);
+
+    // Conversational / social messages that should NOT be delegated or decomposed.
+    let conversational_keywords = [
+        "hello",
+        "hi ",
+        "hey ",
+        "hey,",
+        "howdy",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "what's up",
+        "whats up",
+        "sup",
+        "yo ",
+        "greetings",
+        "say hello",
+        "loud and clear",
+        "nice to meet",
+        "can you hear me",
+        "are you there",
+        "are you online",
+        "you around",
+        "checking in",
+    ];
+    let conversational = conversational_keywords.iter().any(|kw| lower.contains(kw))
+        || lower.trim() == "hi"
+        || lower.trim() == "hey"
+        || lower.trim() == "yo";
+
     let simple_patterns = [
         "yes",
         "no",
@@ -172,6 +216,8 @@ fn analyze(content: &str) -> Signals {
         code,
         research,
         decomposable,
+        noise,
+        conversational,
     }
 }
 
@@ -195,13 +241,9 @@ fn estimate_complexity(signals: &Signals) -> f32 {
 
 fn count_file_mentions(lower: &str) -> usize {
     let extensions = [
-        ".rs", ".ts", ".js", ".py", ".go", ".java", ".toml", ".json", ".yml", ".yaml",
-        ".md",
+        ".rs", ".ts", ".js", ".py", ".go", ".java", ".toml", ".json", ".yml", ".yaml", ".md",
     ];
-    extensions
-        .iter()
-        .filter(|ext| lower.contains(*ext))
-        .count()
+    extensions.iter().filter(|ext| lower.contains(*ext)).count()
         + ["/src/", "crates/", "modules/"]
             .iter()
             .filter(|segment| lower.contains(*segment))

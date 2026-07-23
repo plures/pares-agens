@@ -1,0 +1,125 @@
+# router.px — Content classification and compression strategy routing
+#
+# Classifies incoming content blocks by type and selects the appropriate
+# compression strategy. This is the first stage of the pipeline.
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONSTRAINTS
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint router_must_classify:
+  require: block.content_type != ""
+  severity: error
+  message: "Every content block must be classified before entering the pipeline"
+
+constraint strategy_must_match_type:
+  when: block.content_type == "json"
+  require: plan.strategy == "structural" or plan.strategy == "hybrid"
+  severity: error
+  message: "JSON content must use structural or hybrid compression"
+
+constraint code_needs_language:
+  when: block.content_type == "code"
+  require: block.language != ""
+  severity: error
+  message: "Code blocks must have a detected language before compression"
+
+# ═══════════════════════════════════════════════════════════════════════
+# CLASSIFICATION PROCEDURE
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure classify_content:
+  trigger: on_write {pattern: "headroom:ingest:*"}
+  given: "Classify a raw content block by structural signals and assign content type"
+  detect_content_type {block_id: "incoming"} -> $detection
+  when detection.content_type == "json":
+    route_json {block_id: "current"}
+  end
+  when detection.content_type == "code":
+    route_code {block_id: "current"}
+  end
+  when detection.content_type == "prose":
+    route_prose {block_id: "current"}
+  end
+  when detection.content_type == "log":
+    route_log {block_id: "current"}
+  end
+  when detection.content_type == "error_trace":
+    route_error {block_id: "current"}
+  end
+  when detection.content_type == "mixed":
+    route_mixed {block_id: "current"}
+  end
+
+procedure route_json:
+  trigger: manual
+  given: "Route JSON content to structural compression"
+  analyze_json_structure {block_id: "current"} -> $analysis
+  when analysis.is_array_of_objects == true:
+    write_plan_entry {block_id: "current", strategy: "structural", sub_strategy: "array_dedup"}
+    emit {type: "headroom.routed", strategy: "structural", sub_strategy: "array_dedup"}
+  end
+  when analysis.is_deeply_nested == true:
+    write_plan_entry {block_id: "current", strategy: "structural", sub_strategy: "flatten"}
+    emit {type: "headroom.routed", strategy: "structural", sub_strategy: "flatten"}
+  end
+  when analysis.is_simple_object == true:
+    write_plan_entry {block_id: "current", strategy: "pass_through"}
+    emit {type: "headroom.routed", strategy: "pass_through", reason: "already_compact"}
+  end
+
+procedure route_code:
+  trigger: manual
+  given: "Route code content to AST-aware compression"
+  detect_language {block_id: "current"} -> $lang
+  when lang.confidence < 0.5:
+    write_plan_entry {block_id: "current", strategy: "extractive"}
+    emit {type: "headroom.routed", strategy: "extractive", reason: "low_confidence_language"}
+  end
+  when lang.confidence >= 0.5:
+    write_plan_entry {block_id: "current", strategy: "ast_summary"}
+    emit {type: "headroom.routed", strategy: "ast_summary", language: "detected"}
+  end
+
+procedure route_prose:
+  trigger: manual
+  given: "Route prose/text content to extractive compression"
+  measure_density {block_id: "current"} -> $density
+  when density.tokens_per_sentence < 20:
+    write_plan_entry {block_id: "current", strategy: "pass_through"}
+    emit {type: "headroom.routed", strategy: "pass_through", reason: "already_dense"}
+  end
+  when density.tokens_per_sentence >= 20:
+    write_plan_entry {block_id: "current", strategy: "extractive"}
+    emit {type: "headroom.routed", strategy: "extractive"}
+  end
+
+procedure route_log:
+  trigger: manual
+  given: "Route log output to deduplication-based compression"
+  detect_patterns {block_id: "current"} -> $patterns
+  when patterns.repeated_count >= 3:
+    write_plan_entry {block_id: "current", strategy: "log_dedup"}
+    emit {type: "headroom.routed", strategy: "log_dedup"}
+  end
+  when patterns.repeated_count < 3:
+    write_plan_entry {block_id: "current", strategy: "extractive"}
+    emit {type: "headroom.routed", strategy: "extractive", reason: "few_patterns"}
+  end
+
+procedure route_error:
+  trigger: manual
+  given: "Route error traces — preserve critical info, compress noise"
+  extract_error_frame {block_id: "current"} -> $frame
+  write_plan_entry {block_id: "current", strategy: "structural", priority: 1}
+  emit {type: "headroom.routed", strategy: "structural", sub_strategy: "error_frame"}
+
+procedure route_mixed:
+  trigger: manual
+  given: "Route mixed content — split into sections and re-classify each"
+  split_by_structure {block_id: "current"} -> $sections
+  loop over $sections as section:
+    detect_content_type {block_id: "section"} -> $sub_type
+    write_plan_entry {block_id: "section", strategy: "hybrid"}
+  end
+  emit {type: "headroom.routed", strategy: "hybrid"}

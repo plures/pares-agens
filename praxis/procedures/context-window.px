@@ -1,0 +1,76 @@
+# context-window.px — Context window management as v3 dataflow procedures
+#
+# Manages token budgets, context truncation, and window optimization.
+# optimize_context sits in the enrichment pipeline; the rest are utilities
+# called directly by other procedures.
+#
+# Queue topology:
+#
+#   enrichment_request ─→ [optimize_context] ─→ optimized_context
+#                              │
+#                              ├─ calls [estimate_tokens] (utility)
+#                              ├─ calls [truncate_to_window] (utility)
+#                              └─ calls [select_context_window] (utility)
+#
+
+# [parser-skip] fact WindowConfig:
+# [parser-skip]   overflow: bool
+# [parser-skip]   max_window: int
+# [parser-skip]   actual: int
+# [parser-skip]   action: string
+# [parser-skip] 
+# [parser-skip] fact OptimizedContext:
+# [parser-skip]   messages: list
+# [parser-skip]   budget_used: int
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint context_never_exceeds_window:
+# [parser-skip]   given: "Optimized context must never exceed the model's token window"
+# [parser-skip]   check: OptimizedContext.budget_used <= WindowConfig.max_window
+# [parser-skip]   severity: error
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Dataflow Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# Optimize context allocation across messages, tools, and system prompt
+procedure optimize_context(messages: list from "enrichment_request", tools: list, system_prompt: string) -> optimized into "optimized_context":
+  given: "Optimize context allocation across messages, tools, and system prompt"
+  estimate_tokens {text: $system_prompt} -> $prompt_tokens
+  estimate_total_tokens {messages: $messages} -> $message_tokens
+  estimate_total_tokens {messages: $tools} -> $tool_tokens
+  allocate_budget {prompt: $prompt_tokens, messages: $message_tokens, tools: $tool_tokens} -> $budget
+  truncate_to_window {messages: $messages, max_tokens: $budget} -> $truncated
+  return {messages: $truncated, budget_used: $budget}
+
+# ═══════════════════════════════════════════════════════════════════
+# Utility Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# utility: called by optimize_context, preprocess
+procedure estimate_tokens(text: string) -> token_count:
+  given: "Estimate token count for a text string"
+  count_tokens {text: $text} -> $count
+  return $count
+
+# utility: called by optimize_context
+procedure truncate_to_window(messages: list, max_tokens: int) -> truncated:
+  given: "Truncate message history to fit within a token window"
+  estimate_total_tokens {messages: $messages} -> $total
+  when total <= $max_tokens:
+    return $messages
+  end
+  prioritize_messages {messages: $messages, budget: $max_tokens} -> $prioritized
+  return $prioritized
+
+# utility: called by route_with_context_gate, optimize_context
+procedure select_context_window(model_tier: string, context_size: int) -> window_config:
+  given: "Determine context window configuration based on model tier and content size"
+  estimate_context_window {tier: $model_tier} -> $max_window
+  when context_size > $max_window:
+    return {overflow: true, max_window: $max_window, actual: $context_size, action: "cascade_up"}
+  end
+  return {overflow: false, max_window: $max_window, actual: $context_size, action: "proceed"}

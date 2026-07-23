@@ -20,6 +20,8 @@ pub mod installer;
 pub mod permissions;
 pub mod ratings;
 pub mod security;
+pub mod skill_discovery;
+pub mod skill_workshop;
 pub mod update;
 
 use serde::{Deserialize, Serialize};
@@ -29,6 +31,13 @@ pub mod lora_types;
 pub mod skill_category;
 pub use lora_types::LoRAAdapter;
 pub use skill_category::SkillCategory;
+pub use skill_discovery::{
+    build_available_skills_block, discover_skills, skills_catalog, DiscoveredSkill,
+};
+pub use skill_workshop::{
+    ProposalDraft, ProposalStatus, ProposalStore, ProposalValidator, SkillProposal, SupportFile,
+    WorkshopError,
+};
 
 // ── Error type ───────────────────────────────────────────────────────────────
 

@@ -1,0 +1,57 @@
+app-id: com.plures.ParesAgens
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+command: pares-agens
+
+# Pares Agens Flatpak.
+#
+# End-user distribution: this manifest repackages the PUBLIC Linux AppImage that
+# build-installers.yml attaches to each GitHub Release. It does NOT build from the
+# private plures source repos — no repo access or token is required to build or run.
+#
+# The AppImage URL/sha256 are injected at build time from the release tag by the
+# flatpak.yml CI job (see FLATPAK_APPIMAGE_URL / FLATPAK_APPIMAGE_SHA256), which
+# templates this file. The committed values below point at a stable "latest"
+# download and MUST be pinned to a real sha256 per release before Flathub submission.
+
+finish-args:
+  - --share=ipc
+  - --socket=x11
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=network
+  - --device=dri
+  - --filesystem=xdg-config/pares-agens:create
+  - --filesystem=xdg-data/pares-agens:create
+  - --talk-name=org.freedesktop.Notifications
+
+modules:
+  - name: pares-agens
+    buildsystem: simple
+    build-commands:
+      # Extract the AppImage (no FUSE in the sandbox) and install its payload.
+      - chmod +x pares-agens.AppImage
+      - ./pares-agens.AppImage --appimage-extract
+      - mkdir -p /app/bin /app/lib
+      - cp -a squashfs-root/usr/bin/. /app/bin/ 2>/dev/null || cp squashfs-root/AppRun /app/bin/pares-agens
+      - if [ -d squashfs-root/usr/lib ]; then cp -a squashfs-root/usr/lib/. /app/lib/; fi
+      # Desktop entry, icon, and AppStream metainfo (Flathub-required).
+      - install -Dm644 com.plures.ParesAgens.desktop /app/share/applications/com.plures.ParesAgens.desktop
+      - install -Dm644 com.plures.ParesAgens.metainfo.xml /app/share/metainfo/com.plures.ParesAgens.metainfo.xml
+      - |
+        if [ -f squashfs-root/usr/share/icons/hicolor/128x128/apps/pares-agens.png ]; then
+          install -Dm644 squashfs-root/usr/share/icons/hicolor/128x128/apps/pares-agens.png \
+            /app/share/icons/hicolor/128x128/apps/com.plures.ParesAgens.png
+        fi
+    sources:
+      - type: file
+        # Templated by CI from the release tag. Placeholder is a real, resolvable
+        # "latest" redirect; CI overrides with the exact tagged asset URL + sha256.
+        url: https://github.com/plures/pares-agens/releases/latest/download/pares-agens_amd64.AppImage
+        sha256: 0000000000000000000000000000000000000000000000000000000000000000
+        dest-filename: pares-agens.AppImage
+      - type: file
+        path: com.plures.ParesAgens.desktop
+      - type: file
+        path: com.plures.ParesAgens.metainfo.xml

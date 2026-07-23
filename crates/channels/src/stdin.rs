@@ -4,7 +4,7 @@
 //! [`Event::Message`] events, and prints [`Event::ModelResponse`] content
 //! back to standard output.
 use async_trait::async_trait;
-use pares_agens_core::Event;
+use pares_radix_core::Event;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use uuid::Uuid;
 

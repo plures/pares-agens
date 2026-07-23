@@ -1,0 +1,128 @@
+# thread-management.px — manages thread lifecycle based on topic-routing decisions
+#
+# Consumes topic_decision from topic-routing.px
+# Produces thread_routed events that the spine uses to set active thread context
+#
+# Architecture:
+#   topic_decision(changed=true, confidence >= threshold) → find_or_create_thread → switch
+#   topic_decision(changed=true, confidence < threshold) → keep current, mark for reeval
+#   topic_decision(changed=false) → continue in current thread
+#
+
+# Constraints
+
+# [parser-skip] constraint thread_create_requires_confidence:
+# [parser-skip]   given: "Thread creation requires high confidence in topic shift"
+# [parser-skip]   check: when action == "create_thread": confidence >= config.auto_create_threshold
+# [parser-skip]   severity: error
+# [parser-skip]   message: "Cannot create thread without sufficient topic confidence"
+
+# [parser-skip] constraint max_active_threads:
+# [parser-skip]   given: "Active thread count must not exceed configured maximum"
+# [parser-skip]   check: active_thread_count <= config.max_active
+# [parser-skip]   severity: warning
+# [parser-skip]   message: "Too many active threads. Archive oldest before creating new."
+
+# Procedures
+
+procedure route_to_thread(decision: object from "topic_decision") -> write into "thread_routed":
+  given: "Route messages to correct thread based on topic classification"
+
+  get_field {object: $decision, field: "changed"} -> $changed
+  get_field {object: $decision, field: "new_topic"} -> $new_topic
+  get_field {object: $decision, field: "confidence"} -> $confidence
+  get_field {object: $decision, field: "chat_id"} -> $chat_id
+
+  read_state {key: "thread:config"} -> $config
+  get_field {object: $config, field: "auto_create_threshold", default: 0.75} -> $threshold
+
+  branch $changed:
+    true:
+      evaluate_topic_confidence {confidence: $confidence, threshold: $threshold} -> $eval
+      get_field {object: $eval, field: "above_threshold"} -> $meets_threshold
+
+      branch $meets_threshold:
+        true:
+          find_or_create_thread {chat_id: $chat_id, topic: $new_topic} -> $thread_result
+          return $thread_result
+        false:
+          return {action: "continue", reason: "low_confidence", pending_topic: $new_topic}
+
+    false:
+      return {action: "continue", reason: "same_topic"}
+
+
+procedure archive_stale_threads(from "timer:thread_cleanup") -> write into "threads_archived":
+  given: "Archive threads that have been inactive beyond the configured threshold"
+
+  read_state {key: "thread:config"} -> $config
+  get_field {object: $config, field: "archive_after_secs", default: 172800} -> $max_age
+
+  timestamp_now {} -> $now
+  find_stale_threads {max_inactive_secs: $max_age, current_time: $now} -> $stale
+
+  # Archive each stale thread
+  for_each {items: $stale, action: "archive_thread"} -> $results
+
+  return {archived_count: $results.length, threads: $results}
+
+
+procedure handle_thread_command(command: object from "thread_command") -> write into "thread_command_result":
+  given: "Process explicit thread management commands from users"
+
+  get_field {object: $command, field: "action"} -> $action
+  get_field {object: $command, field: "chat_id"} -> $chat_id
+
+  branch $action:
+    "new":
+      get_field {object: $command, field: "topic", default: "untitled"} -> $topic
+      create_thread {chat_id: $chat_id, topic: $topic} -> $thread
+      return {action: "created", thread: $thread}
+
+    "switch":
+      get_field {object: $command, field: "thread_id"} -> $target_id
+      switch_thread {chat_id: $chat_id, thread_id: $target_id} -> $result
+      return {action: "switched", result: $result}
+
+    "list":
+      list_threads {chat_id: $chat_id, include_archived: false} -> $threads
+      return {action: "listed", threads: $threads}
+
+    "close":
+      get_field {object: $command, field: "thread_id"} -> $target_id
+      archive_thread {chat_id: $chat_id, thread_id: $target_id} -> $result
+      return {action: "archived", result: $result}
+
+    "context":
+      read_state {key: "thread:{$chat_id}:active"} -> $active_id
+      read_state {key: "thread:{$chat_id}:{$active_id}:meta"} -> $meta
+      return {action: "context", active_thread: $meta}
+
+
+# Bridge: topic_decision → thread routing
+# When topic-routing.px writes to "topic_decision", emit a TopicClassified spine event
+# so the TopicThreadBridge procedure can route the message to the correct thread.
+
+procedure bridge_topic_to_thread(decision: object from "topic_decision") -> write into "thread_routing_triggered":
+  given: "Bridge topic classification output to thread routing"
+
+  get_field {object: $decision, field: "chat_id"} -> $chat_id
+  get_field {object: $decision, field: "changed"} -> $changed
+  get_field {object: $decision, field: "new_topic"} -> $new_topic
+  get_field {object: $decision, field: "confidence"} -> $confidence
+
+  # Only emit when topic actually changed (optimization — avoid unnecessary routing)
+  branch $changed:
+    true:
+      emit_spine_event {
+        type: "topic_classified",
+        chat_id: $chat_id,
+        classification: {
+          topic_changed: true,
+          new_topic: $new_topic,
+          confidence: $confidence
+        }
+      } -> $emitted
+      return {bridged: true, event_id: $emitted.id}
+    false:
+      return {bridged: false, reason: "no_topic_change"}

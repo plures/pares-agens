@@ -59,6 +59,267 @@ impl EmbeddingProvider for MockEmbedder {
 }
 
 // ---------------------------------------------------------------------------
+// Unit tests for MockEmbedder
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+        a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+    }
+
+    #[tokio::test]
+    async fn mock_embedder_returns_correct_dimensions() {
+        let embedder = MockEmbedder;
+        let v = embedder.embed("hello world").await.unwrap();
+        assert_eq!(v.len(), EMBEDDING_DIM);
+        assert_eq!(embedder.dimensions(), EMBEDDING_DIM);
+    }
+
+    #[tokio::test]
+    async fn mock_embedder_deterministic() {
+        let embedder = MockEmbedder;
+        let v1 = embedder.embed("hello world").await.unwrap();
+        let v2 = embedder.embed("hello world").await.unwrap();
+        assert_eq!(v1, v2);
+    }
+
+    #[tokio::test]
+    async fn mock_embedder_produces_unit_vector() {
+        let embedder = MockEmbedder;
+        let v = embedder.embed("test normalization").await.unwrap();
+        let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+        assert!(
+            (norm - 1.0).abs() < 1e-5,
+            "vector not unit-normalized: norm={norm}"
+        );
+    }
+
+    #[tokio::test]
+    async fn mock_embedder_all_values_non_negative() {
+        // The MockEmbedder only adds to indices (+=), so all values should be >= 0
+        // before normalization. After normalization they stay >= 0.
+        let embedder = MockEmbedder;
+        let v = embedder.embed("testing positive values").await.unwrap();
+        for (i, &val) in v.iter().enumerate() {
+            assert!(val >= 0.0, "expected non-negative at index {i}, got {val}");
+        }
+    }
+
+    #[tokio::test]
+    async fn mock_embedder_similar_texts_higher_similarity() {
+        let embedder = MockEmbedder;
+        let v_cat = embedder.embed("the cat sat on the mat").await.unwrap();
+        let v_cat2 = embedder.embed("the cat sat on the hat").await.unwrap();
+        let v_unrelated = embedder.embed("quantum physics experiment").await.unwrap();
+
+        let sim_similar = cosine_similarity(&v_cat, &v_cat2);
+        let sim_different = cosine_similarity(&v_cat, &v_unrelated);
+        assert!(
+            sim_similar > sim_different,
+            "similar texts should have higher cosine similarity: {sim_similar} vs {sim_different}"
+        );
+    }
+
+    #[tokio::test]
+    async fn mock_embedder_different_texts_different_vectors() {
+        let embedder = MockEmbedder;
+        let v1 = embedder.embed("hello world").await.unwrap();
+        let v2 = embedder.embed("completely different text").await.unwrap();
+        assert_ne!(v1, v2);
+    }
+
+    #[tokio::test]
+    async fn mock_embedder_dimensions_matches_constant() {
+        let embedder = MockEmbedder;
+        assert_eq!(embedder.dimensions(), 384);
+    }
+
+    #[tokio::test]
+    async fn mock_embedder_empty_text_still_valid() {
+        // Empty string should still produce a valid vector (all zeros normalized = all zeros)
+        let embedder = MockEmbedder;
+        let v = embedder.embed("").await.unwrap();
+        assert_eq!(v.len(), EMBEDDING_DIM);
+    }
+
+    #[tokio::test]
+    async fn mock_embedder_norm_computation_correct() {
+        // Verify the norm computation: sum of squares then sqrt
+        let embedder = MockEmbedder;
+        let v = embedder.embed("norm test").await.unwrap();
+        let norm_sq: f32 = v.iter().map(|x| x * x).sum();
+        // For a unit vector, norm^2 should be ~1.0
+        // For empty string it's 0.0
+        if norm_sq > 0.0 {
+            assert!(
+                (norm_sq - 1.0).abs() < 1e-4,
+                "norm squared should be ~1.0, got {norm_sq}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn mock_embedder_bigram_contribution_matters() {
+        // Test that the bigram window computation actually contributes to the vector.
+        // "ab" and "ba" should hit different indices due to wrapping_mul ordering.
+        let embedder = MockEmbedder;
+        let v_ab = embedder.embed("ab").await.unwrap();
+        let v_ba = embedder.embed("ba").await.unwrap();
+        assert_ne!(
+            v_ab, v_ba,
+            "different bigrams should produce different vectors"
+        );
+    }
+
+    #[tokio::test]
+    async fn mock_embedder_single_char_contribution() {
+        // Single characters should still produce non-zero vectors from the byte signal
+        let embedder = MockEmbedder;
+        let v = embedder.embed("x").await.unwrap();
+        // Single char = no bigrams, but single-byte signal at index (b'x' % 384)
+        let nonzero_count = v.iter().filter(|&&x| x != 0.0).count();
+        assert!(
+            nonzero_count > 0,
+            "single char should produce at least one non-zero element"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Local / native bge-small-en-v1.5 embedder (sovereign, zero external network)
+// ---------------------------------------------------------------------------
+
+/// Local, native embedding provider backed by `fastembed` (ONNX Runtime)
+/// running **BAAI/bge-small-en-v1.5** (384-dim) entirely on-device.
+///
+/// This is the sovereignty-aligned production provider: it requires **no
+/// external embedding API**, matching OpenClaw/PluresLM behaviour. Model
+/// weights are fetched once (via `hf-hub`, cached under `FASTEMBED_CACHE_DIR`)
+/// and thereafter all embedding is fully offline.
+///
+/// It reuses [`pluresdb::FastEmbedder`] — the exact same model the PluresDB
+/// store already uses for auto-embedding on write — so query embeddings and
+/// stored embeddings come from the identical model, guaranteeing that cosine
+/// similarity is meaningful across the boundary.
+///
+/// Gated behind the `embeddings` cargo feature (pulls the ONNX runtime).
+#[cfg(feature = "embeddings")]
+pub struct BgeLocalEmbedder {
+    inner: std::sync::Arc<pluresdb::FastEmbedder>,
+    dimensions: usize,
+}
+
+#[cfg(feature = "embeddings")]
+impl BgeLocalEmbedder {
+    /// The default (and only sovereignty-target) model id.
+    pub const DEFAULT_MODEL: &'static str = "BAAI/bge-small-en-v1.5";
+
+    /// Construct a local embedder for BAAI/bge-small-en-v1.5 (384-dim).
+    ///
+    /// The first call downloads the model into the fastembed cache; subsequent
+    /// calls (and all embedding) are fully offline.
+    ///
+    /// # Errors
+    /// Returns [`Error::Embed`] if the ONNX model fails to initialise.
+    pub fn new() -> Result<Self, Error> {
+        Self::with_model(Self::DEFAULT_MODEL)
+    }
+
+    /// Construct a local embedder for an explicit fastembed-supported model id.
+    ///
+    /// # Errors
+    /// Returns [`Error::Embed`] if the model id is unsupported or init fails.
+    pub fn with_model(model_id: &str) -> Result<Self, Error> {
+        let inner = pluresdb::FastEmbedder::new(model_id)
+            .map_err(|e| Error::Embed(format!("local embedder init failed: {e}")))?;
+        // bge-small-en-v1.5 is 384-dim; we assert against EMBEDDING_DIM at embed
+        // time so a mismatched model id surfaces loudly rather than silently.
+        Ok(Self {
+            inner: std::sync::Arc::new(inner),
+            dimensions: EMBEDDING_DIM,
+        })
+    }
+}
+
+#[cfg(feature = "embeddings")]
+#[async_trait]
+impl EmbeddingProvider for BgeLocalEmbedder {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, Error> {
+        use pluresdb::EmbedText;
+
+        let inner = std::sync::Arc::clone(&self.inner);
+        let owned = text.to_string();
+
+        // ONNX inference is blocking/CPU-bound — run it off the async runtime.
+        let mut vecs = tokio::task::spawn_blocking(move || inner.embed(&[owned.as_str()]))
+            .await
+            .map_err(|e| Error::Embed(format!("local embed task panicked: {e}")))?
+            .map_err(|e| Error::Embed(format!("local embed failed: {e}")))?;
+
+        let mut embedding = vecs
+            .pop()
+            .ok_or_else(|| Error::Embed("local embedder returned no vector".into()))?;
+
+        if embedding.len() != EMBEDDING_DIM {
+            return Err(Error::Embed(format!(
+                "local embedder produced {} dims, expected {EMBEDDING_DIM}",
+                embedding.len()
+            )));
+        }
+
+        // L2 normalise for cosine similarity (parity with the other providers).
+        let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if norm > 0.0 {
+            embedding.iter_mut().for_each(|x| *x /= norm);
+        }
+
+        Ok(embedding)
+    }
+
+    fn dimensions(&self) -> usize {
+        self.dimensions
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Provider selection
+// ---------------------------------------------------------------------------
+
+/// Which embedding backend to use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmbedProviderKind {
+    /// Deterministic in-process mock (tests / offline fallback).
+    Mock,
+    /// Local native bge-small-en-v1.5 (sovereign, no external API).
+    Local,
+    /// External OpenAI-compatible endpoint.
+    OpenAi,
+}
+
+impl EmbedProviderKind {
+    /// Resolve the desired provider from the `PARES_EMBED_PROVIDER` env var.
+    ///
+    /// Recognised values (case-insensitive): `local` | `bge` | `native`,
+    /// `openai`, `mock`. Defaults to [`EmbedProviderKind::Local`] — the
+    /// sovereignty-aligned choice — when unset or unrecognised.
+    pub fn from_env() -> Self {
+        match std::env::var("PARES_EMBED_PROVIDER")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "openai" => Self::OpenAi,
+            "mock" => Self::Mock,
+            "local" | "bge" | "native" => Self::Local,
+            _ => Self::Local,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // OpenAI-compatible embedder
 // ---------------------------------------------------------------------------
 
@@ -72,7 +333,11 @@ pub struct OpenAiEmbedder {
 
 impl OpenAiEmbedder {
     /// Create a new OpenAI-compatible embedding client.
-    pub fn new(base_url: impl Into<String>, model: impl Into<String>, api_key: Option<String>) -> Self {
+    pub fn new(
+        base_url: impl Into<String>,
+        model: impl Into<String>,
+        api_key: Option<String>,
+    ) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             model: model.into(),
@@ -102,13 +367,10 @@ struct EmbeddingData {
 impl EmbeddingProvider for OpenAiEmbedder {
     async fn embed(&self, text: &str) -> Result<Vec<f32>, Error> {
         let url = format!("{}/v1/embeddings", self.base_url);
-        let mut req = self
-            .client
-            .post(&url)
-            .json(&EmbeddingRequest {
-                model: &self.model,
-                input: text,
-            });
+        let mut req = self.client.post(&url).json(&EmbeddingRequest {
+            model: &self.model,
+            input: text,
+        });
 
         if let Some(key) = &self.api_key {
             req = req.bearer_auth(key);
@@ -152,3 +414,225 @@ impl EmbeddingProvider for OpenAiEmbedder {
         EMBEDDING_DIM
     }
 }
+
+// ---------------------------------------------------------------------------
+// OpenAI embedder unit tests (wiremock)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod openai_tests {
+    use super::*;
+    use wiremock::matchers::{header_exists, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn make_embedding_response(embedding: Vec<f32>) -> serde_json::Value {
+        serde_json::json!({
+            "data": [{
+                "embedding": embedding,
+                "index": 0
+            }],
+            "model": "test-model",
+            "usage": {"prompt_tokens": 5, "total_tokens": 5}
+        })
+    }
+
+    #[tokio::test]
+    async fn openai_embedder_success() {
+        let server = MockServer::start().await;
+        let embedding = vec![0.5; EMBEDDING_DIM];
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(make_embedding_response(embedding)),
+            )
+            .mount(&server)
+            .await;
+
+        let embedder = OpenAiEmbedder::new(server.uri(), "test-model", Some("sk-test".into()));
+        let result = embedder.embed("hello").await.unwrap();
+        assert_eq!(result.len(), EMBEDDING_DIM);
+        let norm: f32 = result.iter().map(|x| x * x).sum::<f32>().sqrt();
+        assert!((norm - 1.0).abs() < 1e-5);
+    }
+
+    #[tokio::test]
+    async fn openai_embedder_sends_auth_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .and(header_exists("authorization"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(make_embedding_response(vec![1.0; EMBEDDING_DIM])),
+            )
+            .mount(&server)
+            .await;
+
+        let embedder = OpenAiEmbedder::new(server.uri(), "test-model", Some("sk-key".into()));
+        let result = embedder.embed("test").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn openai_embedder_no_auth_when_none() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(make_embedding_response(vec![0.3; EMBEDDING_DIM])),
+            )
+            .mount(&server)
+            .await;
+
+        let embedder = OpenAiEmbedder::new(server.uri(), "test-model", None);
+        let result = embedder.embed("test").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn openai_embedder_http_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("internal error"))
+            .mount(&server)
+            .await;
+
+        let embedder = OpenAiEmbedder::new(server.uri(), "test-model", None);
+        let result = embedder.embed("test").await;
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("500"),
+            "error should contain status code: {err_msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn openai_embedder_empty_data_array() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({"data": [], "model": "test", "usage": {"prompt_tokens": 0, "total_tokens": 0}}),
+            ))
+            .mount(&server)
+            .await;
+
+        let embedder = OpenAiEmbedder::new(server.uri(), "test-model", None);
+        let result = embedder.embed("test").await;
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("missing data"));
+    }
+
+    #[tokio::test]
+    async fn openai_embedder_invalid_json() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&server)
+            .await;
+
+        let embedder = OpenAiEmbedder::new(server.uri(), "test-model", None);
+        let result = embedder.embed("test").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn openai_embedder_normalizes_output() {
+        let server = MockServer::start().await;
+        let mut full = vec![0.0; EMBEDDING_DIM];
+        full[0] = 3.0;
+        full[1] = 4.0;
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(make_embedding_response(full)))
+            .mount(&server)
+            .await;
+
+        let embedder = OpenAiEmbedder::new(server.uri(), "test-model", None);
+        let result = embedder.embed("test").await.unwrap();
+        assert!((result[0] - 0.6).abs() < 1e-5);
+        assert!((result[1] - 0.8).abs() < 1e-5);
+    }
+
+    #[tokio::test]
+    async fn openai_embedder_dimensions() {
+        let embedder = OpenAiEmbedder::new("http://localhost:9999", "m", None);
+        assert_eq!(embedder.dimensions(), EMBEDDING_DIM);
+    }
+
+    #[tokio::test]
+    async fn openai_embedder_trims_trailing_slash() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(make_embedding_response(vec![1.0; EMBEDDING_DIM])),
+            )
+            .mount(&server)
+            .await;
+
+        let embedder = OpenAiEmbedder::new(format!("{}/", server.uri()), "model", None);
+        let result = embedder.embed("test").await;
+        assert!(result.is_ok());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Local bge-small-en-v1.5 embedder tests (real ONNX model, feature-gated)
+// ---------------------------------------------------------------------------
+
+#[cfg(all(test, feature = "embeddings"))]
+mod local_tests {
+    use super::*;
+
+    fn cosine(a: &[f32], b: &[f32]) -> f32 {
+        a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+    }
+
+    // Real model: downloads bge-small-en-v1.5 on first run, then runs offline.
+    // Verifies (1) correct 384-dim output and (2) genuine semantic ordering —
+    // similar sentences are more cosine-similar than dissimilar ones. No canned
+    // fixtures (C-NOSTUB-001, C-TEST-002).
+    #[tokio::test]
+    async fn bge_local_embedder_dim_and_semantics() {
+        let embedder = BgeLocalEmbedder::new()
+            .expect("local bge-small embedder should initialise (needs model download)");
+
+        assert_eq!(embedder.dimensions(), 384);
+
+        let cat_a = embedder.embed("The cat sat quietly on the warm windowsill.").await.unwrap();
+        let cat_b = embedder.embed("A kitten rested calmly on the sunny window ledge.").await.unwrap();
+        let finance = embedder.embed("Quarterly interest rates affected the bond market.").await.unwrap();
+
+        assert_eq!(cat_a.len(), 384, "embedding must be 384-dim");
+        assert_eq!(cat_b.len(), 384);
+        assert_eq!(finance.len(), 384);
+
+        // Unit-normalised, so dot product == cosine similarity.
+        let sim_similar = cosine(&cat_a, &cat_b);
+        let sim_diff = cosine(&cat_a, &finance);
+
+        println!("[bge-local] sim(cat_a, cat_b similar) = {sim_similar:.4}");
+        println!("[bge-local] sim(cat_a, finance diff)  = {sim_diff:.4}");
+
+        assert!(
+            sim_similar > sim_diff,
+            "semantically similar sentences must be more cosine-similar: \
+             similar={sim_similar:.4} vs different={sim_diff:.4}"
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_kind_from_env_defaults_local() {
+        // Default (unset) must be the sovereign Local provider.
+        std::env::remove_var("PARES_EMBED_PROVIDER");
+        assert_eq!(EmbedProviderKind::from_env(), EmbedProviderKind::Local);
+    }
+}
+

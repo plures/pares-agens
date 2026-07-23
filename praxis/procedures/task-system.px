@@ -1,0 +1,47 @@
+# task-system.px — Task management as v3 dataflow procedures
+#
+# Handles task creation, tracking, and completion evaluation.
+# Both are utilities called on demand by the user or heartbeat.
+#
+# Queue topology:
+#
+#   (none — utilities only, called on demand by user actions)
+#
+
+# [parser-skip] fact Task:
+# [parser-skip]   id: string
+# [parser-skip]   description: string
+# [parser-skip]   priority: int
+# [parser-skip]   status: enum(pending, complete)
+# [parser-skip]   created: int
+# [parser-skip]   completed_at: optional[int]
+# [parser-skip]   result: optional[string]
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint task_requires_description:
+# [parser-skip]   given: "Every task must have a non-empty description"
+# [parser-skip]   check: Task.description != ""
+# [parser-skip]   severity: error
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Utility Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# utility: called by user actions (task creation flow)
+procedure create_task(description: string, priority: int) -> task:
+  given: "Create a new tracked task"
+  timestamp_now {} -> $now
+  generate_id {} -> $id
+  pluresdb_write {key: "task:" , value: {description: $description, priority: $priority, created: $now, status: "pending"}}
+  return {id: $id, status: "created"}
+
+# utility: called by user actions (task completion flow)
+procedure complete_task(task_id: string, result: string) -> completion:
+  given: "Mark a task as complete with its result"
+  db_get {key: "task:" } -> $task
+  timestamp_now {} -> $now
+  pluresdb_write {key: "task:" , value: {status: "complete", result: $result, completed_at: $now}}
+  return {id: $task_id, status: "complete"}

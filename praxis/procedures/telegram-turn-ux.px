@@ -1,0 +1,113 @@
+# telegram-turn-ux.px — turn-control policy for the Telegram channel
+#
+# Pure turn-control logic (C-DEV-001): decides WHEN a mid-turn user message
+# steers the running turn vs. starts a new one, WHICH control actions are
+# valid, and HOW an approval callback resolves. Rust is only the Telegram
+# side-effect actor (send/edit message, answer callback) + registry plumbing.
+#
+# Decision (kbristol, option b): a mid-turn user message is INJECTED into the
+# running turn via SteeringTx (adapt without losing progress), never a hard
+# interrupt/restart.
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONSTRAINTS
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint steer_only_when_turn_live:
+  when: inbound.is_control == false
+  require: route.action == "steer" implies active_turn.exists == true
+  severity: error
+  message: "A message may only steer when a live turn exists for that chat; otherwise start a new turn"
+
+constraint new_turn_when_idle:
+  when: active_turn.exists == false
+  require: route.action == "new_turn"
+  severity: error
+  message: "With no live turn for the chat, an inbound message must start a new turn"
+
+constraint control_action_is_known:
+  when: inbound.is_control == true
+  require: control.action in ["stop", "approve", "reject"]
+  severity: error
+  message: "Callback control actions are limited to stop, approve, reject"
+
+constraint control_targets_live_request:
+  when: control.action == "stop"
+  require: active_turn.request_id == control.request_id
+  severity: error
+  message: "A stop control must target the request_id of the currently registered turn"
+
+constraint approval_resolution_is_terminal:
+  when: control.action in ["approve", "reject"]
+  require: control.answers_callback == true
+  severity: error
+  message: "An approval control must answer the Telegram callback so the spinner clears, exactly once"
+
+# ═══════════════════════════════════════════════════════════════════════
+# ROUTING POLICY — steer vs. start-new
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure route_inbound_message:
+  trigger: manual
+  given: "Decide whether an inbound chat message steers the live turn or starts a new one"
+  lookup_active_turn {chat_id: "inbound"} -> $active
+  when active.exists == true:
+    emit {type: "telegram.turn.route", action: "steer", chat_id: "inbound", request_id: "active"}
+  end
+  when active.exists == false:
+    emit {type: "telegram.turn.route", action: "new_turn", chat_id: "inbound"}
+  end
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONTROL POLICY — callback_query dispatch
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure dispatch_control_callback:
+  trigger: manual
+  given: "Map a callback_data string to a control action and act on the live turn"
+  parse_callback {data: "callback"} -> $action
+  when action.kind == "stop":
+    cancel_turn {chat_id: "callback", request_id: "parsed"}
+    answer_callback {callback_id: "callback", text: "Stopping…"}
+    emit {type: "telegram.turn.control", action: "stop", request_id: "parsed"}
+  end
+  when action.kind == "approve":
+    resolve_approval {request_id: "parsed", decision: "yes"}
+    answer_callback {callback_id: "callback", text: "Approved"}
+    emit {type: "telegram.turn.control", action: "approve", request_id: "parsed"}
+  end
+  when action.kind == "reject":
+    resolve_approval {request_id: "parsed", decision: "no"}
+    answer_callback {callback_id: "callback", text: "Rejected"}
+    emit {type: "telegram.turn.control", action: "reject", request_id: "parsed"}
+  end
+  when action.kind == "unknown":
+    answer_callback {callback_id: "callback", text: ""}
+    emit {type: "telegram.turn.control", action: "ignored"}
+  end
+
+# ═══════════════════════════════════════════════════════════════════════
+# APPROVAL RESOLUTION
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure resolve_pending_approval:
+  trigger: manual
+  given: "Resolve an approval prompt. handle_event is atomic per message, so the decision is injected into the turn context as steering rather than unblocking an in-flight future."
+  parse_callback {data: "callback"} -> $action
+  inject_decision_as_steering {chat_id: "callback", decision: "parsed"}
+  answer_callback {callback_id: "callback", text: "recorded"}
+  emit {type: "telegram.turn.approval_resolved", decision: "parsed"}
+
+# ═══════════════════════════════════════════════════════════════════════
+# STATUS RENDERING (progress UX)
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure render_turn_status:
+  trigger: manual
+  given: "Produce a stable single-line status; once real content streams, show the answer with a cursor instead of the working line"
+  when stream.streamed == true:
+    emit {type: "telegram.turn.status", mode: "answer"}
+  end
+  when stream.streamed == false:
+    emit {type: "telegram.turn.status", mode: "working", phase: "current", tool: "current"}
+  end

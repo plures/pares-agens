@@ -1,4 +1,4 @@
-//! Integration tests for `pares-models` using a `wiremock` mock HTTP server.
+//! Integration tests for `pares-agens-models` using a `wiremock` mock HTTP server.
 
 use std::collections::HashMap;
 
@@ -8,7 +8,7 @@ use wiremock::{
     Mock, MockServer, ResponseTemplate,
 };
 
-use pares_models::{
+use pares_agens_models::{
     config::{ProviderConfig, RouterConfig, RoutingRule},
     router::ModelRouter,
     types::{ChatCompletionRequest, ChatMessage, Role, Tool},
@@ -178,7 +178,7 @@ async fn test_api_error_4xx() {
 
     let err = router.chat(&req).await.unwrap_err();
     match err {
-        pares_models::Error::ApiError { status, .. } => assert_eq!(status, 401),
+        pares_agens_models::Error::ApiError { status, .. } => assert_eq!(status, 401),
         other => panic!("unexpected error: {other}"),
     }
 }
@@ -199,7 +199,7 @@ async fn test_api_error_5xx() {
 
     let err = router.chat(&req).await.unwrap_err();
     match err {
-        pares_models::Error::ApiError { status, .. } => assert_eq!(status, 500),
+        pares_agens_models::Error::ApiError { status, .. } => assert_eq!(status, 500),
         other => panic!("unexpected error: {other}"),
     }
 }
@@ -350,7 +350,7 @@ async fn test_provider_not_found() {
 
     let err = router.chat(&req).await.unwrap_err();
     match err {
-        pares_models::Error::ProviderNotFound(name) => assert_eq!(name, "ghost"),
+        pares_agens_models::Error::ProviderNotFound(name) => assert_eq!(name, "ghost"),
         other => panic!("unexpected: {other}"),
     }
 }
@@ -363,7 +363,7 @@ async fn test_provider_not_found() {
 #[test]
 fn test_new_multi_single_provider_free_tier_allowed() {
     let config = RouterConfig::single("local", ProviderConfig::new("http://localhost:12434", None));
-    let license = pares_agens_core::license::License::free();
+    let license = pares_radix_core::license::License::free();
     let result = ModelRouter::new_multi(config, &license);
     assert!(
         result.is_ok(),
@@ -383,12 +383,12 @@ fn test_new_multi_multiple_providers_blocked_on_free_tier() {
         default_provider: "a".into(),
         fallback_models: vec![],
     };
-    let license = pares_agens_core::license::License::free();
+    let license = pares_radix_core::license::License::free();
     let result = ModelRouter::new_multi(config, &license);
     assert!(
         matches!(
             result,
-            Err(pares_agens_core::license::LicenseError::FeatureNotAvailable { .. })
+            Err(pares_radix_core::license::LicenseError::FeatureNotAvailable { .. })
         ),
         "multiple providers should be blocked on Free tier"
     );
@@ -409,12 +409,12 @@ fn test_new_multi_routing_rules_blocked_on_free_tier() {
         default_provider: "local".into(),
             fallback_models: vec![],
     };
-    let license = pares_agens_core::license::License::free();
+    let license = pares_radix_core::license::License::free();
     let result = ModelRouter::new_multi(config, &license);
     assert!(
         matches!(
             result,
-            Err(pares_agens_core::license::LicenseError::FeatureNotAvailable { .. })
+            Err(pares_radix_core::license::LicenseError::FeatureNotAvailable { .. })
         ),
         "routing rules should be blocked on Free tier"
     );
@@ -441,7 +441,7 @@ fn test_new_multi_multiple_providers_allowed_on_pro_tier() {
         default_provider: "local".into(),
             fallback_models: vec![],
     };
-    let license = pares_agens_core::license::License::pro(None);
+    let license = pares_radix_core::license::License::pro(None);
     let result = ModelRouter::new_multi(config, &license);
     assert!(
         result.is_ok(),

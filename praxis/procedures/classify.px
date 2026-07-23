@@ -1,0 +1,59 @@
+# classify.px — Message classification as v3 dataflow procedures
+#
+# Pure functions for classifying inbound messages by intent, complexity,
+# and routing needs. classify_message consumes preprocessed output;
+# classify_with_llm is a utility for ambiguous cases.
+#
+# Queue topology:
+#
+#   preprocessed ─→ [classify_message] ─→ classification
+#                        │
+#                        └─ calls [classify_with_llm] (utility)
+#
+
+# [parser-skip] fact Classification:
+# [parser-skip]   intent: string
+# [parser-skip]   complexity: int
+# [parser-skip]   topic: string
+# [parser-skip]   topic_shift: bool
+# [parser-skip]   needs_tools: bool
+# [parser-skip]   needs_deep_model: bool
+# [parser-skip]   plugin_match: string
+# [parser-skip]   completion_hint: string
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint classification_completeness:
+# [parser-skip]   given: "Every classification must populate all required fields"
+# [parser-skip]   check: Classification.intent != "" AND Classification.complexity >= 0
+# [parser-skip]   severity: error
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Dataflow Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# Classify a preprocessed message by intent, complexity, topic, and routing needs
+procedure classify_message(message: string from "preprocessed", plugins: list, last_topic: string) -> classification into "classification":
+  given: "Classify a message by intent, complexity, topic, and routing needs"
+  normalize_text {text: $message} -> $lower
+  detect_intent {text: $lower} -> $intent
+  score_complexity {text: $message} -> $complexity
+  detect_tools_needed {text: $lower} -> $needs_tools
+  match_plugin {text: $lower} -> $plugin_match
+  extract_topic {text: $message} -> $topic
+  detect_topic_shift {topic: $topic} -> $topic_shift
+  determine_model_tier {complexity: $complexity} -> $needs_deep_model
+  return $classification
+
+# ═══════════════════════════════════════════════════════════════════
+# Utility Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# utility: called by classify_message (fallback for ambiguous heuristics)
+procedure classify_with_llm(message: string, system_prompt: string) -> classification:
+  given: "Use an LLM to classify messages that are ambiguous to heuristics"
+  model_complete {messages: [{role: "user", content: $message}], system_prompt: $system_prompt, tier: "fast"} -> $result
+  parse_classification {raw: $result} -> $classification
+  return $classification

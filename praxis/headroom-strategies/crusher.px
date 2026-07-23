@@ -1,0 +1,127 @@
+# crusher.px — JSON structural compression logic
+#
+# Handles compression of JSON content: arrays of objects (key dedup),
+# deeply nested structures (flattening), and repetitive values.
+#
+# This is the "SmartCrusher" equivalent — pure logic for deciding
+# what to keep and what to elide from JSON structures.
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONSTRAINTS
+# ═══════════════════════════════════════════════════════════════════════
+
+constraint json_preserves_keys:
+  when: block.content_type == "json" and block.severity != "negligible"
+  require: compressed.key_coverage >= 0.8
+  severity: error
+  message: "JSON compression must preserve at least 80% of unique keys"
+
+constraint array_header_present:
+  when: block.metadata["is_array"] == "true"
+  require: compressed.has_schema_header == true
+  severity: error
+  message: "Compressed arrays must include a schema header describing the shape"
+
+# ═══════════════════════════════════════════════════════════════════════
+# ARRAY COMPRESSION
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure compress_json_array:
+  trigger: manual
+  given: "Compress an array of objects by extracting common keys into a header"
+  analyze_array_schema {block_id: "target"} -> $schema
+  when schema.uniform_keys == true:
+    extract_schema_header {block_id: "target"} -> $header
+    tabulate_values {block_id: "target", keys: "common"} -> $table
+    write_compressed {
+      block_id: "target",
+      format: "schema_header_plus_table",
+      header: "extracted",
+      body: "tabulated"
+    }
+    emit {type: "headroom.crushed", method: "array_tabulate", ratio: 0.15}
+  end
+  when schema.uniform_keys == false:
+    group_by_shape {block_id: "target"} -> $groups
+    loop over $groups as group:
+      extract_schema_header {block_id: "group"} -> $header
+      tabulate_values {block_id: "group", keys: "common"} -> $table
+    end
+    write_compressed {
+      block_id: "target",
+      format: "grouped_tables",
+      groups: "all"
+    }
+    emit {type: "headroom.crushed", method: "array_grouped", ratio: 0.25}
+  end
+
+# ═══════════════════════════════════════════════════════════════════════
+# NESTED OBJECT COMPRESSION
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure compress_nested_json:
+  trigger: manual
+  given: "Compress deeply nested JSON by flattening paths and deduplicating values"
+  measure_depth {block_id: "target"} -> $depth
+  when depth.max_level > 4:
+    flatten_paths {block_id: "target", separator: "."} -> $flat
+    dedup_values {block_id: "target", threshold: 3} -> $deduped
+    write_compressed {
+      block_id: "target",
+      format: "flat_paths",
+      deduped_count: 5
+    }
+    emit {type: "headroom.crushed", method: "flatten_dedup", ratio: 0.35}
+  end
+  when depth.max_level <= 4:
+    strip_null_fields {block_id: "target"} -> $stripped
+    abbreviate_keys {block_id: "target", min_length: 8} -> $abbreviated
+    write_compressed {
+      block_id: "target",
+      format: "abbreviated_keys",
+      keys_shortened: 3
+    }
+    emit {type: "headroom.crushed", method: "abbreviate", ratio: 0.7}
+  end
+
+# ═══════════════════════════════════════════════════════════════════════
+# VALUE DEDUPLICATION
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure dedup_repeated_values:
+  trigger: manual
+  given: "Replace repeated string values with reference tokens"
+  find_repeated_values {block_id: "target", min_occurrences: 3} -> $repeated
+  when repeated.count > 0:
+    create_value_index {values: "repeated"} -> $index
+    replace_with_refs {block_id: "target", index: "created"} -> $result
+    write_compressed {
+      block_id: "target",
+      format: "value_indexed",
+      index_size: 5,
+      replacements: 12
+    }
+    emit {type: "headroom.crushed", method: "value_dedup", ratio: 0.5}
+  end
+  when repeated.count == 0:
+    emit {type: "headroom.skipped", reason: "no_repeated_values"}
+  end
+
+# ═══════════════════════════════════════════════════════════════════════
+# ERROR STRUCTURE COMPRESSION
+# ═══════════════════════════════════════════════════════════════════════
+
+procedure compress_error_json:
+  trigger: manual
+  given: "Compress error/exception JSON — keep message + top frames, drop noise"
+  extract_error_essentials {block_id: "target"} -> $essentials
+  extract_top_frames {block_id: "target", max_frames: 5} -> $frames
+  strip_internal_frames {block_id: "target"} -> $stripped
+  write_compressed {
+    block_id: "target",
+    format: "error_summary",
+    message: "preserved",
+    frames: 5,
+    full_trace_dropped: true
+  }
+  emit {type: "headroom.crushed", method: "error_summary", ratio: 0.2}

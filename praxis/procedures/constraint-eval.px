@@ -1,0 +1,82 @@
+# constraint-eval.px — Constraint evaluation as v3 dataflow procedures
+#
+# Evaluates praxis constraints against current state and produces
+# violations or validations. enforce_violation is queue-driven;
+# the rest are utilities.
+#
+# Queue topology:
+#
+#   constraint_violation ─→ [enforce_violation] ─→ enforcement_action
+#                                │
+#                                ├─ calls [evaluate_constraint] (utility)
+#                                ├─ calls [evaluate_all_constraints] (utility)
+#                                └─ calls [update_constraint] (utility)
+#
+
+# [parser-skip] fact ConstraintEvaluation:
+# [parser-skip]   status: enum(satisfied, violated)
+# [parser-skip]   constraint: string
+# [parser-skip]   details: optional[string]
+# [parser-skip] 
+# [parser-skip] fact EnforcementAction:
+# [parser-skip]   action: enum(block, warn, log)
+# [parser-skip]   reason: string
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint enforcement_severity_match:
+# [parser-skip]   given: "Enforcement action must match the severity of the violation"
+# [parser-skip]   check: EnforcementAction.action == "block" OR EnforcementAction.action == "warn" OR EnforcementAction.action == "log"
+# [parser-skip]   severity: error
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Dataflow Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# Take enforcement action on a constraint violation
+procedure enforce_violation(violation: string from "constraint_violation") -> enforcement into "enforcement_action":
+  given: "Take enforcement action on a constraint violation"
+  determine_severity {violation: $violation} -> $severity
+  when severity.level == "error":
+    return {action: "block", reason: $violation}
+  end
+  when severity.level == "warning":
+    return {action: "warn", reason: $violation}
+  end
+  return {action: "log", reason: $violation}
+
+# ═══════════════════════════════════════════════════════════════════
+# Utility Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# utility: called by evaluate_all_constraints
+procedure evaluate_constraint(constraint_name: string, state: string) -> evaluation:
+  given: "Evaluate a single praxis constraint against current state"
+  db_get {key: "constraint:" } -> $constraint
+  check_condition {constraint: $constraint, state: $state} -> $result
+  when result.violated:
+    return {status: "violated", constraint: $constraint_name, details: $result}
+  end
+  return {status: "satisfied", constraint: $constraint_name}
+
+# utility: called by preprocess, guidance injection
+procedure evaluate_all_constraints(state: string) -> evaluations:
+  given: "Evaluate all active constraints against current state"
+  db_get_prefix {prefix: "constraint:"} -> $constraints
+  loop over $constraints as constraint:
+    evaluate_constraint {constraint_name: $constraint, state: $state} -> $result
+  end
+  return {results: $constraints}
+
+# utility: called by admin actions (constraint management)
+procedure update_constraint(constraint_name: string, new_definition: string) -> updated:
+  given: "Update an existing constraint definition"
+  db_get {key: "constraint:" } -> $existing
+  validate_constraint {definition: $new_definition} -> $valid
+  when valid.errors:
+    return {status: "invalid", errors: $valid}
+  end
+  pluresdb_write {key: "constraint:" , value: $new_definition}
+  return {status: "updated", constraint: $constraint_name}

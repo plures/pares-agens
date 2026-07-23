@@ -10,7 +10,7 @@
 //! in the in-memory [`Settings`] struct.  Instead they are written to the
 //! [`crate::state::AppState::secret_store`] vault under the key
 //! `provider:<name>:api_key` (see
-//! [`pares_agens_core::secrets::provider_api_key`]).
+//! [`pares_radix_core::secrets::provider_api_key`]).
 //!
 //! ## Preservation contract
 //!
@@ -22,7 +22,7 @@
 
 use tauri::State;
 
-use pares_agens_core::secrets::provider_api_key;
+use pares_radix_core::secrets::provider_api_key;
 
 use crate::state::{
     rebuild_model_router, AppState, ChannelAdapterConfig, ProviderEntry, RoutingPrefs,
@@ -291,7 +291,7 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
-    use pares_agens_core::secrets::{provider_api_key, InMemorySecretStore, SecretStore};
+    use pares_radix_core::secrets::{provider_api_key, InMemorySecretStore, SecretStore};
 
     use super::*;
 

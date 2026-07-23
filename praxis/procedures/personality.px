@@ -1,0 +1,64 @@
+# personality.px — Personality configuration as v3 dataflow procedures
+#
+# Manages tone, verbosity, and response style adaptation.
+# load_personality is queue-driven on session start; adapt_style and
+# format_response are utilities called by the response pipeline.
+#
+# Queue topology:
+#
+#   session_start ─→ [load_personality] ─→ personality
+#                         │
+#                         ├─ calls [adapt_style] (utility)
+#                         └─ calls [format_response] (utility)
+#
+
+# [parser-skip] fact PersonalityConfig:
+# [parser-skip]   tone: string
+# [parser-skip]   verbosity: string
+# [parser-skip]   humor_level: string
+# [parser-skip]   formality: string
+# [parser-skip]   emoji_usage: string
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint personality_always_loaded:
+# [parser-skip]   given: "Session must always have a personality config — never operate with empty config"
+# [parser-skip]   check: PersonalityConfig.tone != "" AND PersonalityConfig.verbosity != ""
+# [parser-skip]   severity: error
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Dataflow Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# Load personality configuration for the current session
+procedure load_personality(session_start: string from "session_start") -> personality into "personality":
+  given: "Load personality configuration for the current session"
+  db_get {key: "config:personality"} -> $config
+  when config.empty:
+    db_put {key: "config:personality", value: {tone: "helpful", verbosity: "concise", humor_level: "moderate", formality: "casual", emoji_usage: "occasional"}}
+    return {tone: "helpful", verbosity: "concise", humor_level: "moderate", formality: "casual", emoji_usage: "occasional"}
+  end
+  return $config
+
+# ═══════════════════════════════════════════════════════════════════
+# Utility Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# utility: called by deliver_response (spine-actions.px)
+procedure adapt_style(recent_messages: list, personality: PersonalityConfig) -> adaptation:
+  given: "Adapt response style based on user feedback and conversation context"
+  analyze_feedback {messages: $recent_messages, personality: $personality} -> $adjustment
+  when adjustment.needed:
+    merge_personality {base: $personality, adjustment: $adjustment} -> $updated
+    pluresdb_write {key: "session:personality", value: $updated}
+    return $updated
+  end
+  return $personality
+
+# utility: called by deliver_response (spine-actions.px)
+procedure format_response(response: string, personality: PersonalityConfig) -> styled_response:
+  given: "Apply personality styling to a model response before delivery"
+  style_response {response: $response, personality: $personality} -> $styled
+  return $styled

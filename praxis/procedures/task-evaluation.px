@@ -1,0 +1,78 @@
+# task-evaluation.px — Task evaluation as v3 dataflow procedures
+#
+# Evaluates task progress, priorities, and scheduling.
+# All are utilities called on demand by the task system or heartbeat.
+#
+# Queue topology:
+#
+#   (none — utilities only, called on demand by task-system.px and heartbeat)
+#
+
+# [parser-skip] fact TaskEvaluation:
+# [parser-skip]   task_id: string
+# [parser-skip]   age_hours: int
+# [parser-skip]   status: string
+# [parser-skip] 
+# [parser-skip] fact TaskSuggestion:
+# [parser-skip]   task_id: string
+# [parser-skip]   priority_score: float
+# [parser-skip]   context_match: float
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint task_priority_bounded:
+# [parser-skip]   given: "Task priority scores must be normalized between 0.0 and 1.0"
+# [parser-skip]   check: TaskSuggestion.priority_score >= 0.0 AND TaskSuggestion.priority_score <= 1.0
+# [parser-skip]   severity: error
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Utility Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# utility: called by suggest_next_task, check_overdue_tasks
+procedure evaluate_task_progress(task_id: string) -> evaluation:
+  given: "Evaluate progress on a specific task"
+  db_get {key: "task:" } -> $task
+  timestamp_now {} -> $now
+  compute_age_hours {checkpoint: $task, now: $now} -> $age
+  return {task: $task, age_hours: $age, status: $task}
+
+# utility: called by suggest_next_task
+procedure prioritize_tasks(tasks: list) -> prioritized:
+  given: "Sort and prioritize pending tasks"
+  loop over $tasks as task:
+    compute_priority_score {task: $task} -> $score
+  end
+  return {sorted: $tasks}
+
+# utility: called by heartbeat (proactive task suggestion)
+procedure suggest_next_task(tasks: list, context: string) -> suggestion:
+  given: "Suggest the next task to work on based on context and priorities"
+  prioritize_tasks {tasks: $tasks} -> $sorted
+  match_context {tasks: $sorted, context: $context} -> $best
+  return $best
+
+# utility: called by complete_task (task-system.px)
+procedure evaluate_task_completion(task_id: string, deliverables: list) -> verdict:
+  given: "Evaluate whether a task's deliverables meet its acceptance criteria"
+  db_get {key: "task:" } -> $task
+  check_acceptance_criteria {task: $task, deliverables: $deliverables} -> $result
+  return $result
+
+# utility: called by heartbeat (recurring task scheduling)
+procedure schedule_recurring_task(template: string, schedule: string) -> scheduled:
+  given: "Schedule a recurring task from a template"
+  validate_schedule {schedule: $schedule} -> $valid
+  pluresdb_write {key: "task:recurring:" , value: {template: $template, schedule: $schedule}}
+  return {status: "scheduled", schedule: $schedule}
+
+# utility: called by heartbeat (overdue detection)
+procedure check_overdue_tasks(tasks: list) -> overdue_list:
+  given: "Identify tasks that are overdue"
+  timestamp_now {} -> $now
+  loop over $tasks as task:
+    compute_age_hours {checkpoint: $task, now: $now} -> $age
+  end
+  return {overdue: $tasks}

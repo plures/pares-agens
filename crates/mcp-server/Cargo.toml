@@ -1,0 +1,55 @@
+[package]
+name = "pares-agens-mcp-server"
+description = "MCP (Model Context Protocol) server — expose pares-radix tools to external agents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+# html2text + libc are not in the pares-agens [workspace.dependencies] table, so
+# pin them inline (versions matched to pares-radix) — Stage S-D port.
+html2text = "0.17"
+reqwest.workspace = true
+libc = "0.2"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+urlencoding = "2"
+base64 = "0.22"
+chrono.workspace = true
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
+uuid = { version = "1", features = ["v4"] }
+# The agens mcp-client crate's package is named `mcp-client`, but the server
+# source imports it as `pares_radix_mcp_client::`. Rename the dependency so the
+# extern crate name resolves without touching the 6 source import sites.
+pares-radix-mcp-client = { path = "../mcp-client", package = "mcp-client" }
+opentelemetry = "0.28"
+# COGNITION layer (delegation, memory, Agent) — local path crate in this workspace.
+pares-agens-core = { path = "../core" }
+# PLATFORM layer (chronos, event, plugins, shell_executor, spine, StateStore) —
+# referenced via git+[patch] redirect to the local pares-radix checkout (same
+# pattern as crates/core; Stage S-C/S-D scaffolding).
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.34" }
+pares-agens-agenda = { path = "../agenda" }
+# Marketplace crate — provides the skill-workshop authoring lifecycle
+# (ProposalStore / SkillProposal) exposed via the `skill_workshop` MCP tool.
+pares-agens-marketplace = { path = "../marketplace" }
+# Praxis (PraxisModule, px compiler/executor) — git+[patch] redirect to local
+# pares-radix crates/praxis (the agens crates/praxis is a different crate,
+# `pares-agens-praxis`; the radix_handler imports `pares_radix_praxis::`).
+pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.34" }
+# .px engine (parser/compiler/executor) is consumed THROUGH PluresDB per the
+# px-through-PluresDB doctrine (ADR-0021 / TASK-PX-CANON): pluresdb-px is the
+# canonical consumption surface. Same git source + rev as the other pluresdb-px
+# consumers in this workspace (crates/core, crates/agens-plugin) — do NOT depend
+# on plures/praxis (praxis-native) directly.
+pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+pluresdb = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1", features = ["embeddings"] }

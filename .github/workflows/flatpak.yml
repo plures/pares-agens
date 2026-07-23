@@ -1,0 +1,91 @@
+name: Flatpak Bundle
+
+# Builds a Flatpak bundle from the PUBLIC Linux AppImage published to a GitHub
+# Release, then uploads the .flatpak as a Release asset. No private repo access
+# is required — this only consumes the released AppImage.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag whose AppImage to package (e.g. v1.14.0)"
+        required: true
+
+concurrency:
+  group: flatpak-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ── Lint the manifest + metainfo first (fast, always runs) ────────────────
+  validate:
+    name: Validate manifest & metainfo
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install validators
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y appstream python3-yaml
+      - name: Validate metainfo (AppStream)
+        run: |
+          appstreamcli validate --no-net \
+            packaging/flatpak/com.plures.ParesAgens.metainfo.xml
+      - name: Validate manifest is well-formed YAML
+        run: |
+          python3 -c "import yaml,sys; yaml.safe_load(open('packaging/flatpak/com.plures.ParesAgens.yaml')); print('manifest YAML OK')"
+
+  build:
+    name: Build Flatpak bundle
+    needs: validate
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    container:
+      image: bilelmoussaoui/flatpak-github-actions:freedesktop-23.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pin AppImage URL + sha256 into manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          # Find the AppImage asset name for this release.
+          ASSET=$(gh release view "$TAG" --repo "${{ github.repository }}" \
+            --json assets --jq '.assets[].name' | grep -iE '\.AppImage$' | head -n1)
+          if [ -z "$ASSET" ]; then
+            echo "::error::No .AppImage asset on release $TAG — build-installers must publish one first."
+            exit 1
+          fi
+          URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/${ASSET}"
+          curl -fsSL -o /tmp/pa.AppImage "$URL"
+          SHA=$(sha256sum /tmp/pa.AppImage | cut -d' ' -f1)
+          MANIFEST=packaging/flatpak/com.plures.ParesAgens.yaml
+          sed -i "s#url: https://github.com/plures/pares-agens/releases/latest/download/.*#url: ${URL}#" "$MANIFEST"
+          sed -i "s#sha256: 0\{64\}#sha256: ${SHA}#" "$MANIFEST"
+          echo "Pinned $ASSET ($SHA)"
+
+      - name: Build Flatpak
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: pares-agens.flatpak
+          manifest-path: packaging/flatpak/com.plures.ParesAgens.yaml
+          cache-key: flatpak-builder-${{ github.sha }}
+
+      - name: Upload bundle to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: pares-agens.flatpak

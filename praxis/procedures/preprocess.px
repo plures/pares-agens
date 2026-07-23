@@ -1,0 +1,58 @@
+# preprocess.px — Cerebellum preprocessing as v3 dataflow procedures
+#
+# Orchestrates the full preprocessing pipeline: classify, enrich, route.
+# IO actions (embedding, memory recall, store reads) are Rust-backed;
+# all decision logic is here in .px.
+#
+# Queue topology:
+#
+#   inbound ─→ [preprocess] ─→ preprocessed
+#   tool_result ─→ [preprocess_tool_result] ─→ model_request
+#
+
+# [parser-skip] fact PreprocessedResult:
+# [parser-skip]   route: string
+# [parser-skip]   classification: Classification
+# [parser-skip] 
+# [parser-skip] fact ToolResultContext:
+# [parser-skip]   source: string
+# [parser-skip]   summarized: bool
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint preprocess_always_routes:
+# [parser-skip]   given: "Every preprocessed message must produce a valid route"
+# [parser-skip]   check: PreprocessedResult.route != ""
+# [parser-skip]   severity: error
+# [parser-skip] 
+# [parser-skip] constraint tool_result_within_budget:
+# [parser-skip]   given: "Tool results must be summarized to fit within token budget"
+# [parser-skip]   check: ToolResultContext.summarized == true OR token_count <= 4000
+# [parser-skip]   severity: error
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Dataflow Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# Orchestrate full cerebellum preprocessing pipeline for inbound messages
+procedure preprocess(event: string from "inbound") -> preprocessed into "preprocessed":
+  given: "Orchestrate full cerebellum preprocessing pipeline for inbound messages"
+  classify_message {message: $event, plugins: $plugins, last_topic: $last_topic} -> $classification
+  pluresdb_write {key: "session:classification", value: $classification}
+  extract_entities {message: $event} -> $entities
+  pluresdb_write {key: "session:entities", value: $entities}
+  recall_context {entities: $entities, classification: $classification} -> $context
+  manage_context {items: $context, new_items: $entities, token_budget: $token_budget} -> $managed
+  pluresdb_write {key: "session:context", value: $managed}
+  inject_guidance {session_type: $session_type, context: $managed} -> $guidance
+  route_event {classification: $classification, context: $managed, guidance: $guidance} -> $route
+  return {route: $route, classification: $classification}
+
+# Light preprocessing for tool results before feeding back to model
+procedure preprocess_tool_result(event: string from "tool_result") -> model_request into "model_request":
+  given: "Light preprocessing for tool results before feeding back to model"
+  summarize_if_large {content: $event, max_tokens: 4000} -> $summarized
+  pluresdb_append {key: "chat:history", value: $summarized}
+  return {source: "tool_result"}

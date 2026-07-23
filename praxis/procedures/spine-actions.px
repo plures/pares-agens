@@ -1,0 +1,54 @@
+# spine-actions.px — Core spine action procedures as v3 dataflow
+#
+# Actions that the spine can invoke: model calls, tool dispatch, response delivery.
+# All three are queue-driven dataflow procedures.
+#
+# Queue topology:
+#
+#   route ──────────┐
+#   chat_history ───┼─→ [invoke_model] ─→ model_response
+#   system_prompt ──┘
+#   tool_request ─→ [dispatch_tool] ─→ tool_result
+#   model_response ─┐
+#   personality ────┼─→ [deliver_response] ─→ delivery
+#
+
+# [parser-skip] fact Route:
+# [parser-skip]   tier: enum(fast, standard, premium)
+# [parser-skip]   reason: string
+# [parser-skip]   streaming: bool
+# [parser-skip] 
+# [parser-skip] fact Delivery:
+# [parser-skip]   styled_content: string
+# [parser-skip]   tier: string
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint model_invocation_requires_route:
+# [parser-skip]   given: "Model invocation must always have a routing decision"
+# [parser-skip]   check: Route.tier != ""
+# [parser-skip]   severity: error
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Dataflow Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# Call the model with appropriate tier based on routing decision
+procedure invoke_model(route: Route from "route", history: list from "chat_history", prompt: string from "system_prompt") -> response into "model_response":
+  given: "Call the model with appropriate tier based on routing decision"
+  model_complete {messages: $history, system_prompt: $prompt, tier: $route.tier} -> $response
+  return $response
+
+# Dispatch a tool call and return the result
+procedure dispatch_tool(tool_request: string from "tool_request") -> tool_result into "tool_result":
+  given: "Dispatch a tool call and return the result"
+  execute_tool {request: $tool_request} -> $result
+  return $result
+
+# Format and deliver a model response to the user
+procedure deliver_response(response: string from "model_response", personality: PersonalityConfig from "personality") -> delivery into "delivery":
+  given: "Format and deliver a model response to the user"
+  format_response {response: $response, personality: $personality} -> $styled
+  return $styled

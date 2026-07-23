@@ -1,0 +1,47 @@
+# memory-correction.px — Memory correction as v3 dataflow procedures
+#
+# Handles corrections to stored memories and fact updates.
+# Both are utilities called by user-initiated correction flows.
+#
+# Queue topology:
+#
+#   (none — utilities only, called by correct_memory in memory.px)
+#
+
+# [parser-skip] fact CorrectionResult:
+# [parser-skip]   status: enum(corrected, rejected)
+# [parser-skip]   reason: optional[string]
+# [parser-skip]   value: optional[string]
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint correction_must_validate:
+# [parser-skip]   given: "Every correction must pass validation before being applied"
+# [parser-skip]   check: CorrectionResult.status == "corrected" OR CorrectionResult.reason != ""
+# [parser-skip]   severity: error
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Utility Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# utility: called by correct_memory (memory.px)
+procedure correct_fact(memory_key: string, correction: string) -> corrected:
+  given: "Apply a correction to an existing fact in memory"
+  db_get {key: $memory_key} -> $existing
+  validate_correction {existing: $existing, correction: $correction} -> $valid
+  when valid.rejected:
+    return {status: "rejected", reason: $valid}
+  end
+  apply_correction {memory: $existing, correction: $correction} -> $corrected
+  pluresdb_write {key: $memory_key, value: $corrected}
+  return {status: "corrected", value: $corrected}
+
+# utility: called by periodic_memory_maintenance (memory.px)
+procedure batch_update_memories(updates: list) -> results:
+  given: "Apply multiple memory updates in a single pass"
+  loop over $updates as update:
+    correct_fact {memory_key: $update, correction: $update} -> $result
+  end
+  return {count: $updates}

@@ -23,23 +23,29 @@
 //!                └────────────────┘  (results flow back)
 //! ```
 
+pub mod actions;
 pub mod bridge;
+pub mod classifier;
+pub mod dataflow_bridge;
+
 pub mod invoke;
 pub mod pipeline;
+pub mod px_bridge;
 pub mod router;
 
-use crate::cerebellum::bridge::PluresDbBridge;
+use pares_radix_core::pluresdb_bridge::PluresDbBridge;
+use crate::cerebellum::px_bridge::PxBridge;
 use crate::delegation::broker::SubTask;
-use crate::event::Event;
+use pares_radix_core::event::Event;
 use crate::memory::entry::MemoryCategory;
 use crate::memory::PluresLm;
-use crate::praxis::constraints::AuthorizationGate;
-use crate::procedure::{Procedure, ProcedureRegistry};
+use pares_radix_core::praxis::constraints::AuthorizationGate;
+use pares_radix_core::procedure::{Procedure, ProcedureRegistry};
 
 use async_trait::async_trait;
-use pares_agens_praxis::rule::{Rule, RuleContext, RuleResult};
+use pares_radix_praxis::rule::{Rule, RuleContext, RuleResult};
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tracing::{debug, info, instrument, warn};
 
 // ── routing decision ─────────────────────────────────────────────────────────
@@ -47,7 +53,9 @@ use tracing::{debug, info, instrument, warn};
 /// Where the cerebellum decides to send an event.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Route {
-    /// Conscious agent only (fast path).
+    /// Fast-tier model for simple/short responses (haiku, mini, flash).
+    Fast,
+    /// Conscious agent only — standard-tier model (sonnet, gpt-4o).
     Conscious,
     /// Both conscious and subconscious in parallel.
     /// The `reason` field is injected into the subconscious prompt.
@@ -165,6 +173,20 @@ pub struct Cerebellum {
     pub pluresdb: Option<PluresDbBridge>,
     /// Last topic embedding seen per channel.
     topic_embeddings: Mutex<HashMap<String, Vec<f32>>>,
+    /// Optional message classifier for intent/complexity routing.
+    pub classifier: Option<classifier::CerebellumClassifier>,
+    /// Persistent managed context window.
+    context_items: Mutex<Vec<context_manager::ContextItem>>,
+    /// Relevance scorer with learned weights.
+    relevance_scorer: Mutex<context_manager::RelevanceScorer>,
+    /// Optional conversation store for fallback context when autorecall has no hits.
+    conversation_store: Option<Arc<dyn pares_radix_core::spine::conversation::ConversationStore>>,
+    /// Optional .px bridge for calling .px procedures instead of hardcoded Rust logic.
+    /// When loaded, classification and routing go through .px first, falling back to Rust.
+    px_bridge: Option<Arc<PxBridge>>,
+    /// Optional dataflow bridge for queue-driven procedures.
+    /// When loaded, takes precedence over px_bridge (trigger-based).
+    dataflow_bridge: Option<Arc<dataflow_bridge::DataflowBridge>>,
 }
 
 impl Cerebellum {
@@ -174,6 +196,12 @@ impl Cerebellum {
             config,
             pluresdb: None,
             topic_embeddings: Mutex::new(HashMap::new()),
+            classifier: None,
+            context_items: Mutex::new(Vec::new()),
+            relevance_scorer: Mutex::new(context_manager::RelevanceScorer::default()),
+            conversation_store: None,
+            px_bridge: None,
+            dataflow_bridge: None,
         }
     }
 
@@ -183,7 +211,60 @@ impl Cerebellum {
             config,
             pluresdb: Some(bridge),
             topic_embeddings: Mutex::new(HashMap::new()),
+            classifier: None,
+            context_items: Mutex::new(Vec::new()),
+            relevance_scorer: Mutex::new(context_manager::RelevanceScorer::default()),
+            conversation_store: None,
+            px_bridge: None,
+            dataflow_bridge: None,
         }
+    }
+
+    /// Attach a conversation store for fallback context when autorecall returns no hits.
+    pub fn with_conversation_store(
+        mut self,
+        store: Arc<dyn pares_radix_core::spine::conversation::ConversationStore>,
+    ) -> Self {
+        self.conversation_store = Some(store);
+        self
+    }
+
+    /// Attach a .px bridge for calling .px procedures instead of hardcoded Rust logic.
+    ///
+    /// When set, the cerebellum will try .px procedures for classification and routing
+    /// FIRST, falling back to Rust implementations only when .px returns None or errors.
+    pub fn with_px_bridge(mut self, bridge: Arc<PxBridge>) -> Self {
+        self.px_bridge = Some(bridge);
+        self
+    }
+
+    /// Attach a dataflow bridge for queue-driven procedure execution.
+    /// When set, takes precedence over px_bridge (trigger-based).
+    pub fn with_dataflow_bridge(mut self, bridge: Arc<dataflow_bridge::DataflowBridge>) -> Self {
+        self.dataflow_bridge = Some(bridge);
+        self
+    }
+
+    /// Attach a message classifier to this cerebellum.
+    pub fn with_classifier(mut self, classifier: classifier::CerebellumClassifier) -> Self {
+        self.classifier = Some(classifier);
+        self
+    }
+
+    /// Record the outcome of a model interaction.
+    ///
+    /// Call this after the conscious model responds. The cerebellum uses
+    /// this to adjust relevance weights — context items that were present
+    /// during successful interactions get boosted; failed ones get decayed.
+    pub fn record_outcome(&self, success: bool) {
+        let items = self.context_items.lock().unwrap();
+        let mut scorer = self.relevance_scorer.lock().unwrap();
+        scorer.record_outcome(&items, success);
+        tracing::debug!(
+            success,
+            context_items = items.len(),
+            "cerebellum outcome recorded"
+        );
     }
 
     /// Main entry point: preprocess an event into an enriched context.
@@ -199,31 +280,165 @@ impl Cerebellum {
         memory: &PluresLm,
         _registry: &ProcedureRegistry,
     ) -> Result<CerebellumContext, CerebellumError> {
-        // 1. Autorecall
+        let preprocess_start = std::time::Instant::now();
+
+        // 0. Extract entities from the message (fast, no model)
         let query = extract_query(event);
-        let mut clear_history = false;
-        let learned_context = if let Some(q) = &query {
+        let entities = query
+            .as_deref()
+            .map(context_manager::EntityExtractor::extract)
+            .unwrap_or_default();
+
+        // 1. Recall relevant memories and convert to ContextItems
+        let mut topic_shifted = false;
+        let mut query_similarities = std::collections::HashMap::new();
+
+        // Fast path: skip expensive embedding + recall for very short
+        // contextual messages (≤3 words). These are almost always follow-ups
+        // that rely on conversation history, not semantic memory.
+        let skip_recall = query.as_deref().is_none_or(|q| {
+            let word_count = q.split_whitespace().count();
+            word_count <= 3 && word_count > 0
+        });
+
+        let recalled_items = if !skip_recall {
+            if let Some(q) = &query {
+            let embed_start = std::time::Instant::now();
             let query_embedding = memory
                 .embed_text(q)
                 .await
                 .map_err(|e| CerebellumError::Memory(e.to_string()))?;
-            clear_history = self.detect_topic_shift(event, &query_embedding);
+            let embed_elapsed = embed_start.elapsed();
+            tracing::info!(embed_ms = embed_elapsed.as_millis(), "embedding computed");
 
+            topic_shifted = self.detect_topic_shift(event, &query_embedding);
+
+            let recall_start = std::time::Instant::now();
             let exclude_categories = parse_excluded_categories(&self.config.exclude_categories);
             let memories = memory
                 .recall(q, self.config.recall_limit, &exclude_categories)
                 .await
                 .map_err(|e| CerebellumError::Memory(e.to_string()))?;
-            memory.inject_context(&memories, Some(self.config.context_token_budget))
+            let recall_elapsed = recall_start.elapsed();
+            tracing::info!(recall_ms = recall_elapsed.as_millis(), memories_found = memories.len(), "memory recall complete");
+
+            // Convert recalled memories to ContextItems
+            memories
+                .iter()
+                .enumerate()
+                .map(|(i, m)| {
+                    let id = format!("mem:{i}");
+                    // Score decays with rank (top result = 1.0, #10 = 0.5)
+                    let sim = 1.0 - (i as f32 * 0.05).min(0.5);
+                    query_similarities.insert(id.clone(), sim);
+                    context_manager::ContextItem {
+                        id,
+                        content: m.content.clone(),
+                        tokens: m.content.len() / 4, // rough estimate
+                        relevance: 0.0,              // scored by manager
+                        source: context_manager::ContextSource::Memory,
+                        age_turns: 0,
+                        success_count: 0,
+                        failure_count: 0,
+                    }
+                })
+                .collect::<Vec<_>>()
+            } else {
+                vec![]
+            }
         } else {
-            String::new()
+            // Fast path: skip embedding/recall for short contextual messages
+            if let Some(q) = &query {
+                tracing::info!(query = %q, "skipping recall for short message (fast path)");
+            }
+            vec![]
+        };
+
+        // 2. Manage context window — add new, score all, drop lowest
+        let managed = {
+            let mut items = self.context_items.lock().unwrap();
+            let scorer = self.relevance_scorer.lock().unwrap();
+
+            // A semantic topic shift invalidates recalled/context-manager items,
+            // but must not erase the channel's explicit conversation history.
+            // Users commonly switch from discussing a task to asking for its
+            // status; that is semantically different while still referring to
+            // the immediately preceding turn.
+            if topic_shifted {
+                items.clear();
+            }
+
+            // Add entity-derived context items
+            for entity in &entities {
+                let id = entity.context_key.clone();
+                if !items.iter().any(|i| i.id == id) {
+                    items.push(context_manager::ContextItem {
+                        id,
+                        content: format!("{:?}: {}", entity.kind, entity.value),
+                        tokens: 10,
+                        relevance: 0.0,
+                        source: context_manager::ContextSource::Entity,
+                        age_turns: 0,
+                        success_count: 0,
+                        failure_count: 0,
+                    });
+                }
+            }
+
+            context_manager::manage_context(
+                &mut items,
+                recalled_items,
+                &entities,
+                &scorer,
+                &query_similarities,
+                self.config.context_token_budget,
+            )
+        };
+
+        // Build the context string from managed items
+        // Fallback: if autorecall returned nothing, pull recent conversation
+        // exchanges so contextual follow-ups ("do that", "yes", "continue") work.
+        let learned_context = if managed.items.is_empty() {
+            // No semantic memory hits — inject recent conversation as fallback
+            if let Some(store) = &self.conversation_store {
+                let chat_id = event.chat_id().unwrap_or_default();
+                if !chat_id.is_empty() {
+                    let history = store.get_history(chat_id).await;
+                    let recent: Vec<_> = history.iter().rev().take(4).collect();
+                    if !recent.is_empty() {
+                        let mut ctx = String::from("## Recent Conversation\n");
+                        for msg in recent.iter().rev() {
+                            let role = msg.role_str();
+                            let content = msg.content_preview(200);
+                            ctx.push_str(&format!("- {}: {}\n", role, content));
+                        }
+                        ctx
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            }
+        } else {
+            let mut ctx = String::from("## Recalled Context\n");
+            for item in &managed.items {
+                ctx.push_str(&format!("- [rel:{:.2}] {}\n", item.relevance, item.content));
+            }
+            ctx
         };
 
         info!(
             event_kind = event.kind(),
             context_len = learned_context.len(),
-            topic_shifted = clear_history,
-            "autorecall complete"
+            context_items = managed.items.len(),
+            tokens_used = managed.tokens_used,
+            token_budget = managed.token_budget,
+            topic_shifted,
+            entities = entities.len(),
+            "context managed"
         );
 
         // 2. Authorization gate (ADR-0012)
@@ -237,16 +452,49 @@ impl Cerebellum {
             });
         }
 
-        // 3. Route (may be overridden by gate levels 2–4)
-        let mut route = router::decide(event, &learned_context, &self.config);
+        // 3. Route — try dataflow first, then .px trigger-based, fall back to Rust
+        //    Precedence: dataflow_bridge → px_bridge → router::decide()
+        let mut route = if let Some(ref df_bridge) = self.dataflow_bridge {
+            if df_bridge.is_active() {
+                let event_type = event.kind().to_string();
+                let content = extract_query(event).unwrap_or_default();
+                match df_bridge
+                    .process_event(&event_type, &content, &learned_context)
+                    .await
+                {
+                    Ok(Some(val)) => {
+                        parse_px_route(&val).unwrap_or_else(|| {
+                            debug!(raw = %val, "dataflow route returned unparseable result, trying px_bridge");
+                            Route::Conscious // signal to try next tier
+                        })
+                    }
+                    Ok(None) => {
+                        // Dataflow didn't produce a route — fall through to px_bridge
+                        self.try_px_bridge_route(event, &learned_context).await
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "dataflow bridge failed, falling back to px_bridge");
+                        self.try_px_bridge_route(event, &learned_context).await
+                    }
+                }
+            } else {
+                self.try_px_bridge_route(event, &learned_context).await
+            }
+        } else {
+            self.try_px_bridge_route(event, &learned_context).await
+        };
         let mut guidance: Vec<String> = vec![];
         let mut approval_required: Option<ApprovalRequest> = None;
 
         match gate_result {
-            // Level 2: skip duplicate — override route to Drop
+            // Level 2: skip duplicate — only suppress tool/action events, never user messages
             RuleResult::Warning { ref message } if message.starts_with("skip:") => {
-                debug!(message, "authorization gate: duplicate action suppressed");
-                route = Route::Drop;
+                if !matches!(event, Event::Message { .. }) {
+                    debug!(message, "authorization gate: duplicate action suppressed");
+                    route = Route::Drop;
+                } else {
+                    debug!(message, "authorization gate: skip suppressed for user message (never drop messages)");
+                }
                 guidance.push(message.clone());
             }
             // Level 3: known failure — warn, keep original route
@@ -255,7 +503,10 @@ impl Cerebellum {
                 guidance.push(message.clone());
             }
             // Level 4: destructive/external → require approval
-            RuleResult::Gate { ref action, ref rationale } => {
+            RuleResult::Gate {
+                ref action,
+                ref rationale,
+            } => {
                 debug!(action, rationale, "authorization gate: approval required");
                 approval_required = Some(ApprovalRequest {
                     action: action.clone(),
@@ -269,21 +520,121 @@ impl Cerebellum {
 
         debug!(?route, "routing decision");
 
+        let preprocess_elapsed = preprocess_start.elapsed();
+        tracing::info!(
+            preprocess_ms = preprocess_elapsed.as_millis(),
+            route = ?route,
+            "cerebellum preprocess complete"
+        );
+
         // 4. Package
         Ok(CerebellumContext {
             event: event.clone(),
             learned_context,
             route,
             guidance,
-            clear_history,
+            // Conversation history is user/session state. Semantic similarity
+            // is too weak a signal to discard it; only explicit session commands
+            // should do that.
+            clear_history: false,
             approval_required,
         })
+    }
+
+    /// Full dataflow pipeline: write to inbound → graph runs → delivery returned.
+    ///
+    /// This is the target architecture (unified-router.px). When the dataflow bridge
+    /// is active and has procedures loaded, this runs the COMPLETE pipeline without
+    /// the imperative preprocess/route/invoke cycle.
+    ///
+    /// Returns `Some(DeliveryResult)` if the graph produced a response, `None` to
+    /// fall through to the legacy cerebellum path.
+    pub async fn try_full_dataflow(
+        &self,
+        chat_id: i64,
+        sender: &str,
+        content: &str,
+        message_id: Option<&str>,
+        history: Option<&[pares_radix_core::model::ChatMessage]>,
+    ) -> Option<dataflow_bridge::DeliveryResult> {
+        let df_bridge = self.dataflow_bridge.as_ref()?;
+        if !df_bridge.is_active() {
+            return None;
+        }
+
+        match df_bridge.process_message(chat_id, sender, content, message_id, history).await {
+            Ok(Some(delivery)) => {
+                info!(
+                    chat_id,
+                    content_len = delivery.content.len(),
+                    "full dataflow pipeline produced delivery"
+                );
+                Some(delivery)
+            }
+            Ok(None) => {
+                debug!(chat_id, "dataflow pipeline quiesced without delivery — falling through");
+                None
+            }
+            Err(e) => {
+                warn!(error = %e, chat_id, "dataflow pipeline error — falling through to legacy");
+                None
+            }
+        }
+    }
+
+    /// Try routing via the px_bridge (trigger-based .px procedures).
+    /// Falls back to Rust-native router if px_bridge is inactive, missing, or errors.
+    async fn try_px_bridge_route(&self, event: &Event, learned_context: &str) -> Route {
+        if let Some(ref bridge) = self.px_bridge {
+            if bridge.is_active() {
+                let event_type = event.kind().to_string();
+                let content = extract_query(event).unwrap_or_default();
+                match bridge
+                    .route_event(
+                        &event_type,
+                        &content,
+                        learned_context,
+                        self.config.enable_subconscious,
+                        f64::from(self.config.complexity_threshold),
+                    )
+                    .await
+                {
+                    Some(Ok(val)) => {
+                        parse_px_route(&val).unwrap_or_else(|| {
+                            debug!(raw = %val, "px route returned unparseable result, falling back to Rust");
+                            router::decide(event, learned_context, &self.config)
+                        })
+                    }
+                    Some(Err(e)) => {
+                        warn!(error = %e, "px route_event failed, falling back to Rust");
+                        router::decide(event, learned_context, &self.config)
+                    }
+                    None => router::decide(event, learned_context, &self.config),
+                }
+            } else {
+                router::decide(event, learned_context, &self.config)
+            }
+        } else {
+            router::decide(event, learned_context, &self.config)
+        }
     }
 
     fn detect_topic_shift(&self, event: &Event, current_embedding: &[f32]) -> bool {
         let Some(channel_key) = event_channel_key(event) else {
             return false;
         };
+
+        // Short messages (< 20 chars) are almost always follow-ups ("do that",
+        // "yes", "continue", "no"). Never treat them as topic shifts.
+        if let Event::Message { content, .. } = event {
+            if content.trim().len() < 20 {
+                // Still update the embedding cache for future comparisons
+                if let Ok(mut embeddings) = self.topic_embeddings.lock() {
+                    embeddings.insert(channel_key, current_embedding.to_vec());
+                }
+                return false;
+            }
+        }
 
         let mut embeddings = match self.topic_embeddings.lock() {
             Ok(guard) => guard,
@@ -295,7 +646,8 @@ impl Cerebellum {
         let shifted = embeddings
             .get(&channel_key)
             .map(|previous| {
-                cosine_similarity(previous, current_embedding) < self.config.topic_similarity_threshold
+                cosine_similarity(previous, current_embedding)
+                    < self.config.topic_similarity_threshold
             })
             .unwrap_or(false);
         embeddings.insert(channel_key, current_embedding.to_vec());
@@ -324,7 +676,40 @@ pub enum CerebellumError {
 
 /// Adapter that lets the cerebellum participate in the procedure registry
 /// as a first-class procedure handling `"message"` events.
-pub struct CerebellumProcedure;
+///
+/// When constructed with [`CerebellumProcedure::with_cerebellum`], the procedure
+/// delegates to [`Cerebellum::preprocess`] for autorecall, topic detection, and
+/// context management.  The [`CerebellumProcedure::stub`] variant is available
+/// for registration and dispatch testing without a live memory system.
+pub struct CerebellumProcedure {
+    cerebellum: Option<Arc<Cerebellum>>,
+    memory: Option<Arc<PluresLm>>,
+    registry: Option<Arc<ProcedureRegistry>>,
+}
+
+impl CerebellumProcedure {
+    /// Create a stub procedure for registration and dispatch testing.
+    pub fn stub() -> Self {
+        Self {
+            cerebellum: None,
+            memory: None,
+            registry: None,
+        }
+    }
+
+    /// Create a fully-wired procedure that delegates to a live [`Cerebellum`].
+    pub fn with_cerebellum(
+        cerebellum: Arc<Cerebellum>,
+        memory: Arc<PluresLm>,
+        registry: Arc<ProcedureRegistry>,
+    ) -> Self {
+        Self {
+            cerebellum: Some(cerebellum),
+            memory: Some(memory),
+            registry: Some(registry),
+        }
+    }
+}
 
 #[async_trait]
 impl Procedure for CerebellumProcedure {
@@ -337,10 +722,44 @@ impl Procedure for CerebellumProcedure {
     }
 
     async fn execute(&self, event: &Event) -> Vec<Event> {
-        // In the full system, this is wired through Cerebellum::preprocess.
-        // This stub enables registration and dispatch testing.
-        debug!(event_kind = event.kind(), "cerebellum procedure stub");
-        vec![]
+        let (cerebellum, memory, registry) = match (&self.cerebellum, &self.memory, &self.registry)
+        {
+            (Some(c), Some(m), Some(r)) => (c, m, r),
+            _ => {
+                debug!(
+                    event_kind = event.kind(),
+                    "cerebellum procedure stub (no live system)"
+                );
+                return vec![];
+            }
+        };
+
+        match cerebellum.preprocess(event, memory, registry).await {
+            Ok(ctx) => {
+                info!(
+                    context_len = ctx.learned_context.len(),
+                    clear_history = ctx.clear_history,
+                    route = ?ctx.route,
+                    "cerebellum preprocessed message"
+                );
+                // Emit a StateChange event with the cerebellum context so
+                // downstream procedures (conscious agent) can consume it.
+                vec![Event::StateChange {
+                    key: "cerebellum:context".to_string(),
+                    old_value: None,
+                    new_value: serde_json::json!({
+                        "learned_context": ctx.learned_context,
+                        "clear_history": ctx.clear_history,
+                        "route": format!("{:?}", ctx.route),
+                        "guidance": ctx.guidance,
+                    }),
+                }]
+            }
+            Err(e) => {
+                warn!(error = %e, "cerebellum preprocess failed");
+                vec![]
+            }
+        }
     }
 }
 
@@ -403,9 +822,7 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     }
     let (dot, norm_a_sq, norm_b_sq) = a.iter().zip(b.iter()).fold(
         (0.0f32, 0.0f32, 0.0f32),
-        |(dot, norm_a_sq, norm_b_sq), (&x, &y)| {
-            (dot + x * y, norm_a_sq + x * x, norm_b_sq + y * y)
-        },
+        |(dot, norm_a_sq, norm_b_sq), (&x, &y)| (dot + x * y, norm_a_sq + x * x, norm_b_sq + y * y),
     );
     let norm_a = norm_a_sq.sqrt();
     let norm_b = norm_b_sq.sqrt();
@@ -459,6 +876,65 @@ fn build_authorization_context(event: &Event) -> RuleContext {
     )
 }
 
+/// Parse a .px procedure result (JSON Value) into a [`Route`] enum.
+///
+/// Expected .px output format:
+/// ```json
+/// {"route": "conscious"}
+/// {"route": "deep", "reason": "..."}
+/// {"route": "delegate", "reason": "...", "tasks": [...]}
+/// {"route": "procedural"}
+/// {"route": "drop"}
+/// ```
+fn parse_px_route(val: &serde_json::Value) -> Option<Route> {
+    let route_str = val.get("route")?.as_str()?;
+    match route_str {
+        "conscious" => Some(Route::Conscious),
+        "procedural" => Some(Route::Procedural),
+        "drop" => Some(Route::Drop),
+        "deep" => {
+            let reason = val
+                .get("reason")
+                .and_then(|r| r.as_str())
+                .unwrap_or("px routing decided deep reasoning needed")
+                .to_string();
+            Some(Route::Deep { reason })
+        }
+        "delegate" => {
+            let reason = val
+                .get("reason")
+                .and_then(|r| r.as_str())
+                .unwrap_or("px routing decided delegation needed")
+                .to_string();
+            let tasks = val
+                .get("tasks")
+                .and_then(|t| t.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|task| {
+                            Some(SubTask {
+                                agent_name: task
+                                    .get("agent_name")
+                                    .and_then(|s| s.as_str())
+                                    .unwrap_or("general")
+                                    .to_string(),
+                                input: task.get("input")?.as_str()?.to_string(),
+                                parent_context: task
+                                    .get("parent_context")
+                                    .and_then(|s| s.as_str())
+                                    .map(String::from),
+                                steering_rx: None,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(Route::Delegate { reason, tasks })
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -467,8 +943,8 @@ mod tests {
         entry::{MemoryCategory, MemoryEntry},
         store::{InMemoryStore, MemoryStore as _},
     };
+    use pares_radix_praxis::rule::RuleResult;
     use std::sync::Arc;
-    use pares_agens_praxis::rule::RuleResult;
 
     #[test]
     fn extract_query_from_message() {
@@ -515,7 +991,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn preprocess_clears_history_on_topic_shift_and_restores_on_return() {
+    async fn preprocess_preserves_conversation_history_on_topic_shift() {
         let store = Arc::new(InMemoryStore::new());
         let rust_embedding = MockEmbedder
             .embed("Use tokio channels to coordinate async Rust tasks")
@@ -548,7 +1024,10 @@ mod tests {
             .preprocess(&rust_msg, &memory, &registry)
             .await
             .expect("first preprocess should succeed");
-        assert!(!rust_ctx.clear_history, "first topic should not clear history");
+        assert!(
+            !rust_ctx.clear_history,
+            "first topic should not clear history"
+        );
 
         let cooking_msg = Event::Message {
             id: "2".into(),
@@ -560,7 +1039,10 @@ mod tests {
             .preprocess(&cooking_msg, &memory, &registry)
             .await
             .expect("second preprocess should succeed");
-        assert!(cooking_ctx.clear_history, "different topic should clear history");
+        assert!(
+            !cooking_ctx.clear_history,
+            "semantic topic changes must not discard explicit conversation history"
+        );
 
         let rust_return_msg = Event::Message {
             id: "3".into(),
@@ -690,3 +1172,4 @@ mod tests {
         assert!(msg.contains("hard constraint C-9999"), "got: {msg}");
     }
 }
+pub mod context_manager;

@@ -1,5 +1,5 @@
 #![warn(missing_docs)]
-//! Channel adapters for Pares Agens.
+//! Channel adapters for Pares Radix.
 //!
 //! Provides the [`ChannelAdapter`] trait and concrete adapter implementations
 //! for stdin, Tauri IPC, and Telegram. A [`ChannelAdapter`] bridges an external
@@ -13,9 +13,27 @@
 
 pub mod adapter;
 pub mod group_context;
+pub mod http_spine;
 pub mod stdin;
 pub mod tauri_ipc;
 pub mod telegram;
+pub mod turn_ux;
+pub mod active_turns;
+pub mod threading;
+
+pub mod stdio_spine;
+pub mod telegram_spine;
+
+/// Get the local hostname for cluster display.
+pub(crate) fn cluster_hostname() -> String {
+    std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("COMPUTERNAME"))
+        .unwrap_or_else(|_| {
+            std::fs::read_to_string("/etc/hostname")
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|_| "unknown".to_string())
+        })
+}
 
 /// Validate that the license permits running the given number of channel adapters.
 ///
@@ -24,14 +42,14 @@ pub mod telegram;
 ///
 /// # Errors
 ///
-/// Returns [`pares_agens_core::license::LicenseError::FeatureNotAvailable`]
+/// Returns [`pares_radix_core::license::LicenseError::FeatureNotAvailable`]
 /// when `adapter_count > 1` and the license is not Pro.
 ///
 /// # Example
 ///
 /// ```rust
 /// use pares_agens_channels::check_channel_count;
-/// use pares_agens_core::license::License;
+/// use pares_radix_core::license::License;
 ///
 /// // Single adapter — always permitted.
 /// check_channel_count(1, &License::free()).expect("single adapter is free");
@@ -42,10 +60,10 @@ pub mod telegram;
 /// ```
 pub fn check_channel_count(
     adapter_count: usize,
-    license: &pares_agens_core::license::License,
-) -> std::result::Result<(), pares_agens_core::license::LicenseError> {
+    license: &pares_radix_core::license::License,
+) -> std::result::Result<(), pares_radix_core::license::LicenseError> {
     if adapter_count > 1 {
-        license.check_feature(pares_agens_core::license::Feature::MultipleChannels)?;
+        license.check_feature(pares_radix_core::license::Feature::MultipleChannels)?;
     }
     Ok(())
 }
@@ -53,7 +71,7 @@ pub fn check_channel_count(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pares_agens_core::license::License;
+    use pares_radix_core::license::License;
 
     #[test]
     fn zero_adapters_allowed_on_free_tier() {
@@ -71,7 +89,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(pares_agens_core::license::LicenseError::FeatureNotAvailable { .. })
+                Err(pares_radix_core::license::LicenseError::FeatureNotAvailable { .. })
             ),
             "free tier should not allow multiple adapters"
         );

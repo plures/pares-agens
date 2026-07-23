@@ -1,0 +1,24 @@
+[package]
+name = "pares-agens-hostkit"
+description = "Shared host-runtime helper layer for pares-agens binaries (log-level control, tool-call tracing, verbose-tool markers, connection-conflict detection, systemd watchdog / memory monitor). Single home per ADR-0010; consumed by the `cli` and `agens-plugin` host crates."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "pares_agens_hostkit"
+path = "src/lib.rs"
+
+[dependencies]
+# HostAdapterRecord (input to connection-conflict detection) lives in core.
+pares-agens-core = { path = "../core", features = ["embeddings"] }
+# TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER (verbose-tool protocol marker) lives in channels.
+pares-agens-channels = { path = "../channels" }
+
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[dev-dependencies]

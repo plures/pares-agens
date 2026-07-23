@@ -1,0 +1,65 @@
+# routing.px — Message routing as v3 dataflow procedures
+#
+# Determines how to route a message based on classification.
+# route_message is queue-driven; route_with_context_gate is a utility
+# for overflow scenarios.
+#
+# Queue topology:
+#
+#   classification ─→ [route_message] ─→ route
+#        │                   │
+#   context ─────────────────┘
+#                            └─ calls [route_with_context_gate] (utility)
+#
+
+# [parser-skip] fact Route:
+# [parser-skip]   tier: enum(fast, standard, premium)
+# [parser-skip]   reason: string
+# [parser-skip]   streaming: bool
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint route_always_has_tier:
+# [parser-skip]   given: "Every route decision must specify a valid model tier"
+# [parser-skip]   check: Route.tier != ""
+# [parser-skip]   severity: error
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Dataflow Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# Determine which model tier and response strategy handles this message
+procedure route_message(classification: Classification from "classification", context: string from "context") -> route into "route":
+  given: "Determine which model tier and response strategy handles this message"
+  when classification.needs_deep_model:
+    return {tier: "premium", reason: "high complexity", streaming: true}
+  end
+  when classification.needs_tools:
+    return {tier: "standard", reason: "tool use required", streaming: false}
+  end
+  when classification.complexity > 3:
+    return {tier: "standard", reason: "moderate complexity", streaming: true}
+  end
+  when classification.intent == "greeting":
+    return {tier: "fast", reason: "greeting", streaming: false}
+  end
+  when classification.intent == "farewell":
+    return {tier: "fast", reason: "farewell", streaming: false}
+  end
+  return {tier: "fast", reason: "simple message", streaming: true}
+
+# ═══════════════════════════════════════════════════════════════════
+# Utility Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# utility: called by preprocess (context overflow fallback)
+procedure route_with_context_gate(classification: Classification, context_size: int) -> route:
+  given: "Apply context-size gating: if context exceeds model window, cascade UP"
+  determine_model_tier {complexity: $classification.complexity} -> $base_tier
+  estimate_context_window {tier: $base_tier} -> $window
+  when context_size > $window:
+    return {tier: "premium", reason: "context overflow", streaming: true}
+  end
+  return {tier: $base_tier, reason: "within window", streaming: true}

@@ -29,10 +29,16 @@ use pares_agens_channels::adapter::ChannelAdapter;
 use pares_agens_channels::telegram::{
     TelegramAdapter, TelegramConfig, TelegramConfigControl, TelegramModelControl,
     TelegramPersonalityControl, TelegramRuntimeConfig, TelegramRuntimeControl,
-    TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER,
 };
 use pares_agens_core::agent::{Agent, Memory};
-use pares_agens_core::auth::copilot::{CopilotAuth, CopilotModelClient};
+use pares_agens_hostkit::{
+    apply_runtime_log_level, build_env_filter, current_hostname, current_process_rss_kib,
+    default_deep_escalation_enabled, detect_single_connection_conflicts,
+    extract_verbose_tool_marker, format_verbose_tool_traces, manus_request_for_tool,
+    parse_sync_topic_key, parse_tool_args, redact_connection_id, spawn_memory_monitor,
+    spawn_systemd_watchdog, systemd_notify, value_to_tool_content, ToolCallTrace,
+};
+use pares_radix_core::auth::copilot::{CopilotAuth, CopilotModelClient};
 use pares_agens_core::cerebellum::{Cerebellum, CerebellumConfig};
 use pares_agens_core::delegation::{broker::DelegationBroker, registry::AgentRegistry};
 use pares_agens_core::memory::{
@@ -41,18 +47,18 @@ use pares_agens_core::memory::{
     store::{HostAdapterConfig, HostAdapterRecord, PluresDbStore},
     PluresLm,
 };
-use pares_agens_core::model::{
+use pares_radix_core::model::{
     ChatMessage as CoreChatMessage, ChatOptions, ModelClient, ToolDefinition, ToolDispatcher,
 };
-use pares_agens_core::procedure::{Procedure, ProcedureRegistry};
-use pares_agens_core::plugins::{PluginCrudExecutor, PluginRuntime};
-use pares_agens_core::tool_governance::{GovernanceVerdict, ToolGovernor};
-use pares_agens_core::Event;
-use pares_agens_core::{PluresDbStateStore, StateStore};
+use pares_radix_core::procedure::{Procedure, ProcedureRegistry};
+use pares_radix_core::plugins::{PluginCrudExecutor, PluginRuntime};
+use pares_radix_core::tool_governance::{GovernanceVerdict, ToolGovernor};
+use pares_radix_core::Event;
+use pares_radix_core::{PluresDbStateStore, StateStore};
 use pares_agens_migrate::{migrate, openclaw};
-use pares_models::config::{ProviderConfig, RouterConfig};
-use pares_models::router::ModelRouter;
-use pares_models::types::{ChatCompletionRequest, ChatMessage, Role, Tool};
+use pares_agens_models::config::{ProviderConfig, RouterConfig};
+use pares_agens_models::router::ModelRouter;
+use pares_agens_models::types::{ChatCompletionRequest, ChatMessage, Role, Tool};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -91,10 +97,6 @@ struct CopilotAuthCache {
 
 const MODEL_OVERRIDE_STATE_KEY: &str = "agent.runtime_model_override";
 const RUNTIME_CONFIG_OVERRIDE_STATE_KEY: &str = "agent.runtime_config_override";
-/// Maximum characters shown for tool-call argument previews in `/verbose`.
-const VERBOSE_TOOL_ARGS_PREVIEW_CHARS: usize = 240;
-/// Maximum characters shown for tool-call result previews in `/verbose`.
-const VERBOSE_TOOL_RESULT_PREVIEW_CHARS: usize = 500;
 
 // Telegram request ID currently being processed on this task.
 // Used to correlate tool calls executed during `agent.handle_event(...)` with
@@ -121,13 +123,15 @@ struct RuntimeConfigOverride {
 struct RuntimeModelControl {
     primary_model: Arc<RwLock<String>>,
     deep_model: Arc<RwLock<String>>,
+    fast_model: Arc<RwLock<String>>,
     deep_escalation_enabled: Arc<RwLock<bool>>,
     state_store: Arc<dyn StateStore>,
+    /// Handle to the live agent, populated after agent construction so
+    /// `/status` can read the last-routed tier and routing mode honestly.
+    /// `None` until wired.
+    agent_ref: Arc<RwLock<Option<Arc<Agent>>>>,
 }
 
-fn default_deep_escalation_enabled() -> bool {
-    true
-}
 
 struct RuntimeConfigControl {
     model_control: Arc<RuntimeModelControl>,
@@ -149,6 +153,26 @@ struct RuntimePersonalityControl {
     agent: Arc<RwLock<Arc<Agent>>>,
 }
 
+/// Determine whether headroom compression should be enabled.
+///
+/// Precedence:
+/// 1. `--no-headroom` flag (or `no_headroom == true`) forces OFF.
+/// 2. `PARES_AGENS_HEADROOM` env var: values `0`, `false`, `off`, `no`
+///    (case-insensitive) force OFF.
+/// 3. Otherwise ON (default).
+fn headroom_enabled(no_headroom_flag: bool) -> bool {
+    if no_headroom_flag {
+        return false;
+    }
+    match std::env::var("PARES_AGENS_HEADROOM") {
+        Ok(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        ),
+        Err(_) => true,
+    }
+}
+
 #[derive(Clone)]
 struct RuntimeAgentFactory {
     store: Arc<PluresDbStore>,
@@ -160,15 +184,11 @@ struct RuntimeAgentFactory {
     embed_model: String,
     api_key: Option<String>,
     system_prompt_path: Option<PathBuf>,
+    /// Optional headroom compression hook wired onto every agent this factory
+    /// builds. `None` leaves compression off.
+    headroom: Option<pares_agens_core::HeadroomHook>,
 }
 
-#[derive(Clone, Debug)]
-struct ToolCallTrace {
-    tool_name: String,
-    arguments: serde_json::Value,
-    result: String,
-    is_error: bool,
-}
 
 #[derive(Clone, Default)]
 struct ToolTraceStore {
@@ -247,32 +267,6 @@ impl RouterModelClient {
     }
 }
 
-fn normalize_log_level(value: &str) -> Result<String, String> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "trace" | "debug" | "info" | "warn" | "error" => Ok(value.trim().to_ascii_lowercase()),
-        _ => Err("log level must be one of: trace, debug, info, warn, error".to_string()),
-    }
-}
-
-fn build_env_filter(level: &str) -> Result<EnvFilter, String> {
-    let level = normalize_log_level(level)?;
-    let directive = level
-        .parse()
-        .map_err(|e| format!("failed to parse '{level}' as tracing directive: {e}"))?;
-    Ok(EnvFilter::from_default_env().add_directive(directive))
-}
-
-fn apply_runtime_log_level(
-    handle: &tracing_subscriber::reload::Handle<EnvFilter, tracing_subscriber::Registry>,
-    level: &str,
-) -> Result<String, String> {
-    let normalized = normalize_log_level(level)?;
-    let filter = build_env_filter(&normalized)?;
-    handle
-        .reload(filter)
-        .map_err(|e| format!("failed to reload log filter: {e}"))?;
-    Ok(normalized)
-}
 
 impl RuntimeAgentFactory {
     fn build_embedder(&self) -> Box<dyn EmbeddingProvider> {
@@ -286,10 +280,6 @@ impl RuntimeAgentFactory {
         }
     }
 
-    fn load_system_prompt(&self) -> Result<String, String> {
-        build_system_prompt(self.system_prompt_path.clone())
-    }
-
     fn build_agent(&self) -> Result<Arc<Agent>, String> {
         let plures_lm = Arc::new(PluresLm::new(
             Arc::clone(&self.store) as Arc<dyn pares_agens_core::memory::store::MemoryStore>,
@@ -300,7 +290,7 @@ impl RuntimeAgentFactory {
             plures_lm: Arc::clone(&plures_lm),
         });
         let cerebellum = Cerebellum::new(CerebellumConfig::default());
-        let system_prompt = self.load_system_prompt()?;
+        let system_prompt = build_system_prompt(self.system_prompt_path.clone())?;
 
         // Create default personality contract. Runtime seeding into PluresDB
         // happens in the async serve path.
@@ -312,18 +302,22 @@ impl RuntimeAgentFactory {
         );
         let turn_store: Arc<dyn pares_agens_core::memory::store::MemoryStore> = self.store.clone();
 
-        Ok(Arc::new(
-            Agent::with_cerebellum(memory, cerebellum, plures_lm)
-                .with_model(
-                    Arc::clone(&self.model_client),
-                    Arc::clone(&self.tool_dispatcher),
-                    system_prompt,
-                )
-                .with_deep_model(Arc::clone(&self.deep_model_client))
-                .with_delegation(delegation_broker)
-                .with_turn_store(turn_store)
-                .with_personality(personality),
-        ))
+        let mut agent = Agent::with_cerebellum(memory, cerebellum, plures_lm)
+            .with_model(
+                Arc::clone(&self.model_client),
+                Arc::clone(&self.tool_dispatcher),
+                system_prompt,
+            )
+            .with_deep_model(Arc::clone(&self.deep_model_client))
+            .with_delegation(delegation_broker)
+            .with_turn_store(turn_store)
+            .with_personality(personality);
+
+        if let Some(hook) = &self.headroom {
+            agent = agent.with_headroom(hook.clone());
+        }
+
+        Ok(Arc::new(agent))
     }
 }
 
@@ -334,6 +328,27 @@ impl TelegramModelControl for RuntimeModelControl {
             self.primary_model.read().await.clone(),
             self.deep_model.read().await.clone(),
         )
+    }
+
+    async fn fast_model(&self) -> Option<String> {
+        let f = self.fast_model.read().await.clone();
+        if f.trim().is_empty() {
+            None
+        } else {
+            Some(f)
+        }
+    }
+
+    async fn last_route_tier(&self) -> Option<String> {
+        let guard = self.agent_ref.read().await;
+        guard
+            .as_ref()
+            .and_then(|a| a.last_route_tier())
+            .map(|t| t.label().to_string())
+    }
+
+    async fn routing_mode(&self) -> String {
+        "complexity-gated (context-size-gated)".to_string()
     }
 
     async fn set_primary_model(&self, model: &str) -> Result<(), String> {
@@ -557,7 +572,7 @@ impl ModelClient for RouterModelClient {
         messages: &[CoreChatMessage],
         tools: &[ToolDefinition],
         options: &ChatOptions,
-    ) -> Result<pares_agens_core::model::ModelCompletion, String> {
+    ) -> Result<pares_radix_core::model::ModelCompletion, String> {
         let converted_messages = messages
             .iter()
             .map(|m| {
@@ -574,13 +589,14 @@ impl ModelClient for RouterModelClient {
                     tool_calls: m.tool_calls.clone().map(|calls| {
                         calls
                             .into_iter()
-                            .map(|call| pares_models::types::ToolCall {
+                            .map(|call| pares_agens_models::types::ToolCall {
                                 id: call.id,
                                 kind: "function".into(),
-                                function: pares_models::types::FunctionCall {
+                                function: pares_agens_models::types::FunctionCall {
                                     name: call.name,
                                     arguments: call.arguments.to_string(),
                                 },
+                                index: None,
                             })
                             .collect()
                     }),
@@ -629,7 +645,7 @@ impl ModelClient for RouterModelClient {
             .clone()
             .unwrap_or_default()
             .into_iter()
-            .map(|call| pares_agens_core::model::ToolCall {
+            .map(|call| pares_radix_core::model::ToolCall {
                 id: call.id,
                 name: call.function.name,
                 arguments: serde_json::from_str(&call.function.arguments)
@@ -644,10 +660,11 @@ impl ModelClient for RouterModelClient {
             .map(|tokens| tokens.iter().filter_map(|t| t.logprob).collect::<Vec<_>>())
             .filter(|vals| !vals.is_empty());
 
-        Ok(pares_agens_core::model::ModelCompletion {
+        Ok(pares_radix_core::model::ModelCompletion {
             content: choice.message.content.clone(),
             tool_calls,
             logprobs,
+            model: Some(response.model.clone()),
         })
     }
 }
@@ -659,7 +676,7 @@ impl ModelClient for ToggleableModelClient {
         messages: &[CoreChatMessage],
         tools: &[ToolDefinition],
         options: &ChatOptions,
-    ) -> Result<pares_agens_core::model::ModelCompletion, String> {
+    ) -> Result<pares_radix_core::model::ModelCompletion, String> {
         if !*self.enabled.read().await {
             return Err("deep model escalation is disabled".to_string());
         }
@@ -773,53 +790,6 @@ impl ToolDispatcher for ProcedureToolDispatcher {
     }
 }
 
-/// Detect and strip the Telegram verbose marker from inbound content.
-fn extract_verbose_tool_marker(content: &str) -> (bool, String) {
-    match content.strip_prefix(TELEGRAM_VERBOSE_TOOL_DETAILS_MARKER) {
-        Some(stripped) => (true, stripped.to_string()),
-        None => (false, content.to_string()),
-    }
-}
-
-/// Truncate verbose previews to keep Telegram replies within practical limits.
-fn truncate_verbose_preview(value: &str, max_chars: usize) -> String {
-    let mut chars = value.chars();
-    let preview: String = chars.by_ref().take(max_chars).collect();
-    if chars.next().is_some() {
-        format!("{preview}…")
-    } else {
-        preview
-    }
-}
-
-/// Format request-scoped tool traces for inline Telegram `/verbose` output.
-fn format_verbose_tool_traces(traces: &[ToolCallTrace]) -> String {
-    use std::fmt::Write;
-
-    if traces.is_empty() {
-        return "Tool execution details:\n(no tool calls made)".to_string();
-    }
-
-    let mut output = String::from("Tool execution details:");
-    for (idx, trace) in traces.iter().enumerate() {
-        let status = if trace.is_error { "error" } else { "ok" };
-        let args = truncate_verbose_preview(
-            &trace.arguments.to_string(),
-            VERBOSE_TOOL_ARGS_PREVIEW_CHARS,
-        );
-        let result = truncate_verbose_preview(&trace.result, VERBOSE_TOOL_RESULT_PREVIEW_CHARS);
-        let _ = write!(
-            output,
-            "\n{}. {} [{}]\nargs: {}\nresult: {}",
-            idx + 1,
-            trace.tool_name,
-            status,
-            args,
-            result
-        );
-    }
-    output
-}
 
 struct PluresMemory {
     plures_lm: Arc<PluresLm>,
@@ -1337,66 +1307,6 @@ impl Procedure for ParesManusToolProcedure {
     }
 }
 
-fn value_to_tool_content(value: &serde_json::Value) -> String {
-    value
-        .as_str()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| value.to_string())
-}
-
-fn manus_request_for_tool(
-    tool_name: &str,
-    args: serde_json::Value,
-) -> Result<(&'static str, serde_json::Value), String> {
-    match tool_name {
-        "browser_open" => {
-            let url = args
-                .get("url")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| "missing 'url'".to_string())?;
-            Ok(("browser.open", serde_json::json!({ "url": url })))
-        }
-        "browser_screenshot" => Ok(("browser.screenshot", serde_json::json!({}))),
-        "browser_click" => {
-            let x = args
-                .get("x")
-                .and_then(|v| v.as_i64())
-                .ok_or_else(|| "missing 'x'".to_string())?;
-            let y = args
-                .get("y")
-                .and_then(|v| v.as_i64())
-                .ok_or_else(|| "missing 'y'".to_string())?;
-            Ok(("gui.click", serde_json::json!({ "x": x, "y": y })))
-        }
-        "browser_type" => {
-            let text = args
-                .get("text")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| "missing 'text'".to_string())?;
-            Ok(("gui.type", serde_json::json!({ "text": text })))
-        }
-        "screen_capture" => {
-            let monitor = args.get("monitor").and_then(|v| v.as_u64());
-            let window = args.get("window").and_then(|v| v.as_str());
-            let mut params = serde_json::Map::new();
-            if let Some(monitor) = monitor {
-                params.insert("monitor".to_string(), serde_json::Value::from(monitor));
-            }
-            if let Some(window) = window {
-                params.insert("window".to_string(), serde_json::Value::from(window));
-            }
-            Ok(("screen.capture", serde_json::Value::Object(params)))
-        }
-        "cdp_execute" => {
-            let script = args
-                .get("script")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| "missing 'script'".to_string())?;
-            Ok(("cdp.execute", serde_json::json!({ "script": script })))
-        }
-        _ => Err(format!("unsupported pares-manus tool '{tool_name}'")),
-    }
-}
 
 async fn call_pares_manus(
     ws_url: &str,
@@ -1666,9 +1576,6 @@ impl PluginCrudProcedure {
     }
 }
 
-fn parse_tool_args(raw: &str) -> Result<serde_json::Value, String> {
-    serde_json::from_str(raw).map_err(|e| format!("invalid tool arguments: {e}"))
-}
 
 fn tool_definitions() -> Vec<ToolDefinition> {
     vec![
@@ -1841,99 +1748,36 @@ fn build_system_prompt(path: Option<PathBuf>) -> Result<String, String> {
     Ok("You are Praxis, an AI agent for the plures organization. Be direct, use tools proactively, and push commits without asking.".to_string())
 }
 
-fn parse_sync_topic_key(raw: &str) -> Result<[u8; 32], String> {
-    let trimmed = raw.trim();
-    let value = trimmed.strip_prefix("0x").unwrap_or(trimmed);
-    if value.len() != 64 {
-        return Err("sync topic key must be 64 hex characters (32 bytes)".to_string());
-    }
-
-    let mut key = [0u8; 32];
-    for i in 0..32 {
-        let pair = &value[(i * 2)..(i * 2 + 2)];
-        key[i] = u8::from_str_radix(pair, 16)
-            .map_err(|_| format!("invalid hex byte at position {}: {pair}", i * 2))?;
-    }
-    Ok(key)
-}
 
 const ADAPTER_DISCOVERY_TIMEOUT: Duration = Duration::from_millis(1200);
 const ADAPTER_DISCOVERY_INTERVAL: Duration = Duration::from_millis(200);
 const TELEGRAM_RECONNECT_MAX_ATTEMPTS: u32 = 8;
 const TELEGRAM_RECONNECT_BASE_DELAY_SECS: u64 = 2;
 const TELEGRAM_RECONNECT_MAX_DELAY_SECS: u64 = 30;
-const MEMORY_MONITOR_INTERVAL_SECS: u64 = 60;
+// Staged (not yet wired to a live path) NixOS self-update scaffolding. Kept for
+// the upcoming self-update flow; annotated so the crate's `-D warnings` clippy
+// gate stays green until the entry point is wired.
+#[allow(dead_code)]
 const DEFAULT_NIX_FLAKE_DIR: &str = ".";
+#[allow(dead_code)]
 const DEFAULT_NIX_HOST: &str = "praxisbot";
 const MANUS_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MANUS_RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SingleConnectionConflict {
-    kind: String,
-    connection_id: String,
-    hosts: Vec<String>,
-}
 
-fn sanitize_hostname(raw: &str) -> String {
-    let mut value = String::new();
-    let mut prev_underscore = false;
-    for c in raw.trim().chars() {
-        let mapped = if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
-            c
-        } else {
-            '_'
-        };
-        if mapped == '_' {
-            if prev_underscore {
-                continue;
-            }
-            prev_underscore = true;
-        } else {
-            prev_underscore = false;
-        }
-        value.push(mapped);
-    }
-    value = value.trim_matches('_').to_string();
-    if value.is_empty() {
-        value = "unknown-host".to_string();
-    }
-    value
-}
-
-fn current_hostname() -> String {
-    if let Ok(value) = std::env::var("HOSTNAME") {
-        let clean = sanitize_hostname(&value);
-        if clean != "unknown-host" {
-            return clean;
-        }
-    }
-    if let Ok(value) = std::env::var("COMPUTERNAME") {
-        let clean = sanitize_hostname(&value);
-        if clean != "unknown-host" {
-            return clean;
-        }
-    }
-    #[cfg(unix)]
-    if let Ok(value) = std::fs::read_to_string("/etc/hostname") {
-        let clean = sanitize_hostname(&value);
-        if clean != "unknown-host" {
-            return clean;
-        }
-    }
-    "unknown-host".to_string()
-}
-
+#[allow(dead_code)] // staged self-update helper; not yet wired to a live path
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 /// Delegate to the canonical self-update command builder in `pares_agens_agenda`.
 /// See ADR-0010: no duplicated operational logic across crates.
+#[allow(dead_code)] // staged self-update helper; not yet wired to a live path
 fn build_nixos_update_command(flake_dir: &str, host: &str) -> String {
     pares_agens_agenda::self_update::build_update_command(flake_dir, host)
 }
 
+#[allow(dead_code)] // staged self-update helper; not yet wired to a live path
 fn build_self_update_task(
     flake_dir: &str,
     host: &str,
@@ -1946,94 +1790,6 @@ fn self_update_task_from_env() -> pares_agens_agenda::scheduler::Task {
     pares_agens_agenda::self_update::self_update_task_from_env()
 }
 
-fn parse_vm_rss_kib(contents: &str) -> Option<u64> {
-    contents.lines().find_map(|line| {
-        let line = line.trim();
-        if !line.starts_with("VmRSS:") {
-            return None;
-        }
-        line.split_whitespace().nth(1)?.parse::<u64>().ok()
-    })
-}
-
-fn current_process_rss_kib() -> Option<u64> {
-    #[cfg(target_os = "linux")]
-    {
-        let status = std::fs::read_to_string("/proc/self/status").ok()?;
-        parse_vm_rss_kib(&status)
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        None
-    }
-}
-
-fn parse_watchdog_ping_interval(watchdog_usec: &str) -> Option<Duration> {
-    let micros = watchdog_usec.trim().parse::<u64>().ok()?;
-    if micros == 0 {
-        return None;
-    }
-    let half = micros / 2;
-    let ping_interval_micros = std::cmp::max(half, 1_000_000);
-    Some(Duration::from_micros(ping_interval_micros))
-}
-
-#[cfg(unix)]
-fn systemd_notify(state: &str) -> Result<(), String> {
-    use std::os::unix::net::UnixDatagram;
-
-    let notify_socket = match std::env::var("NOTIFY_SOCKET") {
-        Ok(v) if !v.trim().is_empty() => v,
-        _ => return Ok(()),
-    };
-
-    let sock = UnixDatagram::unbound().map_err(|e| format!("sd_notify socket failed: {e}"))?;
-    if notify_socket.starts_with('@') {
-        return Err("abstract NOTIFY_SOCKET is not supported in this build".to_string());
-    }
-
-    sock.send_to(state.as_bytes(), &notify_socket)
-        .map_err(|e| format!("sd_notify send failed: {e}"))?;
-
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn systemd_notify(_state: &str) -> Result<(), String> {
-    Ok(())
-}
-
-fn spawn_memory_monitor() -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(MEMORY_MONITOR_INTERVAL_SECS));
-        loop {
-            interval.tick().await;
-            if let Some(rss_kib) = current_process_rss_kib() {
-                tracing::info!(memory_rss_kib = rss_kib, commit = env!("GIT_COMMIT_HASH"), "process memory usage");
-            }
-        }
-    })
-}
-
-fn spawn_systemd_watchdog() -> Option<tokio::task::JoinHandle<()>> {
-    let watchdog_usec = std::env::var("WATCHDOG_USEC").ok()?;
-    let ping_interval = parse_watchdog_ping_interval(&watchdog_usec)?;
-
-    if let Err(e) = systemd_notify("READY=1") {
-        tracing::warn!("failed to send systemd READY=1: {e}");
-    }
-
-    Some(tokio::spawn(async move {
-        let mut interval = tokio::time::interval(ping_interval);
-        loop {
-            interval.tick().await;
-            if let Err(e) = systemd_notify("WATCHDOG=1") {
-                tracing::warn!("failed to send systemd WATCHDOG=1: {e}");
-            }
-        }
-    }))
-}
 
 async fn run_adapter_with_recovery(
     adapter: &TelegramAdapter,
@@ -2160,56 +1916,6 @@ async fn read_host_adapter_configs(
     Ok(records)
 }
 
-fn detect_single_connection_conflicts(
-    local_host: &str,
-    records: &[HostAdapterRecord],
-) -> Vec<SingleConnectionConflict> {
-    use std::collections::{BTreeMap, BTreeSet};
-
-    let mut owners: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
-    for record in records {
-        for adapter in &record.adapters {
-            if !adapter.single_connection || adapter.connection_id.trim().is_empty() {
-                continue;
-            }
-            owners
-                .entry((adapter.kind.clone(), adapter.connection_id.clone()))
-                .or_default()
-                .insert(record.host.clone());
-        }
-    }
-
-    owners
-        .into_iter()
-        .filter_map(|((kind, connection_id), hosts)| {
-            if hosts.len() < 2 || !hosts.contains(local_host) {
-                return None;
-            }
-            Some(SingleConnectionConflict {
-                kind,
-                connection_id,
-                hosts: hosts.into_iter().collect(),
-            })
-        })
-        .collect()
-}
-
-fn redact_connection_id(value: &str) -> String {
-    let len = value.chars().count();
-    if len <= 8 {
-        return "********".to_string();
-    }
-    let start: String = value.chars().take(4).collect();
-    let end: String = value
-        .chars()
-        .rev()
-        .take(4)
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect();
-    format!("{start}…{end}")
-}
 
 #[derive(Debug, Subcommand)]
 #[allow(clippy::large_enum_variant)]
@@ -2294,6 +2000,17 @@ enum Commands {
         /// Shared SEA key (base64url-encoded SeaKeyPair JSON) required to decrypt sync payloads.
         #[arg(long, env = "PARES_SYNC_SHARED_KEY")]
         sync_shared_key: Option<String>,
+
+        /// Disable headroom context-compression of model requests.
+        ///
+        /// Compression is ON by default. It is disabled when this flag is
+        /// present OR when `PARES_AGENS_HEADROOM` is one of `0/false/off/no`.
+        #[arg(long)]
+        no_headroom: bool,
+
+        /// Minimum estimated token count before headroom compression engages.
+        #[arg(long, env = "PARES_AGENS_HEADROOM_MIN_TOKENS", default_value_t = 500)]
+        headroom_min_tokens: usize,
     },
 
     /// Run the agent with an interactive terminal UI.
@@ -2321,6 +2038,17 @@ enum Commands {
         /// Path to a system prompt file.
         #[arg(long, value_name = "PATH")]
         system_prompt: Option<PathBuf>,
+
+        /// Disable headroom context-compression of model requests.
+        ///
+        /// Compression is ON by default. It is disabled when this flag is
+        /// present OR when `PARES_AGENS_HEADROOM` is one of `0/false/off/no`.
+        #[arg(long)]
+        no_headroom: bool,
+
+        /// Minimum estimated token count before headroom compression engages.
+        #[arg(long, env = "PARES_AGENS_HEADROOM_MIN_TOKENS", default_value_t = 500)]
+        headroom_min_tokens: usize,
 
     },
 }
@@ -2383,6 +2111,8 @@ async fn main() {
             manus_ws_url,
             sync_topic_key,
             sync_shared_key,
+            no_headroom,
+            headroom_min_tokens,
         } => {
             tracing::info!(commit = env!("GIT_COMMIT_HASH"), "Starting Pares Agens daemon");
             let started_at = Instant::now();
@@ -2415,7 +2145,10 @@ async fn main() {
 
             let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
             let runtime_state_dir = PathBuf::from(&home).join(".pares-agens/runtime-state");
-            let runtime_state_store: Arc<dyn StateStore> =
+            // Concrete handle first so we can share the underlying CrdtStore
+            // with the headroom compression handler for consistent
+            // observability (both read/write the same store).
+            let runtime_state_concrete: Arc<PluresDbStateStore> =
                 match PluresDbStateStore::open(&runtime_state_dir) {
                     Ok(store) => Arc::new(store),
                     Err(e) => {
@@ -2427,6 +2160,36 @@ async fn main() {
                         Arc::new(PluresDbStateStore::in_memory())
                     }
                 };
+            let runtime_state_store: Arc<dyn StateStore> =
+                Arc::clone(&runtime_state_concrete) as Arc<dyn StateStore>;
+
+            // Build the headroom compression hook (ON by default; gated by
+            // `--no-headroom` / `PARES_AGENS_HEADROOM`). The handler shares the
+            // same CrdtStore as the runtime state store.
+            let headroom_hook = {
+                let handler = Arc::new(pares_agens_core::HeadroomActionHandler::new(
+                    runtime_state_concrete.crdt_store(),
+                ));
+                let enabled = headroom_enabled(no_headroom);
+                let hook = if enabled {
+                    pares_agens_core::HeadroomHook::new(
+                        Arc::clone(&runtime_state_store),
+                        handler,
+                        headroom_min_tokens,
+                    )
+                } else {
+                    pares_agens_core::HeadroomHook::disabled(
+                        Arc::clone(&runtime_state_store),
+                        handler,
+                    )
+                };
+                tracing::info!(
+                    enabled,
+                    min_tokens = headroom_min_tokens,
+                    "headroom compression configured"
+                );
+                hook
+            };
 
             if let Some(saved) = runtime_state_store
                 .get(MODEL_OVERRIDE_STATE_KEY)
@@ -2476,8 +2239,10 @@ async fn main() {
             let runtime_model_control = Arc::new(RuntimeModelControl {
                 primary_model: Arc::clone(&model_name),
                 deep_model: Arc::clone(&deep_model_name),
+                fast_model: Arc::new(RwLock::new(String::new())),
                 deep_escalation_enabled: Arc::clone(&deep_escalation_enabled_state),
                 state_store: Arc::clone(&runtime_state_store),
+                agent_ref: Arc::new(RwLock::new(None)),
             });
             let mut runtime_config_control: Option<Arc<dyn TelegramConfigControl>> = None;
 
@@ -2733,7 +2498,7 @@ async fn main() {
             {
                 let manifests = plugin_executor.load_persisted_manifests();
                 for manifest_json in manifests {
-                    if let Ok(manifest) = serde_json::from_value::<pares_agens_core::plugins::PluginManifest>(manifest_json) {
+                    if let Ok(manifest) = serde_json::from_value::<pares_radix_core::plugins::PluginManifest>(manifest_json) {
                         let name = manifest.name.clone();
                         if let Err(e) = plugin_runtime.install(manifest).await {
                             tracing::warn!(plugin = %name, error = %e, "failed to restore persisted plugin");
@@ -2784,6 +2549,7 @@ async fn main() {
                 embed_model: embed_model.clone(),
                 api_key: api_key.clone(),
                 system_prompt_path: system_prompt_path.clone(),
+                headroom: Some(headroom_hook.clone()),
             });
             let agent = match agent_factory.build_agent() {
                 Ok(agent) => agent,
@@ -2793,6 +2559,10 @@ async fn main() {
                 }
             };
             let agent_handle = Arc::new(RwLock::new(agent));
+            {
+                let agent_snapshot = Arc::clone(&*agent_handle.read().await);
+                *runtime_model_control.agent_ref.write().await = Some(agent_snapshot);
+            }
 
             // Inject plugin schema context into agent's system prompt
             {
@@ -2823,21 +2593,36 @@ async fn main() {
                 Arc::clone(&plugin_runtime),
                 Arc::clone(&plugin_executor),
             );
+            {
+                let tool_count = plugin_runtime.tool_definitions().await.len();
+                config = config.with_tool_count(tool_count);
+            }
             // Initialize the event spine — always on, not optional.
             // The spine is the nervous system: heartbeats, task procedures,
             // channel contracts, and event tracking all depend on it.
             let event_spine_handle = {
                 let crdt = store.crdt_store();
-                let spine = pares_agens_core::event_spine::EventSpine::new(crdt, "pares-agens");
+                let spine = pares_radix_core::event_spine::EventSpine::new(crdt, "pares-agens");
                 spine.seed_contracts();
                 spine.register_core_procedures();
-                let handle = pares_agens_core::event_spine::EventSpineHandle::from_arc_store(
+                let handle = pares_radix_core::event_spine::EventSpineHandle::from_arc_store(
                     store.crdt_store_arc(),
                     "pares-agens",
                 );
                 tracing::info!("Event spine initialized — contracts seeded, core procedures registered");
                 handle
             };
+
+            // Wire the task manager into the Telegram config so `/tasks` works
+            // and the agent's promise-storage path is backed by a real store.
+            // The `serve` path previously omitted this (unlike the agent_commands
+            // runtime path), so `/tasks` reported "Task manager is unavailable" and
+            // stored promises had nowhere to live. Shares the same CrdtStore as the
+            // event spine and runtime state store.
+            let serve_task_manager = std::sync::Arc::new(
+                pares_radix_core::task_manager::TaskManager::new(store.crdt_store_arc()),
+            );
+            config = config.with_task_manager(std::sync::Arc::clone(&serve_task_manager));
 
             let adapter = TelegramAdapter::with_event_spine(config, event_spine_handle.clone());
 
@@ -2906,7 +2691,7 @@ async fn main() {
             });
             tracing::info!("Scheduler started");
 
-            let memory_monitor = spawn_memory_monitor();
+            let memory_monitor = spawn_memory_monitor(env!("GIT_COMMIT_HASH"));
             let watchdog = spawn_systemd_watchdog();
 
             // Spawn heartbeat runner
@@ -2967,6 +2752,8 @@ async fn main() {
             copilot,
             api_key,
             system_prompt,
+            no_headroom,
+            headroom_min_tokens,
         } => {
             use crossterm::{
                 event::{self as ct_event, Event as CtEvent, KeyCode, KeyEventKind},
@@ -3091,6 +2878,42 @@ async fn main() {
             let mut registry = pares_agens_core::delegation::registry::AgentRegistry::new();
             registry.register_builtins();
 
+            // Headroom compression hook for the TUI. Opens a dedicated runtime
+            // state store (same convention as the serve path) so the
+            // compression handler and observability keys share one CrdtStore.
+            let headroom_hook = {
+                let runtime_state_dir =
+                    PathBuf::from(&home).join(".pares-agens/runtime-state");
+                let state_concrete: Arc<PluresDbStateStore> =
+                    match PluresDbStateStore::open(&runtime_state_dir) {
+                        Ok(s) => Arc::new(s),
+                        Err(e) => {
+                            tracing::warn!(
+                                path = %runtime_state_dir.display(),
+                                error = %e,
+                                "failed to open runtime state store for headroom; using in-memory"
+                            );
+                            Arc::new(PluresDbStateStore::in_memory())
+                        }
+                    };
+                let state_dyn: Arc<dyn StateStore> =
+                    Arc::clone(&state_concrete) as Arc<dyn StateStore>;
+                let handler = Arc::new(pares_agens_core::HeadroomActionHandler::new(
+                    state_concrete.crdt_store(),
+                ));
+                let enabled = headroom_enabled(no_headroom);
+                tracing::info!(
+                    enabled,
+                    min_tokens = headroom_min_tokens,
+                    "headroom compression configured (tui)"
+                );
+                if enabled {
+                    pares_agens_core::HeadroomHook::new(state_dyn, handler, headroom_min_tokens)
+                } else {
+                    pares_agens_core::HeadroomHook::disabled(state_dyn, handler)
+                }
+            };
+
             let agent = Arc::new(
                 Agent::with_cerebellum(memory, cerebellum, plures_lm)
                     .with_model(
@@ -3098,7 +2921,8 @@ async fn main() {
                         Arc::clone(&tool_dispatcher),
                         system_prompt_text,
                     )
-                    .with_turn_store(Arc::clone(&store) as Arc<dyn pares_agens_core::memory::store::MemoryStore>),
+                    .with_turn_store(Arc::clone(&store) as Arc<dyn pares_agens_core::memory::store::MemoryStore>)
+                    .with_headroom(headroom_hook),
             );
 
             // Set up terminal
@@ -3182,6 +3006,15 @@ async fn main() {
                         AppEvent::AgentResponse(content) => {
                             app.handle_agent_response(content);
                         }
+                        AppEvent::StreamChunk(chunk) => {
+                            app.handle_stream_chunk(chunk);
+                        }
+                        AppEvent::SessionsLoaded(sessions) => {
+                            app.handle_sessions_loaded(sessions);
+                        }
+                        AppEvent::SessionMessagesLoaded(name, turns) => {
+                            app.handle_session_messages_loaded(name, turns);
+                        }
                         AppEvent::Quit => {
                             break 'main_loop Ok(());
                         }
@@ -3208,7 +3041,7 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pares_agens_core::model::{ModelCompletion, ToolCall, ToolDefinition};
+    use pares_radix_core::model::{ModelCompletion, ToolCall, ToolDefinition};
 
     struct TestModelClient;
 
@@ -3224,6 +3057,7 @@ mod tests {
                 content: Some("ok".to_string()),
                 tool_calls: Vec::<ToolCall>::new(),
                 logprobs: None,
+                model: None,
             })
         }
     }
@@ -3241,87 +3075,27 @@ mod tests {
         }
     }
 
-    #[test]
-    fn detect_single_connection_conflicts_for_local_host() {
-        let records = vec![
-            HostAdapterRecord {
-                host: "alpha".to_string(),
-                adapters: vec![HostAdapterConfig {
-                    kind: "telegram".to_string(),
-                    connection_id: "token-a".to_string(),
-                    single_connection: true,
-                }],
-            },
-            HostAdapterRecord {
-                host: "beta".to_string(),
-                adapters: vec![HostAdapterConfig {
-                    kind: "telegram".to_string(),
-                    connection_id: "token-a".to_string(),
-                    single_connection: true,
-                }],
-            },
-        ];
-        let conflicts = detect_single_connection_conflicts("alpha", &records);
-        assert_eq!(conflicts.len(), 1);
-        assert_eq!(conflicts[0].kind, "telegram");
-        assert_eq!(
-            conflicts[0].hosts,
-            vec!["alpha".to_string(), "beta".to_string()]
-        );
-    }
-
-    #[test]
-    fn detect_single_connection_conflicts_ignores_non_single_connections() {
-        let records = vec![
-            HostAdapterRecord {
-                host: "alpha".to_string(),
-                adapters: vec![HostAdapterConfig {
-                    kind: "local".to_string(),
-                    connection_id: "n/a".to_string(),
-                    single_connection: false,
-                }],
-            },
-            HostAdapterRecord {
-                host: "beta".to_string(),
-                adapters: vec![HostAdapterConfig {
-                    kind: "local".to_string(),
-                    connection_id: "n/a".to_string(),
-                    single_connection: false,
-                }],
-            },
-        ];
-        let conflicts = detect_single_connection_conflicts("alpha", &records);
-        assert!(conflicts.is_empty());
-    }
-
-    #[test]
-    fn detect_single_connection_conflicts_ignores_non_local_conflicts() {
-        let records = vec![
-            HostAdapterRecord {
-                host: "beta".to_string(),
-                adapters: vec![HostAdapterConfig {
-                    kind: "telegram".to_string(),
-                    connection_id: "token-a".to_string(),
-                    single_connection: true,
-                }],
-            },
-            HostAdapterRecord {
-                host: "gamma".to_string(),
-                adapters: vec![HostAdapterConfig {
-                    kind: "telegram".to_string(),
-                    connection_id: "token-a".to_string(),
-                    single_connection: true,
-                }],
-            },
-        ];
-        let conflicts = detect_single_connection_conflicts("alpha", &records);
-        assert!(conflicts.is_empty());
-    }
 
     #[test]
     fn build_nixos_update_command_delegates_to_agenda() {
+        // Verifies the CLI delegates to the shared flake-driven self-update impl
+        // (pares_agens_agenda::self_update::build_update_command). Under ADR-0010
+        // that impl uses a `nix flake update` + `nixos-rebuild switch` flow with
+        // dynamic flake-input discovery — NOT a `cargo build` binary-swap. Assert
+        // on the actual hallmarks of that shared command (host is single-quoted).
         let command = build_nixos_update_command("/etc/nixos", "praxisbot");
-        assert!(command.contains("cargo build --release -p pares-agens"), "must delegate to shared impl");
+        assert!(
+            command.contains("nix flake update"),
+            "must delegate to shared flake-update impl"
+        );
+        assert!(
+            command.contains("nixos-rebuild switch --flake .#'praxisbot'"),
+            "must rebuild the NixOS config for the given host"
+        );
+        assert!(
+            command.contains("FLAKE_INPUT"),
+            "must use the shared impl's dynamic flake-input discovery"
+        );
     }
 
     #[test]
@@ -3341,89 +3115,18 @@ mod tests {
         }
     }
 
-    #[test]
-    fn parse_vm_rss_kib_extracts_numeric_value() {
-        let status = "Name:\tpares-agens\nVmRSS:\t   42104 kB\nThreads:\t6\n";
-        assert_eq!(parse_vm_rss_kib(status), Some(42104));
-    }
-
-    #[test]
-    fn parse_watchdog_ping_interval_uses_half_of_watchdog_usec() {
-        let interval = parse_watchdog_ping_interval("4000000").expect("watchdog interval");
-        assert_eq!(interval, Duration::from_secs(2));
-    }
-
-    #[test]
-    fn parse_watchdog_ping_interval_has_safe_minimum() {
-        let interval = parse_watchdog_ping_interval("1000").expect("watchdog interval");
-        assert_eq!(interval, Duration::from_secs(1));
-    }
-
-    #[test]
-    fn extract_verbose_tool_marker_detects_and_strips_prefix() {
-        let (is_verbose, stripped) =
-            extract_verbose_tool_marker("__PARES_VERBOSE_TOOL_DETAILS__:run diagnostics");
-        assert!(is_verbose);
-        assert_eq!(stripped, "run diagnostics");
-    }
-
-    #[test]
-    fn extract_verbose_tool_marker_preserves_plain_content() {
-        let (is_verbose, stripped) = extract_verbose_tool_marker("hello");
-        assert!(!is_verbose);
-        assert_eq!(stripped, "hello");
-    }
-
-    #[test]
-    fn format_verbose_tool_traces_renders_tool_name_and_result() {
-        let traces = vec![ToolCallTrace {
-            tool_name: "web_search".to_string(),
-            arguments: serde_json::json!({"q":"status"}),
-            result: "{\"ok\":true}".to_string(),
-            is_error: false,
-        }];
-        let formatted = format_verbose_tool_traces(&traces);
-        assert!(formatted.contains("Tool execution details:"));
-        assert!(formatted.contains("web_search [ok]"));
-        assert!(formatted.contains("result: {\"ok\":true}"));
-    }
-
-    #[test]
-    fn manus_request_maps_browser_click_to_gui_click() {
-        let (method, params) =
-            manus_request_for_tool("browser_click", serde_json::json!({"x": 21, "y": 34}))
-                .expect("request should map");
-        assert_eq!(method, "gui.click");
-        assert_eq!(params, serde_json::json!({"x": 21, "y": 34}));
-    }
-
-    #[test]
-    fn manus_request_requires_browser_open_url() {
-        let err = manus_request_for_tool("browser_open", serde_json::json!({}))
-            .expect_err("missing url should fail");
-        assert!(err.contains("missing 'url'"));
-    }
-
-    #[test]
-    fn manus_request_maps_screen_capture_optional_fields() {
-        let (method, params) = manus_request_for_tool(
-            "screen_capture",
-            serde_json::json!({"monitor": 1, "window": "Edge"}),
-        )
-        .expect("request should map");
-        assert_eq!(method, "screen.capture");
-        assert_eq!(params, serde_json::json!({"monitor": 1, "window": "Edge"}));
-    }
 
     #[tokio::test]
     async fn runtime_model_control_persists_primary_model_override() {
         let state_store: Arc<dyn StateStore> =
-            Arc::new(pares_agens_core::InMemoryStateStore::new());
+            Arc::new(pares_radix_core::InMemoryStateStore::new());
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4.1".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
+            fast_model: Arc::new(RwLock::new(String::new())),
             deep_escalation_enabled: Arc::new(RwLock::new(true)),
             state_store: Arc::clone(&state_store),
+            agent_ref: Arc::new(RwLock::new(None)),
         };
 
         control.set_primary_model("gpt-4o").await.unwrap();
@@ -3445,12 +3148,14 @@ mod tests {
     #[tokio::test]
     async fn runtime_model_control_persists_deep_model_override() {
         let state_store: Arc<dyn StateStore> =
-            Arc::new(pares_agens_core::InMemoryStateStore::new());
+            Arc::new(pares_radix_core::InMemoryStateStore::new());
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
+            fast_model: Arc::new(RwLock::new(String::new())),
             deep_escalation_enabled: Arc::new(RwLock::new(true)),
             state_store: Arc::clone(&state_store),
+            agent_ref: Arc::new(RwLock::new(None)),
         };
 
         control.set_deep_model("claude-sonnet-4.5").await.unwrap();
@@ -3472,12 +3177,14 @@ mod tests {
     #[tokio::test]
     async fn runtime_model_control_persists_deep_escalation_toggle() {
         let state_store: Arc<dyn StateStore> =
-            Arc::new(pares_agens_core::InMemoryStateStore::new());
+            Arc::new(pares_radix_core::InMemoryStateStore::new());
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
+            fast_model: Arc::new(RwLock::new(String::new())),
             deep_escalation_enabled: Arc::new(RwLock::new(true)),
             state_store: Arc::clone(&state_store),
+            agent_ref: Arc::new(RwLock::new(None)),
         };
 
         control.set_deep_escalation_enabled(false).await.unwrap();
@@ -3493,26 +3200,18 @@ mod tests {
         );
     }
 
-    #[test]
-    fn normalize_log_level_accepts_known_values() {
-        assert_eq!(normalize_log_level("DEBUG").unwrap(), "debug");
-        assert_eq!(normalize_log_level(" warn ").unwrap(), "warn");
-    }
-
-    #[test]
-    fn normalize_log_level_rejects_unknown_values() {
-        assert!(normalize_log_level("verbose").is_err());
-    }
 
     #[tokio::test]
     async fn runtime_config_control_persists_model_endpoint_and_log_level() {
         let state_store: Arc<dyn StateStore> =
-            Arc::new(pares_agens_core::InMemoryStateStore::new());
+            Arc::new(pares_radix_core::InMemoryStateStore::new());
         let runtime_model_control = Arc::new(RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
+            fast_model: Arc::new(RwLock::new(String::new())),
             deep_escalation_enabled: Arc::new(RwLock::new(true)),
             state_store: Arc::clone(&state_store),
+            agent_ref: Arc::new(RwLock::new(None)),
         });
         let provider_config = ProviderConfig::new("http://localhost:11434/v1", None);
         let router_config = RouterConfig::single("default", provider_config);
@@ -3574,6 +3273,7 @@ mod tests {
             embed_model: "nomic-embed-text".to_string(),
             api_key: None,
             system_prompt_path: None,
+            headroom: None,
         });
 
         let first_agent = factory.build_agent().expect("build initial agent");

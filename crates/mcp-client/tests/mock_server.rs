@@ -407,7 +407,7 @@ async fn ping_returns_true_on_success() {
 
 #[test]
 fn new_guarded_free_tier_returns_feature_not_available() {
-    let license = pares_agens_core::license::License::free();
+    let license = pares_radix_core::license::License::free();
     let result = McpClient::new_guarded(
         MockTransport::new(|req| ok_response(req_id(req), json!({}))),
         &license,
@@ -415,7 +415,7 @@ fn new_guarded_free_tier_returns_feature_not_available() {
     assert!(
         matches!(
             result,
-            Err(pares_agens_core::license::LicenseError::FeatureNotAvailable { .. })
+            Err(pares_radix_core::license::LicenseError::FeatureNotAvailable { .. })
         ),
         "Free tier should block MCP tool orchestration"
     );
@@ -423,7 +423,7 @@ fn new_guarded_free_tier_returns_feature_not_available() {
 
 #[test]
 fn new_guarded_pro_tier_succeeds() {
-    let license = pares_agens_core::license::License::pro(None);
+    let license = pares_radix_core::license::License::pro(None);
     let result = McpClient::new_guarded(
         MockTransport::new(|req| ok_response(req_id(req), json!({}))),
         &license,
@@ -437,7 +437,7 @@ fn new_guarded_pro_tier_succeeds() {
 #[test]
 fn new_guarded_expired_pro_returns_expired() {
     let past = chrono::Utc::now() - chrono::TimeDelta::days(1);
-    let license = pares_agens_core::license::License::pro(Some(past));
+    let license = pares_radix_core::license::License::pro(Some(past));
     let result = McpClient::new_guarded(
         MockTransport::new(|req| ok_response(req_id(req), json!({}))),
         &license,
@@ -445,7 +445,7 @@ fn new_guarded_expired_pro_returns_expired() {
     assert!(
         matches!(
             result,
-            Err(pares_agens_core::license::LicenseError::Expired)
+            Err(pares_radix_core::license::LicenseError::Expired)
         ),
         "Expired Pro license should be rejected"
     );

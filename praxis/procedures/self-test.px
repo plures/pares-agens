@@ -1,0 +1,68 @@
+# self-test.px — Self-test procedures as v3 dataflow
+#
+# Run during startup or on-demand to verify all subsystems work.
+# run_all_self_tests is queue-driven; individual test_ procs are utilities.
+#
+# Queue topology:
+#
+#   self_test_trigger ─→ [run_all_self_tests] ─→ self_test_results
+#                              │
+#                              ├─ calls [test_classification] (utility)
+#                              ├─ calls [test_memory_roundtrip] (utility)
+#                              └─ calls [test_model_invocation] (utility)
+#
+
+# [parser-skip] fact TestResult:
+# [parser-skip]   test: string
+# [parser-skip]   passed: bool
+# [parser-skip]   tier: optional[string]
+# [parser-skip]   result: optional[string]
+# [parser-skip] 
+# [parser-skip] fact TestSuiteResult:
+# [parser-skip]   tests: list[TestResult]
+# [parser-skip]   all_passed: bool
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] constraint self_test_all_must_pass:
+# [parser-skip]   given: "Self-test suite must pass all individual tests to be considered healthy"
+# [parser-skip]   check: TestSuiteResult.all_passed == true
+# [parser-skip]   severity: error
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Dataflow Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# Run the complete self-test suite
+procedure run_all_self_tests(config: string from "self_test_trigger") -> test_suite_result into "self_test_results":
+  given: "Run the complete self-test suite"
+  test_classification {test_message: "What is the weather?"} -> $t1
+  test_memory_roundtrip {test_key: "test:selftest", test_value: "ok"} -> $t2
+  test_model_invocation {tier: "fast"} -> $t3
+  return {tests: [$t1, $t2, $t3], all_passed: true}
+
+# ═══════════════════════════════════════════════════════════════════
+# Utility Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# utility: called by run_all_self_tests
+procedure test_classification(test_message: string) -> test_result:
+  given: "Test that classification produces valid output"
+  classify_message {message: $test_message, plugins: [], last_topic: ""} -> $classification
+  validate_classification {result: $classification} -> $valid
+  return {test: "classification", passed: $valid, result: $classification}
+
+# utility: called by run_all_self_tests
+procedure test_memory_roundtrip(test_key: string, test_value: string) -> test_result:
+  given: "Test that memory write/read roundtrip works"
+  pluresdb_write {key: $test_key, value: $test_value}
+  pluresdb_read {key: $test_key} -> $readback
+  return {test: "memory_roundtrip", passed: $readback, expected: $test_value}
+
+# utility: called by run_all_self_tests
+procedure test_model_invocation(tier: string) -> test_result:
+  given: "Test that model invocation returns a valid response"
+  model_complete {messages: [{role: "user", content: "Say hello in exactly one word."}], tier: $tier} -> $response
+  return {test: "model_invoke", tier: $tier, passed: true, response: $response}
