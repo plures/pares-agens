@@ -185,9 +185,8 @@ trigger the same approval flow: they all call the same
 
 ### 5. PluresDB integration (C-PLURES-003 / C-PLURES-004)
 
-No ad-hoc structs for durable state — following the `worktask.px` pattern
-(`praxis/procedures/worktask.px` documents its own PluresDB key layout this
-way), the new keys are:
+No ad-hoc structs for durable state — following existing `.px` procedure patterns
+(e.g. `praxis/procedures/dev-lifecycle.px` + `praxis/procedures/session-continuity.px`), the new keys are:
 
 ```
 approvals:session:{session_id}:mode          current PermissionMode for a session
