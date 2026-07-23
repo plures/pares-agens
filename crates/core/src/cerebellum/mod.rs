@@ -290,7 +290,7 @@ impl Cerebellum {
             .unwrap_or_default();
 
         // 1. Recall relevant memories and convert to ContextItems
-        let mut clear_history = false;
+        let mut topic_shifted = false;
         let mut query_similarities = std::collections::HashMap::new();
 
         // Fast path: skip expensive embedding + recall for very short
@@ -311,7 +311,7 @@ impl Cerebellum {
             let embed_elapsed = embed_start.elapsed();
             tracing::info!(embed_ms = embed_elapsed.as_millis(), "embedding computed");
 
-            clear_history = self.detect_topic_shift(event, &query_embedding);
+            topic_shifted = self.detect_topic_shift(event, &query_embedding);
 
             let recall_start = std::time::Instant::now();
             let exclude_categories = parse_excluded_categories(&self.config.exclude_categories);
@@ -359,8 +359,12 @@ impl Cerebellum {
             let mut items = self.context_items.lock().unwrap();
             let scorer = self.relevance_scorer.lock().unwrap();
 
-            // Clear on topic shift
-            if clear_history {
+            // A semantic topic shift invalidates recalled/context-manager items,
+            // but must not erase the channel's explicit conversation history.
+            // Users commonly switch from discussing a task to asking for its
+            // status; that is semantically different while still referring to
+            // the immediately preceding turn.
+            if topic_shifted {
                 items.clear();
             }
 
@@ -432,7 +436,7 @@ impl Cerebellum {
             context_items = managed.items.len(),
             tokens_used = managed.tokens_used,
             token_budget = managed.token_budget,
-            topic_shifted = clear_history,
+            topic_shifted,
             entities = entities.len(),
             "context managed"
         );
@@ -529,7 +533,10 @@ impl Cerebellum {
             learned_context,
             route,
             guidance,
-            clear_history,
+            // Conversation history is user/session state. Semantic similarity
+            // is too weak a signal to discard it; only explicit session commands
+            // should do that.
+            clear_history: false,
             approval_required,
         })
     }
@@ -984,7 +991,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn preprocess_clears_history_on_topic_shift_and_restores_on_return() {
+    async fn preprocess_preserves_conversation_history_on_topic_shift() {
         let store = Arc::new(InMemoryStore::new());
         let rust_embedding = MockEmbedder
             .embed("Use tokio channels to coordinate async Rust tasks")
@@ -1033,8 +1040,8 @@ mod tests {
             .await
             .expect("second preprocess should succeed");
         assert!(
-            cooking_ctx.clear_history,
-            "different topic should clear history"
+            !cooking_ctx.clear_history,
+            "semantic topic changes must not discard explicit conversation history"
         );
 
         let rust_return_msg = Event::Message {

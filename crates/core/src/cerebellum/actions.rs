@@ -272,6 +272,43 @@ impl CerebellumActionHandler {
         Ok(json!({ "value": value }))
     }
 
+    /// Append a single message to a channel's persisted `chat_history:{chat_id}`
+    /// state entry (read-modify-write against the shared state store).
+    ///
+    /// This is the fix for the amnesia bug: `append_history` used to be
+    /// aliased directly to `write_state`, but `write_state` requires a
+    /// literal `key`/`value` pair while every call site passes
+    /// `{chat_id, role, content}` — so every append silently failed with
+    /// `ActionFailed: missing required param: key`, and `chat_history:{id}`
+    /// was never populated. `assemble_context`/`dispatch_steered_task`
+    /// always read back an empty history, which is why the agent forgot
+    /// tasks/context from the immediately preceding turn.
+    async fn append_history(&self, params: &Value) -> Result<Value, ExecutionError> {
+        let chat_id = params.get("chat_id").and_then(|v| v.as_str()).ok_or_else(|| {
+            ExecutionError::ActionFailed {
+                action: "append_history".to_string(),
+                message: "missing required param: chat_id (string)".to_string(),
+            }
+        })?;
+        let role = params.get("role").and_then(|v| v.as_str()).unwrap_or("user");
+        let content = params.get("content").and_then(|v| v.as_str()).unwrap_or_default();
+
+        let key = format!("chat_history:{chat_id}");
+        let mut state = self.state.write().await;
+        let mut history = state
+            .get(&key)
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        history.push(json!({"role": role, "content": content}));
+        const MAX_HISTORY_ENTRIES: usize = 40;
+        if history.len() > MAX_HISTORY_ENTRIES {
+            history = history[history.len() - MAX_HISTORY_ENTRIES..].to_vec();
+        }
+        state.insert(key, json!(history));
+        Ok(json!({ "written": true }))
+    }
+
     async fn write_state(&self, params: &Value) -> Result<Value, ExecutionError> {
         let key = params.get("key").and_then(|v| v.as_str()).ok_or_else(|| {
             ExecutionError::ActionFailed {
@@ -978,7 +1015,7 @@ impl AsyncActionHandler for CerebellumActionHandler {
             "extract_entities" => Self::extract_entities_action(params),
             "manage_context" => Self::manage_context_action(params),
             "build_messages" => Self::build_messages_action(params),
-            "append_history" => self.write_state(params).await, // Uses state store for now
+            "append_history" => self.append_history(params).await,
             "append_tail" => Self::append_tail_action(params),
             "channel_send" => Ok(json!({"sent": true})), // Handled by graph output, not inline
             "dispatch_tools" => self.dispatch_tools_action(params).await,
@@ -1118,6 +1155,60 @@ mod tests {
         let result = handler.call("cosine_similarity", &params).await.unwrap();
         let sim = result["similarity"].as_f64().unwrap();
         assert!(sim.abs() < 1e-6, "orthogonal vectors via action, got {sim}");
+    }
+
+    /// Regression test for the amnesia bug: `append_history` was aliased to
+    /// raw `write_state`, which requires a `key`/`value` pair. Every real
+    /// call site passes `{chat_id, role, content}` instead, so every append
+    /// silently failed and `chat_history:{chat_id}` was never populated,
+    /// meaning `assemble_context`/`dispatch_steered_task` always read back
+    /// an empty history on the next turn.
+    #[tokio::test]
+    async fn append_history_persists_into_chat_history_key() {
+        let handler = CerebellumActionHandler::for_testing();
+
+        let result = handler
+            .call(
+                "append_history",
+                &json!({"chat_id": "123", "role": "user", "content": "remember this task"}),
+            )
+            .await
+            .expect("append_history must succeed with chat_id/role/content params");
+        assert_eq!(result["written"], json!(true));
+
+        let read_back = handler
+            .call("read_state", &json!({"key": "chat_history:123"}))
+            .await
+            .unwrap();
+        let history = read_back["value"].as_array().expect("chat_history must be an array");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0]["role"], json!("user"));
+        assert_eq!(history[0]["content"], json!("remember this task"));
+
+        // A second turn appends rather than overwrites.
+        handler
+            .call(
+                "append_history",
+                &json!({"chat_id": "123", "role": "assistant", "content": "got it"}),
+            )
+            .await
+            .unwrap();
+        let read_back2 = handler
+            .call("read_state", &json!({"key": "chat_history:123"}))
+            .await
+            .unwrap();
+        let history2 = read_back2["value"].as_array().unwrap();
+        assert_eq!(history2.len(), 2);
+        assert_eq!(history2[1]["role"], json!("assistant"));
+    }
+
+    #[tokio::test]
+    async fn append_history_missing_chat_id_is_a_real_error() {
+        let handler = CerebellumActionHandler::for_testing();
+        let result = handler
+            .call("append_history", &json!({"role": "user", "content": "x"}))
+            .await;
+        assert!(result.is_err(), "append_history without chat_id must fail loudly, not silently no-op");
     }
 
     #[tokio::test]
