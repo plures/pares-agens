@@ -203,11 +203,9 @@ approvals:audit:{token}                      immutable record: tool, command/sum
 ```
 
 Per C-PLURES-004, the actions that read/write these keys are named Rust
-boundary actions invoked from `.px` (mirroring `dev-lifecycle.px` /
-`worktask.px` conventions), not raw structs scattered through adapter code.
+boundary actions invoked from `.px` (mirroring `dev-lifecycle.px`'s separation of orchestration in `.px` from side effects in Rust action handlers), not raw structs scattered through adapter code.
 A companion `.px` procedure (e.g. `praxis/procedures/approvals.px`) should
-be authored in the **implementation** pass to define the decision flow the
-way `worktask.px` defines PR-mode precedence — out of scope for this ADR,
+be authored in the **implementation** pass to define the decision flow — out of scope for this ADR,
 but the key layout above is designed to be `.px`-addressable from the
 start.
 
