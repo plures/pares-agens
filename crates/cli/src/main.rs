@@ -123,8 +123,13 @@ struct RuntimeConfigOverride {
 struct RuntimeModelControl {
     primary_model: Arc<RwLock<String>>,
     deep_model: Arc<RwLock<String>>,
+    fast_model: Arc<RwLock<String>>,
     deep_escalation_enabled: Arc<RwLock<bool>>,
     state_store: Arc<dyn StateStore>,
+    /// Handle to the live agent, populated after agent construction so
+    /// `/status` can read the last-routed tier and routing mode honestly.
+    /// `None` until wired.
+    agent_ref: Arc<RwLock<Option<Arc<Agent>>>>,
 }
 
 
@@ -323,6 +328,27 @@ impl TelegramModelControl for RuntimeModelControl {
             self.primary_model.read().await.clone(),
             self.deep_model.read().await.clone(),
         )
+    }
+
+    async fn fast_model(&self) -> Option<String> {
+        let f = self.fast_model.read().await.clone();
+        if f.trim().is_empty() {
+            None
+        } else {
+            Some(f)
+        }
+    }
+
+    async fn last_route_tier(&self) -> Option<String> {
+        let guard = self.agent_ref.read().await;
+        guard
+            .as_ref()
+            .and_then(|a| a.last_route_tier())
+            .map(|t| t.label().to_string())
+    }
+
+    async fn routing_mode(&self) -> String {
+        "complexity-gated (context-size-gated)".to_string()
     }
 
     async fn set_primary_model(&self, model: &str) -> Result<(), String> {
@@ -2213,8 +2239,10 @@ async fn main() {
             let runtime_model_control = Arc::new(RuntimeModelControl {
                 primary_model: Arc::clone(&model_name),
                 deep_model: Arc::clone(&deep_model_name),
+                fast_model: Arc::new(RwLock::new(String::new())),
                 deep_escalation_enabled: Arc::clone(&deep_escalation_enabled_state),
                 state_store: Arc::clone(&runtime_state_store),
+                agent_ref: Arc::new(RwLock::new(None)),
             });
             let mut runtime_config_control: Option<Arc<dyn TelegramConfigControl>> = None;
 
@@ -2531,6 +2559,10 @@ async fn main() {
                 }
             };
             let agent_handle = Arc::new(RwLock::new(agent));
+            {
+                let agent_snapshot = Arc::clone(&*agent_handle.read().await);
+                *runtime_model_control.agent_ref.write().await = Some(agent_snapshot);
+            }
 
             // Inject plugin schema context into agent's system prompt
             {
@@ -3091,8 +3123,10 @@ mod tests {
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4.1".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
+            fast_model: Arc::new(RwLock::new(String::new())),
             deep_escalation_enabled: Arc::new(RwLock::new(true)),
             state_store: Arc::clone(&state_store),
+            agent_ref: Arc::new(RwLock::new(None)),
         };
 
         control.set_primary_model("gpt-4o").await.unwrap();
@@ -3118,8 +3152,10 @@ mod tests {
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
+            fast_model: Arc::new(RwLock::new(String::new())),
             deep_escalation_enabled: Arc::new(RwLock::new(true)),
             state_store: Arc::clone(&state_store),
+            agent_ref: Arc::new(RwLock::new(None)),
         };
 
         control.set_deep_model("claude-sonnet-4.5").await.unwrap();
@@ -3145,8 +3181,10 @@ mod tests {
         let control = RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
+            fast_model: Arc::new(RwLock::new(String::new())),
             deep_escalation_enabled: Arc::new(RwLock::new(true)),
             state_store: Arc::clone(&state_store),
+            agent_ref: Arc::new(RwLock::new(None)),
         };
 
         control.set_deep_escalation_enabled(false).await.unwrap();
@@ -3170,8 +3208,10 @@ mod tests {
         let runtime_model_control = Arc::new(RuntimeModelControl {
             primary_model: Arc::new(RwLock::new("gpt-4o".to_string())),
             deep_model: Arc::new(RwLock::new("claude-opus-4.6".to_string())),
+            fast_model: Arc::new(RwLock::new(String::new())),
             deep_escalation_enabled: Arc::new(RwLock::new(true)),
             state_store: Arc::clone(&state_store),
+            agent_ref: Arc::new(RwLock::new(None)),
         });
         let provider_config = ProviderConfig::new("http://localhost:11434/v1", None);
         let router_config = RouterConfig::single("default", provider_config);
