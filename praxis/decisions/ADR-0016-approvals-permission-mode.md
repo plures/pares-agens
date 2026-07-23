@@ -31,8 +31,8 @@ pares-agens currently gates risky actions ad hoc:
   Its own comment is explicit about the gap: *"Approval gates — tools marked
   `approval_required` log a warning and proceed (full approval UI is Phase
   5+)."* — i.e. `AllowWithApprovalWarning` is currently **logged, not
-  enforced**. `run_command_actions.rs` confirms this: on
-  `AllowWithApprovalWarning` it just `debug!`s and continues execution.
+  enforced**. `crates/cli/src/main.rs` confirms this: on `AllowWithApprovalWarning` it logs an `info!` and continues execution.
+  `crates/agens-plugin/src/agent_commands/runtime.rs` additionally registers a pending approval token but (currently) does not block/await it yet, so execution still proceeds.
 - There is no `PermissionMode` concept anywhere in pares-agens or
   pares-radix-core today (`git grep` for `PermissionMode` / `enum.*Mode`
   gating exec returns nothing). Elevated-tier semantics do not exist.
