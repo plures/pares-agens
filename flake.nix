@@ -36,6 +36,55 @@ tar.extractall(os.environ['out'] + '/lib')
         '';
       };
 
+      # Vendored BGE small embedding model (Xenova/bge-small-en-v1.5) so the
+      # hermetic Nix build/check can run BgeLocalEmbedder fully offline.
+      # fastembed's EmbeddingModel::BGESmallENV15 maps to this repo/model_file.
+      bgeModelRepo = "Xenova/bge-small-en-v1.5";
+      # Pinned HF commit these files were vendored from (verified via refs/main
+      # produced by an actual fastembed download during development).
+      bgeModelRevision = "ea104dacec62c0de699686887e3f920caeb4f3e3";
+
+      bgeFastembedCache = { pkgs }:
+        let
+          bgeConfig = pkgs.fetchurl {
+            url = "https://huggingface.co/${bgeModelRepo}/resolve/main/config.json";
+            hash = "sha256-+nP5C/ksjKzh+8twliYwbyvbyeo+W1+UtEDfm2qlY1A=";
+          };
+          bgeTokenizer = pkgs.fetchurl {
+            url = "https://huggingface.co/${bgeModelRepo}/resolve/main/tokenizer.json";
+            hash = "sha256-0kGmDV6PBMwbKz6e96SSGye/Um2fYFCrkPkmeh+eXGY=";
+          };
+          bgeTokenizerConfig = pkgs.fetchurl {
+            url = "https://huggingface.co/${bgeModelRepo}/resolve/main/tokenizer_config.json";
+            hash = "sha256-kmHn15tEyBlcHK2itFPlWwCuuB6QemZkl0tNd3YXKrM=";
+          };
+          bgeSpecialTokens = pkgs.fetchurl {
+            url = "https://huggingface.co/${bgeModelRepo}/resolve/main/special_tokens_map.json";
+            hash = "sha256-ttNGvjZqfR1IMy28n987+JYLXYeVIrd5ndulnnYjfuM=";
+          };
+          bgeModelOnnx = pkgs.fetchurl {
+            url = "https://huggingface.co/${bgeModelRepo}/resolve/main/onnx/model.onnx";
+            hash = "sha256-go4Ultf6u3nPpNzYT6OGJcDT0h2kdKAPCNsPVZlAzzU=";
+          };
+        in
+        # hf-hub's Cache::repo().get(filename) resolves via:
+        #   refs/<revision>            -> commit hash string
+        #   snapshots/<commit>/<file>  -> actual file content
+        # Pin to the real upstream commit (verified by inspecting refs/main
+        # produced by an actual fastembed/hf-hub download) so the cache layout
+        # matches exactly what hf-hub would create itself.
+        pkgs.runCommandNoCC "fastembed-bge-small-en-v1.5-cache" { } ''
+          root="$out/models--Xenova--bge-small-en-v1.5"
+          snapshot="$root/snapshots/${bgeModelRevision}"
+          mkdir -p "$root/refs" "$snapshot/onnx"
+          printf '%s' "${bgeModelRevision}" > "$root/refs/main"
+          cp ${bgeConfig} "$snapshot/config.json"
+          cp ${bgeTokenizer} "$snapshot/tokenizer.json"
+          cp ${bgeTokenizerConfig} "$snapshot/tokenizer_config.json"
+          cp ${bgeSpecialTokens} "$snapshot/special_tokens_map.json"
+          cp ${bgeModelOnnx} "$snapshot/onnx/model.onnx"
+        '';
+
       # Package builder — reusable across overlay and standalone packages
       mkPkg = pkgs: pkgs.rustPlatform.buildRustPackage {
         pname = "pares-agens";
@@ -48,6 +97,10 @@ tar.extractall(os.environ['out'] + '/lib')
         };
 
         cargoBuildFlags = [ "-p" "pares-agens-cli" ];
+        # Real (non-ignored) offline BGE embedder test lives behind the
+        # `embeddings` feature on pares-agens-core; run it explicitly so the
+        # hermetic build proves the vendored model works, not just skips it.
+        cargoTestFlags = [ "-p" "pares-agens-core" "--features" "embeddings" ];
 
         nativeBuildInputs = with pkgs; [ pkg-config cmake ];
         buildInputs = with pkgs; [ openssl zlib stdenv.cc.cc.lib glib pango cairo gdk-pixbuf atk gtk3 graphene webkitgtk_4_1 libsoup_3 ];
@@ -55,8 +108,24 @@ tar.extractall(os.environ['out'] + '/lib')
         # Point ort-sys to prefetched ONNX Runtime (pure sandbox, no network)
         ORT_LIB_LOCATION = "${onnxruntimeLib { inherit pkgs; }}/lib";
 
-        # fastembed downloads ONNX model at first run, not build time
-        FASTEMBED_CACHE_PATH = "/tmp/fastembed-cache";
+        # Vendored BGE model cache, staged at the path fastembed's BgeLocalEmbedder
+        # actually reads: fastembed's get_cache_dir() returns
+        # $FASTEMBED_CACHE_DIR (falling back to "./.fastembed_cache" relative to
+        # CWD), which it passes straight into hf_hub::ApiBuilder::with_cache_dir().
+        # This is NOT the same as hf-hub's own Cache::default() ($HOME/.cache/
+        # huggingface/hub) — verified empirically: fastembed always supplies an
+        # explicit cache_dir, so hf-hub's built-in default/HF_HOME logic never
+        # triggers here. cargo's checkPhase runs from the crate root, so pin
+        # FASTEMBED_CACHE_DIR to an absolute writable path built from the
+        # read-only vendored derivation.
+        preCheck = ''
+          export HOME="$TMPDIR/home"
+          mkdir -p "$HOME"
+          export FASTEMBED_CACHE_DIR="$TMPDIR/fastembed-cache"
+          mkdir -p "$FASTEMBED_CACHE_DIR"
+          cp -R ${bgeFastembedCache { inherit pkgs; }}/. "$FASTEMBED_CACHE_DIR/"
+          chmod -R u+w "$FASTEMBED_CACHE_DIR"
+        '';
 
         meta = {
           description = "Native AI agent framework — 3-consciousness architecture on PluresDB";
@@ -86,7 +155,9 @@ tar.extractall(os.environ['out'] + '/lib')
         ];
 
         ORT_LIB_LOCATION = "${onnxruntimeLib { inherit pkgs; }}/lib";
-        FASTEMBED_CACHE_PATH = "/tmp/fastembed-cache";
+        # Desktop package does not run the BGE embedder test in checkPhase;
+        # correct env var name only (fastembed downloads lazily at runtime here).
+        FASTEMBED_CACHE_DIR = "/tmp/fastembed-cache";
 
         meta = {
           description = "Pares Agens desktop app — system tray agent node";
