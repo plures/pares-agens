@@ -1,7 +1,8 @@
 # ADR-0016: Unified Permission-Mode + Exec-Approval Layer
 
-**Status:** Proposed — design only; no code changes in this pass (per C-DEV-001, dev-lifecycle hard gate: design stage before implementation).
+**Status:** Proposed (design only; no code changes in this pass; per C-DEV-001)
 **Date:** 2026-07-23
+**Deciders:** TBD
 
 ## Context
 
@@ -30,8 +31,8 @@ pares-agens currently gates risky actions ad hoc:
   Its own comment is explicit about the gap: *"Approval gates — tools marked
   `approval_required` log a warning and proceed (full approval UI is Phase
   5+)."* — i.e. `AllowWithApprovalWarning` is currently **logged, not
-  enforced**. `run_command_actions.rs` confirms this: on
-  `AllowWithApprovalWarning` it just `debug!`s and continues execution.
+  enforced**. `crates/cli/src/main.rs` confirms this: on `AllowWithApprovalWarning` it logs an `info!` and continues execution.
+  `crates/agens-plugin/src/agent_commands/runtime.rs` additionally registers a pending approval token but (currently) does not block/await it yet, so execution still proceeds.
 - There is no `PermissionMode` concept anywhere in pares-agens or
   pares-radix-core today (`git grep` for `PermissionMode` / `enum.*Mode`
   gating exec returns nothing). Elevated-tier semantics do not exist.
@@ -184,9 +185,8 @@ trigger the same approval flow: they all call the same
 
 ### 5. PluresDB integration (C-PLURES-003 / C-PLURES-004)
 
-No ad-hoc structs for durable state — following the `worktask.px` pattern
-(`praxis/procedures/worktask.px` documents its own PluresDB key layout this
-way), the new keys are:
+No ad-hoc structs for durable state — following existing `.px` procedure patterns
+(e.g. `praxis/procedures/dev-lifecycle.px` + `praxis/procedures/session-continuity.px`), the new keys are:
 
 ```
 approvals:session:{session_id}:mode          current PermissionMode for a session
@@ -203,11 +203,9 @@ approvals:audit:{token}                      immutable record: tool, command/sum
 ```
 
 Per C-PLURES-004, the actions that read/write these keys are named Rust
-boundary actions invoked from `.px` (mirroring `dev-lifecycle.px` /
-`worktask.px` conventions), not raw structs scattered through adapter code.
+boundary actions invoked from `.px` (mirroring `dev-lifecycle.px`'s separation of orchestration in `.px` from side effects in Rust action handlers), not raw structs scattered through adapter code.
 A companion `.px` procedure (e.g. `praxis/procedures/approvals.px`) should
-be authored in the **implementation** pass to define the decision flow the
-way `worktask.px` defines PR-mode precedence — out of scope for this ADR,
+be authored in the **implementation** pass to define the decision flow — out of scope for this ADR,
 but the key layout above is designed to be `.px`-addressable from the
 start.
 
