@@ -2561,6 +2561,10 @@ async fn main() {
                 Arc::clone(&plugin_runtime),
                 Arc::clone(&plugin_executor),
             );
+            {
+                let tool_count = plugin_runtime.tool_definitions().await.len();
+                config = config.with_tool_count(tool_count);
+            }
             // Initialize the event spine — always on, not optional.
             // The spine is the nervous system: heartbeats, task procedures,
             // channel contracts, and event tracking all depend on it.

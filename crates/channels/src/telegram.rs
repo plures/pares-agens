@@ -507,6 +507,14 @@ impl TelegramConfig {
         self
     }
 
+    /// Provide a fixed tool count for `/status` reporting (used when the count
+    /// is known at startup and isn't otherwise dynamically queryable here).
+    #[must_use]
+    pub fn with_tool_count(mut self, tool_count: usize) -> Self {
+        self.tool_count = Some(tool_count);
+        self
+    }
+
     /// Enable `/reset` runtime reset support.
     #[must_use]
     pub fn with_runtime_control(
