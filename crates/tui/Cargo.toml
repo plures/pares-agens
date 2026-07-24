@@ -17,4 +17,4 @@ tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 pares-agens-core = { path = "../core", features = ["embeddings"] }
-pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.34" }
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.36" }
