@@ -44,7 +44,7 @@ each.
 
 ## Gaps found by code inspection (ground truth, this pass)
 
-1. **`runtime.rs:1063-1096`** (`ProcedureToolDispatcher::call_tool`,
+1. **`crates/agens-plugin/src/agent_commands/runtime.rs`** (`ProcedureToolDispatcher::call_tool`,
    `AllowWithApprovalWarning` arm): registers a pending approval, logs
    the token, then unconditionally resolves it `Allow` and continues —
    comment: *"NOTE (honest scope): full mid-tool-call blocking...is
