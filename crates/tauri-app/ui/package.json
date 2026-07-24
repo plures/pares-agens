@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
-    "@plures/design-dojo": "^0.10.10",
+    "@plures/design-dojo": "^0.17.1",
     "@plures/unum": "^0.4.0"
   }
 }
