@@ -635,8 +635,13 @@ mod local_tests {
     #[tokio::test]
     async fn provider_kind_from_env_defaults_local() {
         // Default (unset) must be the sovereign Local provider.
+        let prev = std::env::var("PARES_EMBED_PROVIDER").ok();
         std::env::remove_var("PARES_EMBED_PROVIDER");
         assert_eq!(EmbedProviderKind::from_env(), EmbedProviderKind::Local);
+        match prev {
+            Some(v) => std::env::set_var("PARES_EMBED_PROVIDER", v),
+            None => std::env::remove_var("PARES_EMBED_PROVIDER"),
+        }
     }
 }
 
