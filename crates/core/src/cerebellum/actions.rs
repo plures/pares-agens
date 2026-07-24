@@ -526,12 +526,11 @@ impl CerebellumActionHandler {
         Ok(json!(significant.join(" ")))
     }
 
-    /// Detect topic shift (placeholder — needs embedding comparison).
-    fn detect_topic_shift_action(params: &Value) -> Result<Value, ExecutionError> {
-        // Without embeddings, assume no shift (conservative)
-        let _topic = params["topic"].as_str().unwrap_or_default();
-        Ok(json!(false))
-    }
+    // REMOVED: detect_topic_shift_action (dead code, ADR-0015). This was a
+    // constant-`false` placeholder reachable only via the unwired
+    // classify.px `classify_message` procedure, which has no production
+    // caller. The real topic-shift implementation is
+    // `Cerebellum::detect_topic_shift` in `cerebellum/mod.rs`.
 
     /// Determine model tier based on complexity score.
     fn determine_model_tier(params: &Value) -> Result<Value, ExecutionError> {
@@ -1000,7 +999,7 @@ impl AsyncActionHandler for CerebellumActionHandler {
             "detect_tools_needed" => Self::detect_tools_needed(params),
             "match_plugin" => Self::match_plugin(params),
             "extract_topic" => Self::extract_topic(params),
-            "detect_topic_shift" => Self::detect_topic_shift_action(params),
+            // REMOVED: "detect_topic_shift" (ADR-0015, dead code deletion).
             "determine_model_tier" => Self::determine_model_tier(params),
             "classify" => Self::classify_action(params),
             "model_complete" => self.model_complete_action(params).await,

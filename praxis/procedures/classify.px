@@ -34,6 +34,16 @@
 # Dataflow Procedures
 # ═══════════════════════════════════════════════════════════════════
 
+# NOTE (ADR-0015): classify_message is currently unreachable from any
+# production Rust caller (dataflow wiring not implemented) -- the only
+# callers are px_bridge.rs's thin wrapper and a unit test. Do not re-add a
+# `detect_topic_shift {...}` step here: its Rust implementation
+# (`actions.rs::detect_topic_shift_action`) was dead-code deleted per
+# ADR-0015. The live topic-shift detector is
+# `Cerebellum::detect_topic_shift` in `crates/core/src/cerebellum/mod.rs`.
+# Wiring classify_message onto a live dataflow path (if ever needed) should
+# derive topic_shift from that implementation, not resurrect this stub.
+#
 # Classify a preprocessed message by intent, complexity, topic, and routing needs
 procedure classify_message(message: string from "preprocessed", plugins: list, last_topic: string) -> classification into "classification":
   given: "Classify a message by intent, complexity, topic, and routing needs"
@@ -43,7 +53,6 @@ procedure classify_message(message: string from "preprocessed", plugins: list, l
   detect_tools_needed {text: $lower} -> $needs_tools
   match_plugin {text: $lower} -> $plugin_match
   extract_topic {text: $message} -> $topic
-  detect_topic_shift {topic: $topic} -> $topic_shift
   determine_model_tier {complexity: $complexity} -> $needs_deep_model
   return $classification
 

@@ -42,7 +42,7 @@ pares-agens-marketplace = { path = "../marketplace" }
 # Praxis (PraxisModule, px compiler/executor) — git+[patch] redirect to local
 # pares-radix crates/praxis (the agens crates/praxis is a different crate,
 # `pares-agens-praxis`; the radix_handler imports `pares_radix_praxis::`).
-pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.37" }
+pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.39" }
 # .px engine (parser/compiler/executor) is consumed THROUGH PluresDB per the
 # px-through-PluresDB doctrine (ADR-0021 / TASK-PX-CANON): pluresdb-px is the
 # canonical consumption surface. Same git source + rev as the other pluresdb-px

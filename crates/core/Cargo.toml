@@ -61,7 +61,7 @@ walkdir = "2"
 # Cargo.toml (Stage S-C scaffolding — to be replaced by a real pin in S-F).
 pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.39" }
 # Praxis (decision ledger / constraints) — same git+patch redirect as core.
-pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.37" }
+pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.39" }
 # Privacy and audit are local crates in this (pares-agens) workspace.
 pares-agens-privacy = { path = "../privacy" }
 pares-agens-audit = { path = "../audit" }
