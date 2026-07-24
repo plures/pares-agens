@@ -623,8 +623,7 @@ mod local_tests {
         let sim_similar = cosine(&cat_a, &cat_b);
         let sim_diff = cosine(&cat_a, &finance);
 
-        println!("[bge-local] sim(cat_a, cat_b similar) = {sim_similar:.4}");
-        println!("[bge-local] sim(cat_a, finance diff)  = {sim_diff:.4}");
+        // (no logging here; assertions below enforce the expected ordering)
 
         assert!(
             sim_similar > sim_diff,
