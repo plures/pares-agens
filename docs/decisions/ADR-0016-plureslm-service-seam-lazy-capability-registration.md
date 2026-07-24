@@ -3,7 +3,7 @@
 **Status:** PROPOSED (design/seam-verification only — no implementation until reviewed)
 **Date:** 2026-07-23
 **Author:** Subagent (design task, epic `pluresLM:pares-agens-integration`, requested by kbristol via main-agent orchestrator)
-**Depends on:** [PLURESDB-SERVICE-BOUNDARIES](../../../../worktrees/development-guide-pluresdb-memory-service/design/PLURESDB-SERVICE-BOUNDARIES.md), [PARES-AGENS](../../../../worktrees/development-guide-pluresdb-memory-service/design/PARES-AGENS.md), [OBSERVABILITY-EVENT-CONTRACT](../../../../worktrees/development-guide-pluresdb-memory-service/design/OBSERVABILITY-EVENT-CONTRACT.md), ADR-0014 (full-plures-stack)
+**Depends on:** [PluresDB Service Boundaries](https://github.com/plures/development-guide/blob/main/design/PLURESDB-SERVICE-BOUNDARIES.md), [PARES-AGENS Architecture](https://github.com/plures/development-guide/blob/main/design/PARES-AGENS.md), OBSERVABILITY-EVENT-CONTRACT (link TBD), [ADR-0014](./ADR-0014-full-plures-stack.md)
 **Scope:** Design + seam verification ONLY. This ADR does not authorize any code change. It is the gate a follow-up implementation PR must pass review against.
 
 ## Context
