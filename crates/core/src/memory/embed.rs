@@ -233,10 +233,15 @@ impl BgeLocalEmbedder {
     /// # Errors
     /// Returns [`Error::Embed`] if the model id is unsupported or init fails.
     pub fn with_model(model_id: &str) -> Result<Self, Error> {
+        if model_id != Self::DEFAULT_MODEL {
+            return Err(Error::Embed(format!(
+                "unsupported local embedding model '{model_id}'; expected {}",
+                Self::DEFAULT_MODEL
+            )));
+        }
+
         let inner = pluresdb::FastEmbedder::new(model_id)
             .map_err(|e| Error::Embed(format!("local embedder init failed: {e}")))?;
-        // bge-small-en-v1.5 is 384-dim; we assert against EMBEDDING_DIM at embed
-        // time so a mismatched model id surfaces loudly rather than silently.
         Ok(Self {
             inner: std::sync::Arc::new(inner),
             dimensions: EMBEDDING_DIM,
@@ -600,6 +605,7 @@ mod local_tests {
     // similar sentences are more cosine-similar than dissimilar ones. No canned
     // fixtures (C-NOSTUB-001, C-TEST-002).
     #[tokio::test]
+    #[ignore = "downloads model weights on first run; run explicitly as an e2e check"]
     async fn bge_local_embedder_dim_and_semantics() {
         let embedder = BgeLocalEmbedder::new()
             .expect("local bge-small embedder should initialise (needs model download)");
@@ -618,8 +624,7 @@ mod local_tests {
         let sim_similar = cosine(&cat_a, &cat_b);
         let sim_diff = cosine(&cat_a, &finance);
 
-        println!("[bge-local] sim(cat_a, cat_b similar) = {sim_similar:.4}");
-        println!("[bge-local] sim(cat_a, finance diff)  = {sim_diff:.4}");
+        // (no logging here; assertions below enforce the expected ordering)
 
         assert!(
             sim_similar > sim_diff,
@@ -631,8 +636,13 @@ mod local_tests {
     #[tokio::test]
     async fn provider_kind_from_env_defaults_local() {
         // Default (unset) must be the sovereign Local provider.
+        let prev = std::env::var("PARES_EMBED_PROVIDER").ok();
         std::env::remove_var("PARES_EMBED_PROVIDER");
         assert_eq!(EmbedProviderKind::from_env(), EmbedProviderKind::Local);
+        match prev {
+            Some(v) => std::env::set_var("PARES_EMBED_PROVIDER", v),
+            None => std::env::remove_var("PARES_EMBED_PROVIDER"),
+        }
     }
 }
 
