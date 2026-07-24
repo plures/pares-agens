@@ -1,3 +1,10 @@
+## [1.59.1] — 2026-07-24
+
+- fix: repair CRLF corruption in agens-plugin/Cargo.toml from prior version-drift fix (9680b5a)
+- build(deps): bump softprops/action-gh-release from 2 to 3 (#637) (07dc41a)
+- build(deps): bump actions/download-artifact from 4 to 8 (#635) (8750681)
+- fix: pin pares-radix-praxis to v1.55.37 (duplicate-crate Rule trait mismatch) (#659) (c5c31a6)
+
 ## [1.59.0] — 2026-07-24
 
 - feat(parity): runtime skill discovery + <available_skills> injection (#658) (c3c4b8b)
