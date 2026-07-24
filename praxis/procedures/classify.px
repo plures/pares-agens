@@ -37,7 +37,7 @@
 # NOTE (ADR-0015): classify_message is currently unreachable from any
 # production Rust caller (dataflow wiring not implemented) -- the only
 # callers are px_bridge.rs's thin wrapper and a unit test. Do not re-add a
-# a detect-topic-shift step here: its Rust implementation
+# `detect_topic_shift` step here: its Rust implementation
 # (`actions.rs::detect_topic_shift_action`) was dead-code deleted per
 # ADR-0015. The live topic-shift detector is
 # `Cerebellum::detect_topic_shift` in `crates/core/src/cerebellum/mod.rs`.

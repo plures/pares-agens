@@ -1,3 +1,8 @@
+## [1.59.2] — 2026-07-24
+
+- fix: unify all pares-radix-praxis/rector git tag pins to v1.55.39 (#666) (7aae1c3)
+- build(deps): bump pares-radix-core from v1.55.37 to v1.55.39 (#662) (5fe4b11)
+
 ## [1.59.1] — 2026-07-24
 
 - fix: repair CRLF corruption in agens-plugin/Cargo.toml from prior version-drift fix (9680b5a)

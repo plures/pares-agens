@@ -31,7 +31,7 @@ pares-radix-praxis      = { git = "https://github.com/plures/pares-radix.git", t
 
 pares-radix-core        = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.39" }
 pares-agens-mcp-server  = { path = "../mcp-server" }
-pares-rector            = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.36" }
+pares-rector            = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.39" }
 
 # --- HOST / COGNITION crates (Option A: agens OWNS these) ---
 # Stage R3a: the cognition/host crates are the LOCAL agens copies (path deps).
