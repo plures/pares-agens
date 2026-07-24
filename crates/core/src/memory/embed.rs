@@ -233,10 +233,15 @@ impl BgeLocalEmbedder {
     /// # Errors
     /// Returns [`Error::Embed`] if the model id is unsupported or init fails.
     pub fn with_model(model_id: &str) -> Result<Self, Error> {
+        if model_id != Self::DEFAULT_MODEL {
+            return Err(Error::Embed(format!(
+                "unsupported local embedding model '{model_id}'; expected {}",
+                Self::DEFAULT_MODEL
+            )));
+        }
+
         let inner = pluresdb::FastEmbedder::new(model_id)
             .map_err(|e| Error::Embed(format!("local embedder init failed: {e}")))?;
-        // bge-small-en-v1.5 is 384-dim; we assert against EMBEDDING_DIM at embed
-        // time so a mismatched model id surfaces loudly rather than silently.
         Ok(Self {
             inner: std::sync::Arc::new(inner),
             dimensions: EMBEDDING_DIM,
