@@ -35,7 +35,7 @@ jobs:
 
       - name: Feed CI results into expectation system
         if: steps.check.outcome == 'failure' || steps.clippy.outcome == 'failure' || steps.test.outcome == 'failure'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           CHECK_OUTCOME: ${{ steps.check.outcome }}
           CLIPPY_OUTCOME: ${{ steps.clippy.outcome }}
