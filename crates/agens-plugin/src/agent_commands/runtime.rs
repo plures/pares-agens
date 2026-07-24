@@ -1029,6 +1029,9 @@ struct ProcedureToolDispatcher {
     trace_store: ToolTraceStore,
     governor: Arc<ToolGovernor>,
     plugin_runtime: Option<Arc<PluginRuntime>>,
+    /// Shared block-and-await approval registry (#472). Cloned into the Telegram
+    /// adapter so an Allow/Deny press can resolve a pending tool approval by token.
+    approval_registry: Arc<pares_radix_core::approval::ApprovalRegistry>,
 }
 
 #[async_trait]
@@ -1058,10 +1061,39 @@ impl ToolDispatcher for ProcedureToolDispatcher {
                 return result;
             }
             GovernanceVerdict::AllowWithApprovalWarning => {
+                // #472 block-and-await seam. Register a pending approval so the
+                // token exists in the shared registry that the Telegram adapter
+                // resolves against; this closes the resolve half of the loop
+                // (adapter -> ApprovalRegistry::resolve -> woken waiter).
+                //
+                // NOTE (honest scope): full mid-tool-call blocking (awaiting
+                // `pending.wait()` here to gate execution) requires an
+                // out-of-band path to surface the Allow/Deny card to the user
+                // while this call is suspended. The current adapter has no
+                // dispatcher->channel outbound handle for a mid-turn card
+                // (see runtime event-spine "stack-local for now" note), so we do
+                // NOT block here yet — blocking without a visible card would
+                // deadlock the turn. The registry + resolve routing are wired
+                // and unit-tested end-to-end; enabling the await is a follow-up
+                // once the outbound-card seam lands.
+                let (req, _pending) = self
+                    .approval_registry
+                    .register(name, &args_str)
+                    .await;
+                let pending_count = self.approval_registry.pending_count().await;
                 tracing::info!(
                     tool = name,
-                    "tool execution proceeding with approval warning (Phase 5+)"
+                    approval_token = %req.token,
+                    pending = pending_count,
+                    "registered pending tool approval (resolve seam live; block-and-await gated on outbound-card seam)"
                 );
+                // Do not leak the waiter: resolve it Allow immediately so the
+                // map stays clean until real blocking is enabled. This preserves
+                // today's log-and-proceed behavior with zero regression.
+                let _ = self
+                    .approval_registry
+                    .resolve(&req.token, pares_radix_core::approval::ApprovalDecision::Allow)
+                    .await;
             }
             GovernanceVerdict::Allow => {}
         }
@@ -1183,6 +1215,26 @@ struct ListDirectoryProcedure;
 struct WebFetchProcedure;
 struct WebSearchProcedure {
     brave_api_key: Option<String>,
+    base_url: String,
+}
+
+impl WebSearchProcedure {
+    const DEFAULT_BASE_URL: &'static str = "https://api.search.brave.com/res/v1/web/search";
+
+    fn new(brave_api_key: Option<String>) -> Self {
+        Self {
+            brave_api_key,
+            base_url: Self::DEFAULT_BASE_URL.to_string(),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_base_url(brave_api_key: Option<String>, base_url: String) -> Self {
+        Self {
+            brave_api_key,
+            base_url,
+        }
+    }
 }
 struct MemorySearchProcedure {
     plures_lm: Arc<PluresLm>,
@@ -1733,7 +1785,7 @@ impl Procedure for WebSearchProcedure {
                                         headers.insert("X-Subscription-Token", token);
                                         let client = reqwest::Client::new();
                                         let response = client
-                                            .get("https://api.search.brave.com/res/v1/web/search")
+                                            .get(&self.base_url)
                                             .headers(headers)
                                             .query(&[("q", query), ("count", &count.to_string())])
                                             .send()
@@ -3027,7 +3079,7 @@ pub(crate) async fn run_serve_spine(
             // Web tools
             spine_registry.register(Box::new(WebFetchProcedure));
             let brave_api_key = std::env::var("BRAVE_API_KEY").ok();
-            spine_registry.register(Box::new(WebSearchProcedure { brave_api_key }));
+            spine_registry.register(Box::new(WebSearchProcedure::new(brave_api_key)));
 
             // Cron/scheduler tools
             let scheduler = Arc::new(pares_agens_agenda::scheduler::Scheduler::new());
@@ -4177,7 +4229,7 @@ pub(crate) async fn run_serve(
             procedure_registry.register(Box::new(EditFileProcedure));
             procedure_registry.register(Box::new(ListDirectoryProcedure));
             procedure_registry.register(Box::new(WebFetchProcedure));
-            procedure_registry.register(Box::new(WebSearchProcedure { brave_api_key }));
+            procedure_registry.register(Box::new(WebSearchProcedure::new(brave_api_key)));
             procedure_registry.register(Box::new(ParesManusToolProcedure::new(
                 "browser_open",
                 Arc::clone(&manus_ws_url),
@@ -4412,11 +4464,16 @@ pub(crate) async fn run_serve(
 
             let tool_trace_store = ToolTraceStore::default();
             let governor = Arc::new(ToolGovernor::with_defaults());
+            // Shared approval registry: the resolve seam is threaded into the
+            // Telegram adapter (below) so Allow/Deny presses reach radix-core.
+            let approval_registry =
+                Arc::new(pares_radix_core::approval::ApprovalRegistry::new());
             let tool_dispatcher: Arc<dyn ToolDispatcher> = Arc::new(ProcedureToolDispatcher {
                 registry: Arc::clone(&procedure_registry),
                 trace_store: tool_trace_store.clone(),
                 governor: Arc::clone(&governor),
                 plugin_runtime: Some(Arc::clone(&plugin_runtime)),
+                approval_registry: Arc::clone(&approval_registry),
             });
 
             // Complete the lazy initialization of the .px action handler
@@ -4608,6 +4665,9 @@ pub(crate) async fn run_serve(
             // Initialize the event spine if enabled
             let mut adapter = adapter;
             adapter.stream_tx = Some(stream_broadcast_tx.clone());
+            // Share the approval registry so Allow/Deny presses resolve pending
+            // tool approvals (#472 block-and-await resolve seam).
+            adapter.approval_registry = Some(Arc::clone(&approval_registry));
             let mut heartbeat_spine_handle: Option<pares_radix_core::event_spine::EventSpineHandle> = None;
             if !no_event_spine {
                 let crdt = store.crdt_store();
@@ -5125,6 +5185,9 @@ pub(crate) async fn run_tui(
                 trace_store: ToolTraceStore::default(),
                 governor: Arc::clone(&governor),
                 plugin_runtime: None,
+                // TUI mode has no interactive-card adapter yet; give it its own
+                // registry so the struct is complete. Resolve routing is a no-op here.
+                approval_registry: Arc::new(pares_radix_core::approval::ApprovalRegistry::new()),
             });
 
             // Complete lazy initialization of .px action handler (TUI mode)
@@ -5726,6 +5789,88 @@ mod tests {
         }
     }
 
+
+    #[tokio::test]
+    async fn web_search_procedure_calls_brave_and_parses_results() {
+        use wiremock::matchers::{header, method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        let brave_response = serde_json::json!({
+            "web": {
+                "results": [
+                    {
+                        "title": "Example Result",
+                        "url": "https://example.com",
+                        "description": "An example description"
+                    }
+                ]
+            }
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/res/v1/web/search"))
+            .and(header("X-Subscription-Token", "test-key"))
+            .and(query_param("q", "rust programming"))
+            .and(query_param("count", "3"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(brave_response))
+            .mount(&mock_server)
+            .await;
+
+        let procedure = WebSearchProcedure::with_base_url(
+            Some("test-key".to_string()),
+            format!("{}/res/v1/web/search", mock_server.uri()),
+        );
+
+        let event = Event::Message {
+            id: Uuid::new_v4().to_string(),
+            channel: "tool".into(),
+            sender: "model".into(),
+            content: serde_json::json!({"query": "rust programming", "count": 3}).to_string(),
+        };
+
+        let events = procedure.execute(&event).await;
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::ToolResult {
+                tool_name,
+                content,
+                is_error,
+                ..
+            } => {
+                assert_eq!(tool_name, "web_search");
+                assert!(!is_error, "expected success, got error content: {content}");
+                assert!(content.contains("Example Result"));
+                assert!(content.contains("https://example.com"));
+            }
+            _ => panic!("expected ToolResult event"),
+        }
+    }
+
+    #[tokio::test]
+    async fn web_search_procedure_errors_without_api_key() {
+        let procedure = WebSearchProcedure::new(None);
+
+        let event = Event::Message {
+            id: Uuid::new_v4().to_string(),
+            channel: "tool".into(),
+            sender: "model".into(),
+            content: serde_json::json!({"query": "rust programming"}).to_string(),
+        };
+
+        let events = procedure.execute(&event).await;
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::ToolResult {
+                is_error, content, ..
+            } => {
+                assert!(*is_error);
+                assert!(content.contains("BRAVE_API_KEY"));
+            }
+            _ => panic!("expected ToolResult event"),
+        }
+    }
 
     #[test]
     fn relocated_self_update_task_from_env_builds_interval_task() {

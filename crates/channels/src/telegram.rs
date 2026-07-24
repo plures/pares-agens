@@ -66,7 +66,7 @@ const TELEGRAM_BLANK_RESPONSE_FALLBACK: &str =
     "I’m sorry — I received an empty response from the model. Please try again.";
 const TELEGRAM_NO_RESPONSE_FALLBACK: &str =
     "I’m sorry — I finished processing, but no visible response was produced. Please try again.";
-const TELEGRAM_TIMEOUT_FALLBACK: &str = "⏱️ I’m sorry — this turn took too long and was stopped before a response was ready. Please try again or narrow the request.";
+const TELEGRAM_TIMEOUT_FALLBACK: &str = "⚠️ System notice: the request timed out before the assistant produced a response. Please retry or narrow the request.";
 const TELEGRAM_HELP_COMMANDS: [(&str, &str); 33] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
@@ -507,6 +507,14 @@ impl TelegramConfig {
         self
     }
 
+    /// Provide a fixed tool count for `/status` reporting (used when the count
+    /// is known at startup and isn't otherwise dynamically queryable here).
+    #[must_use]
+    pub fn with_tool_count(mut self, tool_count: usize) -> Self {
+        self.tool_count = Some(tool_count);
+        self
+    }
+
     /// Enable `/reset` runtime reset support.
     #[must_use]
     pub fn with_runtime_control(
@@ -685,6 +693,14 @@ pub struct TelegramAdapter {
     /// Channel handlers subscribe to receive progressive token delivery.
     /// When None, progressive editing is disabled (placeholder → full edit).
     pub stream_tx: Option<tokio::sync::broadcast::Sender<pares_radix_core::model::StreamDelta>>,
+    /// Shared registry of in-flight tool approvals (block-and-await seam, #472).
+    ///
+    /// When set, an Allow/Deny button press whose `callback_data` id is a live
+    /// approval token is routed into [`pares_radix_core::approval::ApprovalRegistry::resolve`],
+    /// waking the tool call blocked on that token. Shared (cloned `Arc`) with the
+    /// tool dispatcher that registered the pending approval. Channel-agnostic:
+    /// the decision logic lives in radix-core; this adapter only routes the token.
+    pub approval_registry: Option<Arc<pares_radix_core::approval::ApprovalRegistry>>,
 }
 
 #[derive(Debug)]
@@ -709,6 +725,7 @@ impl TelegramAdapter {
             config,
             event_spine: None,
             stream_tx: None,
+            approval_registry: None,
         }
     }
 
@@ -718,6 +735,7 @@ impl TelegramAdapter {
             config,
             event_spine: Some(spine),
             stream_tx: None,
+            approval_registry: None,
         }
     }
 
@@ -1379,6 +1397,10 @@ impl ChannelAdapter for TelegramAdapter {
         // handler moves its own clones in.
         let active_turns_cb = active_turns.clone();
         let on_event_cb = on_event.clone();
+        // Shared approval registry for the block-and-await resolve seam (#472).
+        // Cloned into the callback closure so an Allow/Deny press can wake a
+        // tool call blocked on the token carried in `callback_data`.
+        let approval_registry_cb = self.approval_registry.clone();
         let handler = Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
             let event = Self::message_to_event(&msg);
             let on_event = on_event.clone();
@@ -2587,7 +2609,7 @@ impl ChannelAdapter for TelegramAdapter {
                                                 accumulated.push_str(&chunk);
                                                 // Debounce: only edit if enough time passed AND enough content
                                                 if last_edit.elapsed() >= debounce && accumulated.len() >= min_chars {
-                                                    let display = format!("{}\u{25cf}", &accumulated); // ● = cursor
+                                                    let display = format!("{}\u{25cf}", accumulated); // ● = cursor
                                                     let _ = edit_bot
                                                         .edit_message_text(edit_chat_id, pid, &display)
                                                         .await;
@@ -2748,6 +2770,7 @@ impl ChannelAdapter for TelegramAdapter {
             move |bot: Bot, q: teloxide::types::CallbackQuery| {
                 let active_turns = active_turns_cb.clone();
                 let on_event = on_event_cb.clone();
+                let approval_registry = approval_registry_cb.clone();
                 async move {
                     let data = q.data.clone().unwrap_or_default();
                     let chat_id = q.message.as_ref().map(|m| m.chat().id.0);
@@ -2760,39 +2783,48 @@ impl ChannelAdapter for TelegramAdapter {
                                 "No active turn"
                             }
                         }
-                        (Some(crate::turn_ux::ControlAction::Approve { .. }), Some(cid))
-                        | (Some(crate::turn_ux::ControlAction::Reject { .. }), Some(cid)) => {
-                            // handle_event is atomic per message, so there is no
-                            // in-flight future to unblock. We resolve the approval
-                            // by injecting the decision back into the chat's turn
-                            // context: steer the live turn if one exists, otherwise
-                            // dispatch the decision as a fresh turn. This makes the
-                            // ✅/❌ buttons actually drive the agent forward.
+                        (Some(crate::turn_ux::ControlAction::Approve { request_id }), Some(cid))
+                        | (Some(crate::turn_ux::ControlAction::Reject { request_id }), Some(cid)) => {
                             let decision = match action.as_ref().unwrap() {
                                 crate::turn_ux::ControlAction::Approve { .. } => "approved",
                                 _ => "rejected",
                             };
-                            let injected = format!(
-                                "[approval decision]: the pending approval request was {decision} by the user"
-                            );
-                            if !active_turns.steer(cid, injected.clone()).await {
-                                // No live turn: the approval prompt's turn already
-                                // ended. Dispatch the decision as a fresh turn and
-                                // deliver its reply as a normal message so the
-                                // decision actually drives the agent and the user
-                                // sees the outcome.
-                                let ev = pares_radix_core::Event::Message {
-                                    id: cid.to_string(),
-                                    sender: "user".to_string(),
-                                    content: injected,
-                                    channel: "telegram".to_string(),
+                            // #472 resolve seam (channel-agnostic): if the button's
+                            // id is a live approval token, wake the tool call blocked
+                            // on it. `resolve` is idempotent and returns false for
+                            // non-token ids (e.g. turn-level prompts), so this is safe
+                            // to try first and fall through when it is not a token.
+                            let mut resolved = false;
+                            if let Some(reg) = approval_registry.as_ref() {
+                                let core_decision = match action.as_ref().unwrap() {
+                                    crate::turn_ux::ControlAction::Approve { .. } => {
+                                        pares_radix_core::approval::ApprovalDecision::Allow
+                                    }
+                                    _ => pares_radix_core::approval::ApprovalDecision::Deny,
                                 };
-                                if let Some(pares_radix_core::Event::ModelResponse { content, .. }) =
-                                    on_event(ev).await
-                                {
-                                    let _ = bot
-                                        .send_message(teloxide::types::ChatId(cid), content)
-                                        .await;
+                                resolved = reg.resolve(request_id, core_decision).await;
+                            }
+                            if !resolved {
+                                // Not a live tool-approval token: fall back to the
+                                // turn-level path — steer the live turn if one exists,
+                                // otherwise dispatch the decision as a fresh turn.
+                                let injected = format!(
+                                    "[approval decision]: the pending approval request was {decision} by the user"
+                                );
+                                if !active_turns.steer(cid, injected.clone()).await {
+                                    let ev = pares_radix_core::Event::Message {
+                                        id: cid.to_string(),
+                                        sender: "user".to_string(),
+                                        content: injected,
+                                        channel: "telegram".to_string(),
+                                    };
+                                    if let Some(pares_radix_core::Event::ModelResponse { content, .. }) =
+                                        on_event(ev).await
+                                    {
+                                        let _ = bot
+                                            .send_message(teloxide::types::ChatId(cid), content)
+                                            .await;
+                                    }
                                 }
                             }
                             if decision == "approved" { "Approved" } else { "Rejected" }
@@ -3102,7 +3134,8 @@ mod tests {
         assert!(!timed_out.trim().is_empty());
         assert_ne!(no_response, "⏳");
         assert_ne!(timed_out, "⏳");
-        assert!(timed_out.contains("took too long"));
+        assert!(timed_out.starts_with("⚠️ System notice:"));
+        assert!(!timed_out.contains("this turn took too long and was stopped"));
     }
 
     #[test]

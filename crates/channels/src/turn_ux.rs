@@ -218,4 +218,61 @@ mod tests {
         assert!(!s.contains("🔧"));
         assert!(s.contains("Thinking"));
     }
+
+    // ── Approval resolve seam (#472) ──────────────────────────────────────
+    // Proves the channel-agnostic wiring the Telegram callback relies on:
+    // an `approval:yes|no:{token}` callback parses to Approve/Reject, maps to
+    // the correct `ApprovalDecision`, and `ApprovalRegistry::resolve(token, ..)`
+    // wakes a real registered tool-approval waiter. No Telegram in the loop.
+
+    fn decision_for(action: &ControlAction) -> pares_radix_core::approval::ApprovalDecision {
+        match action {
+            ControlAction::Approve { .. } => pares_radix_core::approval::ApprovalDecision::Allow,
+            _ => pares_radix_core::approval::ApprovalDecision::Deny,
+        }
+    }
+
+    #[tokio::test]
+    async fn approve_callback_resolves_pending_tool_approval_allow() {
+        let registry = pares_radix_core::approval::ApprovalRegistry::new();
+        let (req, pending) = registry.register("run_command", "cargo build").await;
+        let data = format!("approval:yes:{}", req.token);
+        let action = parse_callback(&data).expect("approval callback must parse");
+        assert!(matches!(action, ControlAction::Approve { .. }));
+        assert_eq!(action.request_id(), req.token);
+
+        let reg2 = registry.clone();
+        let token = req.token.clone();
+        let decision = decision_for(&action);
+        let resolver = tokio::spawn(async move { reg2.resolve(&token, decision).await });
+
+        let got = pending.wait().await;
+        assert!(resolver.await.unwrap(), "resolve woke the waiter");
+        assert_eq!(got, pares_radix_core::approval::ApprovalDecision::Allow);
+        assert!(got.is_allowed());
+        assert_eq!(registry.pending_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn deny_callback_aborts_pending_tool_approval() {
+        let registry = pares_radix_core::approval::ApprovalRegistry::new();
+        let (req, pending) = registry.register("run_command", "rm -rf build").await;
+        let data = format!("approval:no:{}", req.token);
+        let action = parse_callback(&data).expect("approval callback must parse");
+        assert!(matches!(action, ControlAction::Reject { .. }));
+        let woke = registry.resolve(action.request_id(), decision_for(&action)).await;
+        assert!(woke);
+        let got = pending.wait().await;
+        assert_eq!(got, pares_radix_core::approval::ApprovalDecision::Deny);
+        assert!(!got.is_allowed(), "Deny must abort the tool");
+    }
+
+    #[tokio::test]
+    async fn non_token_id_resolve_is_noop_and_falls_through() {
+        let registry = pares_radix_core::approval::ApprovalRegistry::new();
+        let resolved = registry
+            .resolve("turn-request-42", pares_radix_core::approval::ApprovalDecision::Allow)
+            .await;
+        assert!(!resolved, "unknown/non-token id must be a no-op resolve");
+    }
 }

@@ -197,7 +197,7 @@ mod tests {
 ///
 /// This is the sovereignty-aligned production provider: it requires **no
 /// external embedding API**, matching OpenClaw/PluresLM behaviour. Model
-/// weights are fetched once (via `hf-hub`, cached under `FASTEMBED_CACHE_PATH`)
+/// weights are fetched once (via `hf-hub`, cached under `FASTEMBED_CACHE_DIR`)
 /// and thereafter all embedding is fully offline.
 ///
 /// It reuses [`pluresdb::FastEmbedder`] — the exact same model the PluresDB
