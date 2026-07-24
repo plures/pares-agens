@@ -17,7 +17,7 @@ item below is its own follow-up implementation PR.
 PR #621 (`feat/approval-card-wiring`, MERGED) wired the **resolve** half
 of the block-and-await approval loop end-to-end for Telegram:
 
-- Bumped all 15 `pares-radix` edges to `v1.55.33`/`v1.55.34` so
+- Bumped all 15 `pares-radix` edges to `v1.55.33` (later `v1.55.34`), ensuring
   `pares_radix_core::approval::ApprovalRegistry` (from pares-radix #472)
   is a single shared crate version across the workspace.
 - Threaded one `Arc<ApprovalRegistry>` from `runtime.rs` into
