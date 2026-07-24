@@ -291,6 +291,7 @@ impl Cerebellum {
 
         // 1. Recall relevant memories and convert to ContextItems
         let mut topic_shifted = false;
+        let mut topic_shift_outcome = TopicShiftOutcome::SkippedShortMessage;
         let mut query_similarities = std::collections::HashMap::new();
 
         // Fast path: skip expensive embedding + recall for very short
@@ -311,7 +312,8 @@ impl Cerebellum {
             let embed_elapsed = embed_start.elapsed();
             tracing::info!(embed_ms = embed_elapsed.as_millis(), "embedding computed");
 
-            topic_shifted = self.detect_topic_shift(event, &query_embedding);
+            topic_shift_outcome = self.detect_topic_shift(event, &query_embedding);
+            topic_shifted = topic_shift_outcome.is_shift();
 
             let recall_start = std::time::Instant::now();
             let exclude_categories = parse_excluded_categories(&self.config.exclude_categories);
@@ -437,6 +439,7 @@ impl Cerebellum {
             tokens_used = managed.tokens_used,
             token_budget = managed.token_budget,
             topic_shifted,
+            topic_shift_outcome = topic_shift_outcome.as_str(),
             entities = entities.len(),
             "context managed"
         );
@@ -619,9 +622,9 @@ impl Cerebellum {
         }
     }
 
-    fn detect_topic_shift(&self, event: &Event, current_embedding: &[f32]) -> bool {
+    fn detect_topic_shift(&self, event: &Event, current_embedding: &[f32]) -> TopicShiftOutcome {
         let Some(channel_key) = event_channel_key(event) else {
-            return false;
+            return TopicShiftOutcome::NotShifted;
         };
 
         // Short messages (< 20 chars) are almost always follow-ups ("do that",
@@ -631,27 +634,87 @@ impl Cerebellum {
                 // Still update the embedding cache for future comparisons
                 if let Ok(mut embeddings) = self.topic_embeddings.lock() {
                     embeddings.insert(channel_key, current_embedding.to_vec());
+                } else if let Err(e) = self.topic_embeddings.lock() {
+                    warn!(error = %e, "topic embedding cache poisoned while caching short reply; recovering");
+                    let mut embeddings = e.into_inner();
+                    embeddings.insert(channel_key, current_embedding.to_vec());
                 }
-                return false;
+                return TopicShiftOutcome::SkippedShortReply;
             }
         }
 
         let mut embeddings = match self.topic_embeddings.lock() {
             Ok(guard) => guard,
             Err(e) => {
-                warn!(error = %e, "topic embedding cache poisoned; skipping topic-shift detection");
-                return false;
+                warn!(error = %e, "topic embedding cache poisoned; recovering guard and continuing detection");
+                e.into_inner()
             }
         };
-        let shifted = embeddings
-            .get(&channel_key)
-            .map(|previous| {
-                cosine_similarity(previous, current_embedding)
-                    < self.config.topic_similarity_threshold
-            })
-            .unwrap_or(false);
+        let had_prior = embeddings.contains_key(&channel_key);
+        let outcome = if !had_prior {
+            TopicShiftOutcome::SkippedNoPriorTurn
+        } else {
+            let shifted = embeddings
+                .get(&channel_key)
+                .map(|previous| {
+                    cosine_similarity(previous, current_embedding)
+                        < self.config.topic_similarity_threshold
+                })
+                .unwrap_or(false);
+            if shifted {
+                TopicShiftOutcome::Shifted
+            } else {
+                TopicShiftOutcome::NotShifted
+            }
+        };
         embeddings.insert(channel_key, current_embedding.to_vec());
-        shifted
+        outcome
+    }
+}
+
+/// Outcome of a topic-shift check, distinguishing an actual determination
+/// (Shifted / NotShifted) from the various reasons detection was skipped
+/// (ADR-0015 S4). Observability field on `preprocess`'s tracing span lets
+/// suppressed-vs-detected be told apart in production telemetry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TopicShiftOutcome {
+    /// Cosine similarity to the channel's previous topic embedding fell
+    /// below the configured threshold: a genuine topic shift.
+    Shifted,
+    /// Cosine similarity stayed above threshold: same topic.
+    NotShifted,
+    /// Message was <=3 words; recall/embedding was skipped entirely
+    /// (`preprocess`'s fast path), so no comparison was possible.
+    SkippedShortMessage,
+    /// Message was >=4 words but <20 chars: treated as a conversational
+    /// follow-up ('do that', 'yes'), never a topic shift by design.
+    SkippedShortReply,
+    /// The topic-embedding cache mutex was poisoned by a prior panic; the
+    /// guard was recovered via `into_inner()` and detection continued.
+    #[allow(dead_code)]
+    SkippedCachePoisoned,
+    /// No prior embedding cached for this channel (first turn) -- correct
+    /// behavior, not a bug, but distinguishable from suppression.
+    SkippedNoPriorTurn,
+}
+
+impl TopicShiftOutcome {
+    /// Collapse to the boolean `preprocess` needs to decide whether to
+    /// clear stale context items. Only `Shifted` clears context.
+    pub fn is_shift(self) -> bool {
+        matches!(self, TopicShiftOutcome::Shifted)
+    }
+
+    /// Stable string for tracing/log fields.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TopicShiftOutcome::Shifted => "shifted",
+            TopicShiftOutcome::NotShifted => "not_shifted",
+            TopicShiftOutcome::SkippedShortMessage => "skipped_short_message",
+            TopicShiftOutcome::SkippedShortReply => "skipped_short_reply",
+            TopicShiftOutcome::SkippedCachePoisoned => "skipped_cache_poisoned",
+            TopicShiftOutcome::SkippedNoPriorTurn => "skipped_no_prior_turn",
+        }
     }
 }
 
@@ -1059,6 +1122,146 @@ mod tests {
                 .learned_context
                 .contains("Use tokio channels to coordinate async Rust tasks"),
             "returned topic should restore relevant long-term context from memory"
+        );
+    }
+
+    // ── detect_topic_shift outcome table (ADR-0015 S6) ─────────────────────
+
+    #[test]
+    fn topic_shift_short_reply_is_skipped_not_shifted() {
+        let cerebellum = Cerebellum::new(CerebellumConfig::default());
+        let event = Event::Message {
+            id: "1".into(),
+            channel: "chan-a".into(),
+            sender: "u".into(),
+            content: "yes".into(), // < 20 chars
+        };
+        let outcome = cerebellum.detect_topic_shift(&event, &[1.0, 0.0, 0.0]);
+        assert_eq!(outcome, TopicShiftOutcome::SkippedShortReply);
+        assert!(!outcome.is_shift());
+    }
+
+    #[test]
+    fn topic_shift_first_turn_in_channel_is_skipped_no_prior() {
+        let cerebellum = Cerebellum::new(CerebellumConfig::default());
+        let event = Event::Message {
+            id: "1".into(),
+            channel: "chan-b".into(),
+            sender: "u".into(),
+            content: "This is a long enough first message in the channel".into(),
+        };
+        let outcome = cerebellum.detect_topic_shift(&event, &[1.0, 0.0, 0.0]);
+        assert_eq!(outcome, TopicShiftOutcome::SkippedNoPriorTurn);
+        assert!(!outcome.is_shift());
+    }
+
+    #[test]
+    fn topic_shift_similar_embedding_is_not_shifted() {
+        let cerebellum = Cerebellum::new(CerebellumConfig::default());
+        let event = Event::Message {
+            id: "1".into(),
+            channel: "chan-c".into(),
+            sender: "u".into(),
+            content: "This is a long enough first message in the channel".into(),
+        };
+        let first = cerebellum.detect_topic_shift(&event, &[1.0, 0.0, 0.0]);
+        assert_eq!(first, TopicShiftOutcome::SkippedNoPriorTurn);
+
+        let follow_up = Event::Message {
+            id: "2".into(),
+            channel: "chan-c".into(),
+            sender: "u".into(),
+            content: "This is another long enough message about the same topic".into(),
+        };
+        let outcome = cerebellum.detect_topic_shift(&follow_up, &[0.99, 0.01, 0.0]);
+        assert_eq!(outcome, TopicShiftOutcome::NotShifted);
+        assert!(!outcome.is_shift());
+    }
+
+    #[test]
+    fn topic_shift_dissimilar_embedding_is_shifted() {
+        let cerebellum = Cerebellum::new(CerebellumConfig::default());
+        let event = Event::Message {
+            id: "1".into(),
+            channel: "chan-d".into(),
+            sender: "u".into(),
+            content: "This is a long enough first message about cooking recipes".into(),
+        };
+        let first = cerebellum.detect_topic_shift(&event, &[1.0, 0.0, 0.0]);
+        assert_eq!(first, TopicShiftOutcome::SkippedNoPriorTurn);
+
+        let unrelated = Event::Message {
+            id: "2".into(),
+            channel: "chan-d".into(),
+            sender: "u".into(),
+            content: "Completely different subject about rocket engine design".into(),
+        };
+        let outcome = cerebellum.detect_topic_shift(&unrelated, &[0.0, 1.0, 0.0]);
+        assert_eq!(outcome, TopicShiftOutcome::Shifted);
+        assert!(outcome.is_shift());
+    }
+
+    #[test]
+    fn topic_shift_poisoned_cache_recovers_instead_of_permanently_disabling() {
+        let cerebellum = Cerebellum::new(CerebellumConfig::default());
+        let event = Event::Message {
+            id: "1".into(),
+            channel: "chan-e".into(),
+            sender: "u".into(),
+            content: "This is a long enough first message about astronomy".into(),
+        };
+        // Seed a prior embedding so the poisoned-lock branch (not the
+        // no-prior-turn branch) is what gets exercised after recovery.
+        let _ = cerebellum.detect_topic_shift(&event, &[1.0, 0.0, 0.0]);
+
+        // Poison the mutex by panicking while holding the lock.
+        let poison_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = cerebellum.topic_embeddings.lock().unwrap();
+            panic!("deliberate poison for test");
+        }));
+        assert!(poison_result.is_err(), "the panic should have poisoned the mutex");
+        assert!(
+            cerebellum.topic_embeddings.lock().is_err(),
+            "mutex should now report poisoned"
+        );
+
+        // Detection must recover the guard and keep working, not permanently
+        // return NotShifted/false forever (S5 recovery path).
+        let follow_up = Event::Message {
+            id: "2".into(),
+            channel: "chan-e".into(),
+            sender: "u".into(),
+            content: "Unrelated topic entirely about deep sea biology now".into(),
+        };
+        let outcome = cerebellum.detect_topic_shift(&follow_up, &[0.0, 1.0, 0.0]);
+        assert_eq!(
+            outcome,
+            TopicShiftOutcome::Shifted,
+            "detection must recover from a poisoned lock and correctly detect the shift, not silently stay disabled"
+        );
+    }
+
+    // ── ADR-0015 S1/S2 dead-code regression guards ──────────────────────────
+
+    #[test]
+    fn actions_rs_has_no_orphaned_detect_topic_shift_stub() {
+        let contents = include_str!("actions.rs");
+        assert!(
+            !contents.contains("detect_topic_shift_action"),
+            "detect_topic_shift_action was deleted as dead code per ADR-0015; do not re-add it"
+        );
+        assert!(
+            !contents.contains("\"detect_topic_shift\" =>"),
+            "the detect_topic_shift dispatch arm was deleted per ADR-0015; do not re-add it"
+        );
+    }
+
+    #[test]
+    fn classify_px_no_longer_references_deleted_detect_topic_shift_action() {
+        let contents = include_str!("../../../../praxis/procedures/classify.px");
+        assert!(
+            !contents.contains("detect_topic_shift {"),
+            "classify.px must not call the deleted detect_topic_shift action (ADR-0015)"
         );
     }
 
