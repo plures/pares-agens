@@ -28,7 +28,7 @@ pares-radix-praxis      = { git = "https://github.com/plures/pares-radix.git", t
 # Platform crates pulled in by the relocated run_with_providers host machinery
 # (Cluster -> pares_rector, McpServe -> pares_radix_core + local mcp-server).
 # Same release tag so they unify on the single published pares_radix_core.
-pares-radix-core        = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.36" }
+pares-radix-core        = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.37" }
 pares-agens-mcp-server  = { path = "../mcp-server" }
 pares-rector            = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.36" }
 
