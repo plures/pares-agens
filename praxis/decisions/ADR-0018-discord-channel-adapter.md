@@ -1,7 +1,7 @@
 # ADR-0018: Discord Spine Channel Adapter
 
-Status: **PROPOSED — design only, no code changes in this pass** (per
-C-DEV-001, dev-lifecycle hard gate: design stage before implementation).
+**Status:** Proposed (design only; no code changes in this pass; per C-DEV-001)
+**Date:** 2026-07-24
 
 ## Context
 
