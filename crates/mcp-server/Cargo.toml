@@ -34,7 +34,7 @@ pares-agens-core = { path = "../core" }
 # PLATFORM layer (chronos, event, plugins, shell_executor, spine, StateStore) —
 # referenced via git+[patch] redirect to the local pares-radix checkout (same
 # pattern as crates/core; Stage S-C/S-D scaffolding).
-pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.37" }
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.39" }
 pares-agens-agenda = { path = "../agenda" }
 # Marketplace crate — provides the skill-workshop authoring lifecycle
 # (ProposalStore / SkillProposal) exposed via the `skill_workshop` MCP tool.
