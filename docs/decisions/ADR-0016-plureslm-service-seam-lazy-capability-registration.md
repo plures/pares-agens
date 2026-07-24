@@ -45,7 +45,7 @@ motivated the original boundary doc:
 - `crates/core/src/delegation/*` (agent broker/aggregator) can spawn sub-agents
   that each want `recall`/`capture` — another N clients against one store.
 
-If each of these opens `CrdtStore::open(path)` independently, the second opener
+If each of these calls `PluresDbStore::open(path)` (which calls `SledStorage::open(path)` and takes the native file lock) independently, the second opener
 fails or silently degrades (the exact bug class the boundary doc names:
 "catching errors and returning empty search results").
 
