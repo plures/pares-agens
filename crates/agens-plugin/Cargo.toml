@@ -27,7 +27,8 @@ path = "src/bin/pares-agens.rs"
 pares-radix-praxis      = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.37" }
 # Platform crates pulled in by the relocated run_with_providers host machinery
 # (Cluster -> pares_rector, McpServe -> pares_radix_core + local mcp-server).
-# Keep pares-radix-* tags aligned where possible to avoid duplicate-crate type/trait mismatches.
+# Keep pares-radix-* tags aligned where possible to avoid duplicate-crate type/trait mismatches.
+
 pares-radix-core        = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.37" }
 pares-agens-mcp-server  = { path = "../mcp-server" }
 pares-rector            = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.36" }
