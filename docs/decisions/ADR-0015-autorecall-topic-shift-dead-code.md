@@ -1,9 +1,10 @@
 # ADR-0015: Autorecall Topic-Shift Detection — Retire the Dead `actions.rs` Stub
 
-- Status: Proposed (design only — no implementation until reviewed)
-- Epic: `pares-agens:autorecall-cerebellum-fixes`
-- Supersedes: none
-- Related: ADR-0012 (authorization gate), #549 (topic-shift detection introduced), #624 (amnesia/timeout fixes)
+**Status:** PROPOSED (design only — no implementation until reviewed)
+**Date:** 2026-07-24
+**Epic:** `pares-agens:autorecall-cerebellum-fixes`
+**Supersedes:** none
+**Related:** ADR-0012 (authorization gate), #549 (topic-shift detection introduced), #624 (amnesia/timeout fixes)
 
 ## 1. Summary
 
