@@ -632,12 +632,15 @@ impl Cerebellum {
         if let Event::Message { content, .. } = event {
             if content.trim().len() < 20 {
                 // Still update the embedding cache for future comparisons
-                if let Ok(mut embeddings) = self.topic_embeddings.lock() {
-                    embeddings.insert(channel_key, current_embedding.to_vec());
-                } else if let Err(e) = self.topic_embeddings.lock() {
-                    warn!(error = %e, "topic embedding cache poisoned while caching short reply; recovering");
-                    let mut embeddings = e.into_inner();
-                    embeddings.insert(channel_key, current_embedding.to_vec());
+                match self.topic_embeddings.lock() {
+                    Ok(mut embeddings) => {
+                        embeddings.insert(channel_key, current_embedding.to_vec());
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "topic embedding cache poisoned while caching short reply; recovering");
+                        let mut embeddings = e.into_inner();
+                        embeddings.insert(channel_key, current_embedding.to_vec());
+                    }
                 }
                 return TopicShiftOutcome::SkippedShortReply;
             }
