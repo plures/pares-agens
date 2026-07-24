@@ -1,3 +1,21 @@
+## [1.59.0] — 2026-07-24
+
+- feat(parity): runtime skill discovery + <available_skills> injection (#658) (c3c4b8b)
+- build(deps): bump pares-radix-core from v1.55.36 to v1.55.37 (#655) (a73d59f)
+- docs(adr): ADR-0016 PluresLM memory seam - lazy capability registration (design-only) (#657) (4f3fa9a)
+- chore(deps): repin pares-radix-core v1.55.34 -> v1.55.36 (fixes PR #481 chat_id bug) (#634) (7eb7784)
+- build(deps-dev): bump vite from 7.3.1 to 8.1.5 in /crates/tauri-app/ui (#645) (d8195df)
+- build(deps): bump libc from 0.2.188 to 0.2.189 (#651) (3f2487a)
+- build(deps): bump pares-radix-praxis from v1.55.34 to v1.55.37 (#650) (952f5c5)
+- build(deps-dev): bump @sveltejs/vite-plugin-svelte (#644) (ac106dc)
+- build(deps-dev): bump svelte in /crates/tauri-app/ui (#643) (984599a)
+- build(deps-dev): bump playwright from 1.58.2 to 1.61.1 (#641) (683687f)
+- chore(deps): add dependabot.yml (cargo + npm + github-actions) (#633) (3e68414)
+- docs(adr): ADR-0018 approval-card parity remaining scope (design-only) (#632) (7f51511)
+- docs(praxis): ADR-0018 design for Discord spine channel adapter (#631) (ae8d6cb)
+- test(web_search): verify Brave provider is real, add live-HTTP-seam tests (#628) (91c1c97)
+- docs(adr): ADR-0017 Agency <-> PluresLM MCP integration boundary (design-only) (#629) (4438305)
+
 ## [1.58.0] — 2026-07-23
 
 - docs(adr): ADR-0017 channel-agnostic Teams-first adapter design (design-only) (#630) (9fe99cf)
