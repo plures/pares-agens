@@ -605,6 +605,7 @@ mod local_tests {
     // similar sentences are more cosine-similar than dissimilar ones. No canned
     // fixtures (C-NOSTUB-001, C-TEST-002).
     #[tokio::test]
+    #[ignore = "downloads model weights on first run; run explicitly as an e2e check"]
     async fn bge_local_embedder_dim_and_semantics() {
         let embedder = BgeLocalEmbedder::new()
             .expect("local bge-small embedder should initialise (needs model download)");
