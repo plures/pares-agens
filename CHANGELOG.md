@@ -1,3 +1,8 @@
+## [1.59.3] — 2026-07-25
+
+- fix(cerebellum): ADR-0015 topic-shift dead-code deletion + observability (#667) (611a4c7)
+- docs(adr): ADR-0020 autonomous milestone reporting reliability (design-only) (#665) (4098ddd)
+
 ## [1.59.2] — 2026-07-24
 
 - fix: unify all pares-radix-praxis/rector git tag pins to v1.55.39 (#666) (7aae1c3)
