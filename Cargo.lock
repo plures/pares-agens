@@ -5258,8 +5258,8 @@ dependencies = [
 
 [[package]]
 name = "pares-radix-audit"
-version = "1.55.39"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.39#ac7323652b3d5a8a0696a08a4d0eb70470e3f763"
+version = "1.55.45"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.45#ad605bdaa60bfba5ee1113f9759c9fd5722c1f59"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5274,8 +5274,8 @@ dependencies = [
 
 [[package]]
 name = "pares-radix-core"
-version = "1.55.39"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.39#ac7323652b3d5a8a0696a08a4d0eb70470e3f763"
+version = "1.55.45"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.45#ad605bdaa60bfba5ee1113f9759c9fd5722c1f59"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -5309,8 +5309,8 @@ dependencies = [
 
 [[package]]
 name = "pares-radix-praxis"
-version = "1.55.39"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.39#ac7323652b3d5a8a0696a08a4d0eb70470e3f763"
+version = "1.55.45"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.45#ad605bdaa60bfba5ee1113f9759c9fd5722c1f59"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5325,8 +5325,8 @@ dependencies = [
 
 [[package]]
 name = "pares-radix-privacy"
-version = "1.55.39"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.39#ac7323652b3d5a8a0696a08a4d0eb70470e3f763"
+version = "1.55.45"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.45#ad605bdaa60bfba5ee1113f9759c9fd5722c1f59"
 dependencies = [
  "regex",
  "serde",
@@ -5336,8 +5336,8 @@ dependencies = [
 
 [[package]]
 name = "pares-rector"
-version = "1.55.39"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.39#ac7323652b3d5a8a0696a08a4d0eb70470e3f763"
+version = "1.55.45"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.45#ad605bdaa60bfba5ee1113f9759c9fd5722c1f59"
 dependencies = [
  "hostname",
  "num_cpus",
