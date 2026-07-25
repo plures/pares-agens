@@ -169,7 +169,7 @@ currently exist.
 
 There is no `in_progress`/`running` state in the `.px` task model even
 though `autonomous-dispatch.px`'s `evaluate_dispatch` procedure explicitly
-writes `pluresdb_write {key: "task:{id}:status", value: "in_progress"}`
+writes `pluresdb_write {key: "task:{$best.id}:status", value: "in_progress"}`
 (a string not enumerated in the fact's own `status` type comment) and never
 writes anything else — there is no procedure anywhere in
 `autonomous-dispatch.px` or `task-system.px` that transitions a task from
