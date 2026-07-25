@@ -692,10 +692,6 @@ pub enum TopicShiftOutcome {
     /// Message was >=4 words but <20 chars: treated as a conversational
     /// follow-up ('do that', 'yes'), never a topic shift by design.
     SkippedShortReply,
-    /// The topic-embedding cache mutex was poisoned by a prior panic; the
-    /// guard was recovered via `into_inner()` and detection continued.
-    #[allow(dead_code)]
-    SkippedCachePoisoned,
     /// No prior embedding cached for this channel (first turn) -- correct
     /// behavior, not a bug, but distinguishable from suppression.
     SkippedNoPriorTurn,
