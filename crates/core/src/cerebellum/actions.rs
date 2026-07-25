@@ -526,7 +526,7 @@ impl CerebellumActionHandler {
         Ok(json!(significant.join(" ")))
     }
 
-    // REMOVED: detect_topic_shift_action (dead code, ADR-0015). This was a
+    // REMOVED: detect-topic-shift-action (dead code, ADR-0015). This was a
     // constant-`false` placeholder reachable only via the unwired
     // classify.px `classify_message` procedure, which has no production
     // caller. The real topic-shift implementation is
