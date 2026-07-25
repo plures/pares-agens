@@ -28,8 +28,8 @@ the specific incident.
 - `SubAgentManager` holds `completion_tx: mpsc::UnboundedSender<CompletionEvent>`
   (line 140), created via `mpsc::unbounded_channel()` in `SubAgentManager::new`
   (lines 146-154).
-- `CompletionEvent` (struct at line 68) has exactly four fields: `session_id`,
-  `agent_name`, `result: Result<String, String>`, `duration`, plus
+- `CompletionEvent` (struct at line 68) has five fields: `session_id`,
+  `agent_name`, `result: Result<String, String>`, `duration`, and
   `undelivered_steerings`. **No persistence, no epic/task/channel
   correlation IDs beyond the raw session UUID.**
 - The event is constructed and sent once, at the tail of the spawned tokio
