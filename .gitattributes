@@ -1,0 +1,29 @@
+# Enforce LF line endings for all text files to prevent CRLF corruption
+# (prevents cargo/rustc parse errors on Linux CI runners)
+* text=auto eol=lf
+
+# Rust source and manifests — always LF
+*.rs    text eol=lf
+*.toml  text eol=lf
+
+# Web / config files — always LF
+*.ts    text eol=lf
+*.js    text eol=lf
+*.json  text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.md    text eol=lf
+*.nix   text eol=lf
+*.lock  text eol=lf
+
+# Binaries — never touch
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.svg   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary

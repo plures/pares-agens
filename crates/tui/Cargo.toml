@@ -8,7 +8,7 @@ repository.workspace = true
 
 [dependencies]
 ratatui = "0.29"
-crossterm = "0.28"
+crossterm.workspace = true
 tokio.workspace = true
 async-trait.workspace = true
 uuid.workspace = true

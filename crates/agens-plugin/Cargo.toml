@@ -51,7 +51,7 @@ pluresdb    = { git = "https://github.com/plures/pluresdb", rev = "d08f88b541038
 pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1" }
 
 # --- headroom leaf deps ---
-sha2 = "0.10"
+sha2 = "0.11"
 tiktoken-rs = "0.6"
 unicode-segmentation = "1"
 
@@ -72,9 +72,9 @@ chrono.workspace = true
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 html2text = "0.17"
-crossterm = "0.28"
+crossterm.workspace = true
 ratatui = "0.29"
-toml = "0.8"
+toml = "1.1"
 
 [build-dependencies]
 pares-agens-buildinfo = { path = "../agens-buildinfo" }
