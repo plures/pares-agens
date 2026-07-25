@@ -1,14 +1,14 @@
 # ADR-0020: Autonomous Milestone Reporting Reliability
 
-- Status: Proposed (design-only)
-- Date: 2026-07-24
-- Supersedes: none. Prior "ADR-0020" claimed by an earlier session was never
-  actually committed — verified 2026-07-24 that no such file exists in
-  `docs/decisions/`, `praxis/decisions/`, or anywhere in `git log --all`.
-  The branch previously associated with it (`design/autonomous-milestone-reporting-reliability`)
-  has a tip commit (`4438305`) that is actually ADR-0017 (Agency↔PluresLM MCP
-  boundary, already merged via #629) — a stale/reused branch name, zero
-  unmerged content. This document is the real, from-scratch diagnosis.
+**Status:** PROPOSED (design-only)
+**Date:** 2026-07-24
+**Supersedes:** none. Prior "ADR-0020" claimed by an earlier session was never
+actually committed — verified 2026-07-24 that no such file exists in
+`docs/decisions/`, `praxis/decisions/`, or anywhere in `git log --all`.
+The branch previously associated with it (`design/autonomous-milestone-reporting-reliability`)
+has a tip commit (`4438305`) that is actually ADR-0017 (Agency↔PluresLM MCP
+boundary, already merged via #629) — a stale/reused branch name, zero
+unmerged content. This document is the real, from-scratch diagnosis.
 
 ## Context
 
