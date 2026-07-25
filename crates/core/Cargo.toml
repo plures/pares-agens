@@ -76,18 +76,18 @@ regex-lite = "0.1"
 futures-util = "0.3"
 
 # OpenTelemetry (optional, behind "otel" feature)
-opentelemetry = { version = "0.28", optional = true }
-opentelemetry_sdk = { version = "0.28", features = ["rt-tokio"], optional = true }
+opentelemetry = { version = "0.32", optional = true }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"], optional = true }
 opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "http-proto", "reqwest-blocking-client"], optional = true }
 opentelemetry-semantic-conventions = { version = "0.32", optional = true }
-tracing-opentelemetry = { version = "0.29", optional = true }
+tracing-opentelemetry = { version = "0.33", optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
 wiremock = "0.6"
 tempfile = "3"
-opentelemetry_sdk = { version = "0.28", features = ["rt-tokio", "testing"] }
-opentelemetry = { version = "0.28" }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio", "testing"] }
+opentelemetry = { version = "0.32" }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
-tracing-opentelemetry = "0.29"
+tracing-opentelemetry = "0.33"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
