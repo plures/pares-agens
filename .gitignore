@@ -1,5 +1,4 @@
 /target
-Cargo.lock
 # Tauri generated files
 crates/tauri-app/gen/
 # UI build artifacts
