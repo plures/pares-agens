@@ -72,7 +72,7 @@ chrono.workspace = true
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 html2text = "0.17"
-crossterm = "0.28"
+crossterm = "0.29"
 ratatui = "0.29"
 toml = "0.8"
 
