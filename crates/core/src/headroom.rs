@@ -85,7 +85,8 @@ impl ActionHandler for HeadroomActionHandler {
                 let content = params.get("content").and_then(|v| v.as_str()).unwrap_or("");
                 let mut h = Sha256::new();
                 h.update(content.as_bytes());
-                Ok(json!({ "hash": format!("sha256:{:x}", h.finalize()) }))
+                let hash = h.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>();
+                Ok(json!({ "hash": format!("sha256:{hash}") }))
             }
 
             // ΓöÇΓöÇ 3. count_tokens ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
@@ -367,7 +368,8 @@ impl ActionHandler for HeadroomActionHandler {
             "compute_prefix_hash" => {
                 let p = params.get("prefix").and_then(|v| v.as_str()).unwrap_or("");
                 let mut h = Sha256::new(); h.update(p.as_bytes());
-                Ok(json!({"value": format!("{:x}", h.finalize())}))
+                let value = h.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>();
+                Ok(json!({"value": value}))
             }
             "store_prefix_hash"         => Ok(json!({"stored":true})),
             "write_aligned_prefix"      => Ok(json!({"written":true})),
