@@ -1,3 +1,12 @@
+## [1.59.4] — 2026-07-25
+
+- build(deps): bump @plures/design-dojo in /crates/tauri-app/ui (#642) (9b46cb6)
+- build(deps): bump base64 from 0.22.1 to 0.23.0 (#653) (f6c9476)
+- build(deps): bump opentelemetry-otlp from 0.28.0 to 0.32.0 (#656) (d88aa74)
+- build(deps): bump actions/cache from 4 to 6 (#661) (b8942ef)
+- fix(cerebellum): ADR-0015 topic-shift dead-code deletion + observability (#667) (611a4c7)
+- docs(adr): ADR-0020 autonomous milestone reporting reliability (design-only) (#665) (4098ddd)
+
 ## [1.59.2] — 2026-07-24
 
 - fix: unify all pares-radix-praxis/rector git tag pins to v1.55.39 (#666) (7aae1c3)
