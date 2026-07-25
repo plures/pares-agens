@@ -2594,7 +2594,13 @@ async fn main() {
                 Arc::clone(&plugin_executor),
             );
             {
-                let tool_count = plugin_runtime.tool_definitions().await.len();
+                // Tool count must reflect the FULL set the dispatcher actually exposes
+                // (built-in tools + plugin-generated CRUD tools), not just the plugin
+                // subset. Counting only plugin_runtime.tool_definitions() reports 0 in
+                // every default install (no plugins registered), which is why /status
+                // has shown "Tools: 0 registered" across every build to date even though
+                // the agent has a real, working built-in tool set.
+                let tool_count = tool_definitions().len() + plugin_runtime.tool_definitions().await.len();
                 config = config.with_tool_count(tool_count);
             }
             // Initialize the event spine — always on, not optional.
@@ -3075,6 +3081,35 @@ mod tests {
         }
     }
 
+
+    /// Regression test for the "Tools: 0 registered" /status bug (found 2026-07-24):
+    /// the status line's tool count must reflect the FULL set the dispatcher actually
+    /// exposes (built-in `tool_definitions()` + plugin CRUD tools), not just the plugin
+    /// subset. Counting only the plugin subset silently reports 0 whenever no plugins
+    /// are registered (the default), even though the agent has a real, working set of
+    /// built-in tools. This assertion pins the invariant that `ProcedureToolDispatcher`
+    /// reports and the value fed into `TelegramConfig::with_tool_count` must agree.
+    #[tokio::test]
+    async fn status_tool_count_matches_full_dispatcher_tool_set() {
+        let plugin_runtime = Arc::new(PluginRuntime::new());
+        let dispatcher_tool_count = {
+            let mut tools = tool_definitions();
+            tools.extend(plugin_runtime.tool_definitions().await);
+            tools.len()
+        };
+        let status_tool_count =
+            tool_definitions().len() + plugin_runtime.tool_definitions().await.len();
+
+        assert_eq!(
+            status_tool_count, dispatcher_tool_count,
+            "status tool count must equal the dispatcher's available_tools() count"
+        );
+        assert!(
+            status_tool_count > 0,
+            "built-in tool_definitions() must never be empty; /status must never show \
+             'Tools: 0 registered' when the agent has real built-in tools"
+        );
+    }
 
     #[test]
     fn build_nixos_update_command_delegates_to_agenda() {
