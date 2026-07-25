@@ -51,7 +51,7 @@ pluresdb    = { git = "https://github.com/plures/pluresdb", rev = "d08f88b541038
 pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1" }
 
 # --- headroom leaf deps ---
-sha2 = "0.10"
+sha2 = "0.11"
 tiktoken-rs = "0.6"
 unicode-segmentation = "1"
 
