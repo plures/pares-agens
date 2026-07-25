@@ -3092,11 +3092,15 @@ mod tests {
     #[tokio::test]
     async fn status_tool_count_matches_full_dispatcher_tool_set() {
         let plugin_runtime = Arc::new(PluginRuntime::new());
-        let dispatcher_tool_count = {
-            let mut tools = tool_definitions();
-            tools.extend(plugin_runtime.tool_definitions().await);
-            tools.len()
+
+        let dispatcher = ProcedureToolDispatcher {
+            registry: Arc::new(ProcedureRegistry::new()),
+            trace_store: ToolTraceStore::default(),
+            governor: Arc::new(ToolGovernor::with_defaults()),
+            plugin_runtime: Some(Arc::clone(&plugin_runtime)),
         };
+        let dispatcher_tool_count = dispatcher.available_tools().await.len();
+
         let status_tool_count =
             tool_definitions().len() + plugin_runtime.tool_definitions().await.len();
 
