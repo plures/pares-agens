@@ -1,3 +1,20 @@
+## [1.59.5] — 2026-07-25
+
+- fix(status): count full tool set, not just plugin subset (Tools: 0 registered bug) (#668) (b192a67)
+- build(deps): bump opentelemetry_sdk from 0.28.0 to 0.32.1 (#663) (ba09741)
+- build(deps): bump tokio-tungstenite from 0.26.2 to 0.30.0 (#654) (860d75f)
+- build(deps): bump tiktoken-rs from 0.6.0 to 0.12.0 (#652) (13da8d7)
+- build(deps): bump @plures/unum from 0.4.0 to 0.7.1 in /crates/tauri-app/ui (#640) (0300652)
+- build(deps): bump opentelemetry-semantic-conventions (#648) (4fbbe4d)
+- build(deps): bump toml from 0.8.2 to 1.1.3+spec-1.1.0 (#647) (a365919)
+- build(deps): bump sha2 from 0.10.9 to 0.11.0 (#646) (a8cd8ec)
+- build(deps): bump actions/upload-artifact from 4 to 7 (#636) (ec83e7f)
+- build(deps): bump actions/github-script from 7 to 9 (#638) (462c4c9)
+- build(deps): bump peter-evans/repository-dispatch from 3 to 4 (#639) (be4effa)
+- build(deps): bump tower-http from 0.6.11 to 0.7.0 (#649) (4d3a669)
+- build(deps): bump crossterm from 0.28.1 to 0.29.0 (#664) (a12e162)
+- build(deps): bump dependabot/fetch-metadata from 2 to 3 (#660) (8ace71c)
+
 ## [1.59.4] — 2026-07-25
 
 - build(deps): bump @plures/design-dojo in /crates/tauri-app/ui (#642) (9b46cb6)
