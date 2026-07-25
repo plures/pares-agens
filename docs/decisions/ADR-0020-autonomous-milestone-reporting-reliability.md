@@ -203,10 +203,10 @@ async fn tick(&self) {
 `is_quiet_hour()` (defined at `heartbeat.rs:55`) is checked once, at the top
 of `tick()`, before any work is evaluated or any autonomous task is
 dispatched. There is no second quiet-hours/cap check anywhere on the
-*delivery* side — i.e. nothing re-checks `is_quiet_hour()` (or any daily-cap
-counter — no `daily_cap`/`max_per_day` field or counter exists in
-`heartbeat.rs`, `personality.rs`, or `runtime.rs` at all, confirmed by grep)
-at the point a `CompletionEvent`/notification would actually be delivered to
+*delivery* side — i.e. nothing re-checks `is_quiet_hour()` at the point a
+`CompletionEvent`/notification would actually be delivered to a channel.
+(Note: `heartbeat.rs` does implement a tick-time daily proactive cap via
+`HeartbeatConfig.max_proactive_per_day` + `heartbeat/daily_count`.)
 a channel. This means: a long-running task dispatched at, say, 22:55 that
 completes at 23:10 (inside quiet hours) has no gate re-evaluating whether
 *delivering* that result at 23:10 should be suppressed or deferred — the
