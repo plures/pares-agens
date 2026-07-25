@@ -74,7 +74,7 @@ tokio-tungstenite = { version = "0.28", default-features = false, features = ["c
 html2text = "0.17"
 crossterm.workspace = true
 ratatui = "0.29"
-toml = "0.8"
+toml = "1.1"
 
 [build-dependencies]
 pares-agens-buildinfo = { path = "../agens-buildinfo" }
