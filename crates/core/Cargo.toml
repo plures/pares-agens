@@ -51,7 +51,7 @@ toml = "0.8"
 base64 = "0.23"
 sha2 = "0.10"
 pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1" }
-tiktoken-rs = "0.6"
+tiktoken-rs = "0.12"
 unicode-segmentation = "1"
 subtle = "2"
 walkdir = "2"
