@@ -36,7 +36,7 @@ pares-agens-hostkit = { path = "../agens-hostkit" }
 pares-agens-models = { path = "../models" }
 pares-agens-agenda = { path = "../agenda" }
 pares-agens-tui = { path = "../tui" }
-crossterm = "0.28"
+crossterm.workspace = true
 ratatui = "0.29"
 
 [build-dependencies]
