@@ -1,3 +1,9 @@
+## [1.60.0] — 2026-07-26
+
+- feat(serve): add --stdio channel-agnostic headless mode (fixes #672) (f1b4890)
+- docs(qa): record run-1 finding - serve requires telegram-token, blocks channel-agnostic QA (#672) (a54b0af)
+- docs: correct stale README features list + add source-verified FEATURES.md ledger and qa/tasks.md (SDLC QA pilot) (0496daf)
+
 ## [1.59.5] — 2026-07-25
 
 - fix(status): count full tool set, not just plugin subset (Tools: 0 registered bug) (#668) (b192a67)
