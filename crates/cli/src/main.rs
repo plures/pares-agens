@@ -187,6 +187,15 @@ struct RuntimeAgentFactory {
     /// Optional headroom compression hook wired onto every agent this factory
     /// builds. `None` leaves compression off.
     headroom: Option<pares_agens_core::HeadroomHook>,
+    /// Shared task manager so every agent built by this factory (stdio,
+    /// Telegram, or any future channel) can store/detect commitments as
+    /// real tasks. Previously this was only wired into the Telegram
+    /// `TelegramConfig` after `build_agent()` ran, so agent-side commitment
+    /// detection (`detect_and_store_promises`) silently no-op'd on
+    /// `self.task_manager == None` for every channel except Telegram, and
+    /// `--stdio` mode never got a task manager at all (it returns before the
+    /// Telegram-only wiring). Wiring it here fixes both.
+    task_manager: Arc<pares_radix_core::task_manager::TaskManager>,
 }
 
 
@@ -316,6 +325,8 @@ impl RuntimeAgentFactory {
         if let Some(hook) = &self.headroom {
             agent = agent.with_headroom(hook.clone());
         }
+
+        agent = agent.with_task_manager(Arc::clone(&self.task_manager));
 
         Ok(Arc::new(agent))
     }
@@ -2559,6 +2570,15 @@ async fn main() {
             let mut registry = AgentRegistry::new();
             registry.register_builtins();
             let registry = Arc::new(registry);
+            // Shared across every agent this factory builds (stdio, Telegram,
+            // or any future channel) so commitment detection has somewhere
+            // real to write tasks regardless of which serve path is taken.
+            // Backed by the same CrdtStore as the event spine / runtime state
+            // store, so `/tasks` (Telegram) and the stdio agent see the same
+            // underlying data.
+            let shared_task_manager = std::sync::Arc::new(
+                pares_radix_core::task_manager::TaskManager::new(store.crdt_store_arc()),
+            );
             let agent_factory = Arc::new(RuntimeAgentFactory {
                 store: Arc::clone(&store),
                 model_client: Arc::clone(&model_client),
@@ -2570,6 +2590,7 @@ async fn main() {
                 api_key: api_key.clone(),
                 system_prompt_path: system_prompt_path.clone(),
                 headroom: Some(headroom_hook.clone()),
+                task_manager: Arc::clone(&shared_task_manager),
             });
             let agent = match agent_factory.build_agent() {
                 Ok(agent) => agent,
@@ -2664,16 +2685,14 @@ async fn main() {
                 handle
             };
 
-            // Wire the task manager into the Telegram config so `/tasks` works
-            // and the agent's promise-storage path is backed by a real store.
-            // The `serve` path previously omitted this (unlike the agent_commands
-            // runtime path), so `/tasks` reported "Task manager is unavailable" and
-            // stored promises had nowhere to live. Shares the same CrdtStore as the
-            // event spine and runtime state store.
-            let serve_task_manager = std::sync::Arc::new(
-                pares_radix_core::task_manager::TaskManager::new(store.crdt_store_arc()),
-            );
-            config = config.with_task_manager(std::sync::Arc::clone(&serve_task_manager));
+            // Wire the shared task manager into the Telegram config so `/tasks`
+            // works and shares the exact same task store the agent itself
+            // writes to via `with_task_manager` on the factory above (both
+            // now point at `shared_task_manager` / the same CrdtStore) —
+            // previously this constructed a SEPARATE TaskManager instance
+            // than the one (if any) wired into the agent, which would have
+            // silently diverged even after the agent-side fix.
+            config = config.with_task_manager(std::sync::Arc::clone(&shared_task_manager));
 
             let adapter = TelegramAdapter::with_event_spine(config, event_spine_handle.clone());
 
@@ -3348,7 +3367,7 @@ mod tests {
         let tool_dispatcher: Arc<dyn ToolDispatcher> = Arc::new(TestToolDispatcher);
 
         let factory = Arc::new(RuntimeAgentFactory {
-            store,
+            store: Arc::clone(&store),
             model_client,
             deep_model_client,
             tool_dispatcher,
@@ -3358,6 +3377,9 @@ mod tests {
             api_key: None,
             system_prompt_path: None,
             headroom: None,
+            task_manager: Arc::new(pares_radix_core::task_manager::TaskManager::new(
+                store.crdt_store_arc(),
+            )),
         });
 
         let first_agent = factory.build_agent().expect("build initial agent");
