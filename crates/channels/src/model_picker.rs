@@ -24,6 +24,25 @@ pub const SESSION_TTL: Duration = Duration::from_secs(300);
 /// message/keyboard size limits even for long display names).
 pub const DEFAULT_PAGE_SIZE: usize = 6;
 
+/// Telegram message coordinates a picker session is bound to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PickerLocation {
+    /// Telegram chat id containing the picker message.
+    pub chat_id: i64,
+    /// Telegram message id hosting the picker keyboard.
+    pub message_id: i32,
+}
+
+impl PickerLocation {
+    /// Build a picker location from Telegram chat/message coordinates.
+    pub const fn new(chat_id: i64, message_id: i32) -> Self {
+        Self {
+            chat_id,
+            message_id,
+        }
+    }
+}
+
 /// A single live `/model` picker session, scoped to one Telegram message.
 #[derive(Debug, Clone)]
 struct PickerSession {
@@ -62,6 +81,10 @@ impl PickerSession {
         let start = (self.page * self.page_size).min(self.entries.len());
         let end = (start + self.page_size).min(self.entries.len());
         &self.entries[start..end]
+    }
+
+    fn matches_location(&self, location: PickerLocation) -> bool {
+        self.chat_id == location.chat_id && self.message_id == location.message_id
     }
 }
 
@@ -202,18 +225,22 @@ impl ModelPickerStore {
             consumed: false,
         };
         let rendered = render_session(&session, &session_id, current_key);
-        self.sessions.lock().unwrap().insert(session_id.clone(), session);
+        self.sessions
+            .lock()
+            .unwrap()
+            .insert(session_id.clone(), session);
         (session_id, rendered)
     }
 
-    /// Handle a parsed callback action for the given Telegram user. Returns
-    /// `None` if the session is missing/expired/consumed, or the callback
-    /// user does not own the session (foreign callback — a no-op per
-    /// ADR-0021, never an error surfaced to the caller).
+    /// Handle a parsed callback action for the given Telegram user/message.
+    /// Returns `None` if the session is missing/expired/consumed; callbacks
+    /// from the wrong user or message are surfaced as [`PickerOutcome::Ignored`]
+    /// so the caller can acknowledge them as inert no-ops.
     pub fn handle(
         &self,
         action: &PickerAction,
         caller_user_id: i64,
+        callback_location: Option<PickerLocation>,
         current_key: Option<&str>,
     ) -> Option<PickerOutcome> {
         let session_id = match action {
@@ -221,39 +248,44 @@ impl ModelPickerStore {
             | PickerAction::Page { session_id, .. }
             | PickerAction::Cancel { session_id } => session_id.clone(),
         };
-        let mut sessions = self.sessions.lock().unwrap();
-        let session = sessions.get_mut(&session_id)?;
         let now = Instant::now();
-        if session.is_expired(now, SESSION_TTL) || session.consumed {
-            return None;
-        }
-        if session.owner_user_id != caller_user_id {
+        let mut sessions = self.sessions.lock().unwrap();
+        sessions.retain(|_, session| !session.is_expired(now, SESSION_TTL) && !session.consumed);
+        let session = sessions.get_mut(&session_id)?;
+        let Some(callback_location) = callback_location else {
+            return Some(PickerOutcome::Ignored);
+        };
+        if session.owner_user_id != caller_user_id || !session.matches_location(callback_location) {
             // Foreign callback: acknowledged upstream, no state change.
             return Some(PickerOutcome::Ignored);
         }
-        match action {
+        let (outcome, remove_session) = match action {
             PickerAction::Page { page, .. } => {
                 let total_pages = session.total_pages();
                 session.page = (*page).min(total_pages.saturating_sub(1));
                 session.last_active_at = now;
                 let rendered = render_session(session, &session_id, current_key);
-                Some(PickerOutcome::Rendered(rendered))
+                (Some(PickerOutcome::Rendered(rendered)), false)
             }
             PickerAction::Select { idx, .. } => {
                 let entry = session.entries.get(*idx).cloned();
                 match entry {
                     Some(entry) => {
                         session.consumed = true;
-                        Some(PickerOutcome::Selected(entry))
+                        (Some(PickerOutcome::Selected(entry)), true)
                     }
-                    None => Some(PickerOutcome::Ignored),
+                    None => (Some(PickerOutcome::Ignored), false),
                 }
             }
             PickerAction::Cancel { .. } => {
                 session.consumed = true;
-                Some(PickerOutcome::Cancelled)
+                (Some(PickerOutcome::Cancelled), true)
             }
+        };
+        if remove_session {
+            sessions.remove(&session_id);
         }
+        outcome
     }
 
     /// Set the outbound Telegram message that hosts this picker after it is
@@ -375,6 +407,10 @@ mod tests {
             .collect()
     }
 
+    fn callback_location() -> Option<PickerLocation> {
+        Some(PickerLocation::new(100, 200))
+    }
+
     // ── callback parsing ────────────────────────────────────────────────
 
     #[test]
@@ -457,7 +493,7 @@ mod tests {
             session_id: session_id.clone(),
             page: 1,
         };
-        let outcome = store.handle(&action, 1, None).unwrap();
+        let outcome = store.handle(&action, 1, callback_location(), None).unwrap();
         let PickerOutcome::Rendered(page) = outcome else {
             panic!("expected Rendered");
         };
@@ -471,7 +507,7 @@ mod tests {
             session_id: session_id.clone(),
             page: 2,
         };
-        let outcome = store.handle(&action, 1, None).unwrap();
+        let outcome = store.handle(&action, 1, callback_location(), None).unwrap();
         let PickerOutcome::Rendered(page) = outcome else {
             panic!("expected Rendered");
         };
@@ -490,7 +526,7 @@ mod tests {
             session_id,
             page: 99,
         };
-        let outcome = store.handle(&action, 1, None).unwrap();
+        let outcome = store.handle(&action, 1, callback_location(), None).unwrap();
         let PickerOutcome::Rendered(page) = outcome else {
             panic!("expected Rendered");
         };
@@ -507,18 +543,23 @@ mod tests {
             session_id: session_id.clone(),
             idx: 1,
         };
-        let outcome = store.handle(&action, 1, None).unwrap();
+        let outcome = store.handle(&action, 1, callback_location(), None).unwrap();
         let PickerOutcome::Selected(entry) = outcome else {
             panic!("expected Selected");
         };
         assert_eq!(entry.model_id, "model-1");
+        assert_eq!(store.session_count(), 0);
 
         // Second interaction on the same session is inert (consumed).
         let action2 = PickerAction::Page {
             session_id,
             page: 0,
         };
-        assert!(store.handle(&action2, 1, None).is_none());
+        assert!(
+            store
+                .handle(&action2, 1, callback_location(), None)
+                .is_none()
+        );
     }
 
     #[test]
@@ -530,7 +571,7 @@ mod tests {
             session_id,
             idx: 999,
         };
-        let outcome = store.handle(&action, 1, None).unwrap();
+        let outcome = store.handle(&action, 1, callback_location(), None).unwrap();
         assert!(matches!(outcome, PickerOutcome::Ignored));
     }
 
@@ -542,15 +583,19 @@ mod tests {
         let action = PickerAction::Cancel {
             session_id: session_id.clone(),
         };
-        let outcome = store.handle(&action, 1, None).unwrap();
+        let outcome = store.handle(&action, 1, callback_location(), None).unwrap();
         assert!(matches!(outcome, PickerOutcome::Cancelled));
-        assert!(store
-            .handle(
-                &PickerAction::Cancel { session_id },
-                1,
-                None
-            )
-            .is_none());
+        assert_eq!(store.session_count(), 0);
+        assert!(
+            store
+                .handle(
+                    &PickerAction::Cancel { session_id },
+                    1,
+                    callback_location(),
+                    None
+                )
+                .is_none()
+        );
     }
 
     #[test]
@@ -565,12 +610,16 @@ mod tests {
             session_id: session_id.clone(),
             idx: 0,
         };
-        let outcome = store.handle(&action, 999, None).unwrap();
+        let outcome = store
+            .handle(&action, 999, callback_location(), None)
+            .unwrap();
         assert!(matches!(outcome, PickerOutcome::Ignored));
 
         // The rightful owner can still select afterwards.
         let action2 = PickerAction::Select { session_id, idx: 0 };
-        let outcome2 = store.handle(&action2, 1, None).unwrap();
+        let outcome2 = store
+            .handle(&action2, 1, callback_location(), None)
+            .unwrap();
         assert!(matches!(outcome2, PickerOutcome::Selected(_)));
     }
 
@@ -587,6 +636,28 @@ mod tests {
     fn location_returns_none_for_unknown_session() {
         let store = ModelPickerStore::new();
         assert_eq!(store.location("nope"), None);
+    }
+
+    #[test]
+    fn foreign_message_callback_is_ignored_not_applied() {
+        let store = ModelPickerStore::new();
+        let entries = sample_entries(2);
+        let (session_id, _) = store.open(42, 555, 0, entries, None, 4);
+        store.set_location(&session_id, 555, 777);
+
+        let action = PickerAction::Select {
+            session_id: session_id.clone(),
+            idx: 0,
+        };
+        let outcome = store
+            .handle(&action, 42, Some(PickerLocation::new(555, 778)), None)
+            .unwrap();
+        assert!(matches!(outcome, PickerOutcome::Ignored));
+
+        let outcome = store
+            .handle(&action, 42, Some(PickerLocation::new(555, 777)), None)
+            .unwrap();
+        assert!(matches!(outcome, PickerOutcome::Selected(_)));
     }
 
     #[test]

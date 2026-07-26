@@ -18,7 +18,7 @@
 
 use async_trait::async_trait;
 use pares_agens_core::diagnostics::current_process_rss_kib;
-use pares_agens_marketplace::{installer::Installer, SkillCategory, SkillMetadata};
+use pares_agens_marketplace::{SkillCategory, SkillMetadata, installer::Installer};
 use pares_radix_core::Event;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -38,8 +38,8 @@ use uuid::Uuid;
 use crate::adapter::{ChannelAdapter, ChannelError};
 use crate::group_context::{GroupContextBuffer, GroupMessage};
 use crate::model_picker::{
-    entries_from_catalog_page, parse_callback as parse_model_picker_callback, ModelPickerStore,
-    PickerOutcome, DEFAULT_PAGE_SIZE,
+    DEFAULT_PAGE_SIZE, ModelPickerStore, PickerLocation, PickerOutcome, entries_from_catalog_page,
+    parse_callback as parse_model_picker_callback,
 };
 use pares_agens_agenda::scheduler::Scheduler;
 use pares_radix_core::channel_contract::{ChannelContract, GroupChatPolicy};
@@ -893,6 +893,12 @@ impl TelegramAdapter {
         out
     }
 
+    fn escape_telegram_html(text: &str) -> String {
+        text.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    }
+
     /// Build an [`InlineKeyboardMarkup`] from a list of `(label, callback_data)` pairs.
     ///
     /// Used by Praxis decision gates to present approval/rejection buttons to the user.
@@ -919,9 +925,7 @@ impl TelegramAdapter {
     }
 
     /// Convert picker button rows to Telegram's native inline-keyboard type.
-    fn model_picker_keyboard(
-        rows: &[Vec<(String, String)>],
-    ) -> InlineKeyboardMarkup {
+    fn model_picker_keyboard(rows: &[Vec<(String, String)>]) -> InlineKeyboardMarkup {
         InlineKeyboardMarkup::new(
             rows.iter()
                 .map(|row| {
@@ -1362,10 +1366,13 @@ impl ChannelAdapter for TelegramAdapter {
 
     async fn run(
         &self,
-        on_event: impl Fn(Event) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<Event>> + Send>>
-            + Send
-            + Sync
-            + 'static,
+        on_event: impl Fn(
+            Event,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<Event>> + Send>>
+        + Send
+        + Sync
+        + 'static,
     ) -> Result<(), ChannelError> {
         info!("Starting Telegram adapter");
         let bot = Bot::new(self.config.token.clone());
@@ -1693,6 +1700,7 @@ impl ChannelAdapter for TelegramAdapter {
                                             Self::acknowledge_message(&bot, &msg).await;
                                             return respond(());
                                         };
+                                        let _ = pc.refresh().await;
                                         let catalog = pc.catalog(0, 0).await;
                                         let entries = entries_from_catalog_page(catalog);
                                         let (primary, _) = pc.legacy_model_pair().await;
@@ -2851,6 +2859,9 @@ impl ChannelAdapter for TelegramAdapter {
                     // recovered server-side from the frozen catalog snapshot.
                     if let Some(picker_action) = parse_model_picker_callback(&data) {
                         let caller = q.from.id.0 as i64;
+                        let picker_location = q.message.as_ref().map(|message| {
+                            PickerLocation::new(message.chat().id.0, message.id().0)
+                        });
                         let current_key = if let Some(pc) = &pool_control {
                             let (primary, _) = pc.legacy_model_pair().await;
                             Some(primary)
@@ -2860,16 +2871,15 @@ impl ChannelAdapter for TelegramAdapter {
                         let ack = match model_picker.handle(
                             &picker_action,
                             caller,
+                            picker_location,
                             current_key.as_deref(),
                         ) {
                             Some(PickerOutcome::Rendered(page)) => {
-                                if let Some((picker_chat_id, picker_message_id)) =
-                                    model_picker.location(picker_action.session_id())
-                                {
+                                if let Some(message) = q.message.as_ref() {
                                     let _ = bot
                                         .edit_message_text(
-                                            teloxide::types::ChatId(picker_chat_id),
-                                            teloxide::types::MessageId(picker_message_id),
+                                            message.chat().id,
+                                            message.id(),
                                             page.text,
                                         )
                                         .parse_mode(ParseMode::Html)
@@ -2884,12 +2894,15 @@ impl ChannelAdapter for TelegramAdapter {
                                         Ok(selected) => (
                                             format!(
                                                 "✅ <b>Selected model</b>\n<code>{}</code>",
-                                                selected.key
+                                                Self::escape_telegram_html(&selected.key)
                                             ),
                                             "Model selected",
                                         ),
                                         Err(error) => (
-                                            format!("⚠️ Unable to select model: {error}"),
+                                            format!(
+                                                "⚠️ Unable to select model: {}",
+                                                Self::escape_telegram_html(&error.to_string())
+                                            ),
                                             "Selection failed",
                                         ),
                                     },
@@ -2898,13 +2911,11 @@ impl ChannelAdapter for TelegramAdapter {
                                         "Model control unavailable",
                                     ),
                                 };
-                                if let Some((picker_chat_id, picker_message_id)) =
-                                    model_picker.location(picker_action.session_id())
-                                {
+                                if let Some(message) = q.message.as_ref() {
                                     let _ = bot
                                         .edit_message_text(
-                                            teloxide::types::ChatId(picker_chat_id),
-                                            teloxide::types::MessageId(picker_message_id),
+                                            message.chat().id,
+                                            message.id(),
                                             text,
                                         )
                                         .parse_mode(ParseMode::Html)
@@ -2914,13 +2925,11 @@ impl ChannelAdapter for TelegramAdapter {
                                 ack
                             }
                             Some(PickerOutcome::Cancelled) => {
-                                if let Some((picker_chat_id, picker_message_id)) =
-                                    model_picker.location(picker_action.session_id())
-                                {
+                                if let Some(message) = q.message.as_ref() {
                                     let _ = bot
                                         .edit_message_text(
-                                            teloxide::types::ChatId(picker_chat_id),
-                                            teloxide::types::MessageId(picker_message_id),
+                                            message.chat().id,
+                                            message.id(),
                                             "Model selection cancelled.",
                                         )
                                         .reply_markup(InlineKeyboardMarkup::default())
@@ -3002,9 +3011,7 @@ impl ChannelAdapter for TelegramAdapter {
             },
         );
 
-        let dispatch_handler = dptree::entry()
-            .branch(handler)
-            .branch(callback_handler);
+        let dispatch_handler = dptree::entry().branch(handler).branch(callback_handler);
 
         Dispatcher::builder(bot, dispatch_handler)
             .enable_ctrlc_handler()
@@ -3056,6 +3063,14 @@ mod tests {
                 "expected '{expected}' in escaped string '{escaped}'"
             );
         }
+    }
+
+    #[test]
+    fn escape_telegram_html_escapes_entities() {
+        assert_eq!(
+            TelegramAdapter::escape_telegram_html("a < b && c > d"),
+            "a &lt; b &amp;&amp; c &gt; d"
+        );
     }
 
     // ── build_inline_keyboard ─────────────────────────────────────────────
