@@ -1,3 +1,9 @@
+## [1.60.1] — 2026-07-26
+
+- fix(cli): wire TaskManager into RuntimeAgentFactory so commitments persist (fixes #675) (4d842af)
+- qa: execute T1-T16 pilot task suite against f1b4890, file 2 real bugs (#673, #674) (1c08e1f)
+- chore: delegate dependabot-auto-merge.yml to org reusable template (#670) (9b233f0)
+
 ## [1.60.0] — 2026-07-26
 
 - feat(serve): add --stdio channel-agnostic headless mode (fixes #672) (f1b4890)
