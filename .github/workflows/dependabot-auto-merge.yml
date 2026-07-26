@@ -3,7 +3,7 @@ name: Dependabot Auto-Merge
 # This repo delegates dependabot auto-merge policy to the shared org template.
 # See plures/.github/.github/workflows/dependabot-auto-merge.yml for the full policy.
 # Requires the shared template to expose `on: workflow_call` (do not merge this PR before that lands).
-# After that change lands, prefer pinning `jobs.auto-merge.uses` to a specific tag/SHA (not a moving branch).
+# Pinned to an immutable commit SHA to avoid moving-branch supply-chain/reproducibility risk.
 
 on:
   pull_request_target:
@@ -15,5 +15,4 @@ permissions:
 
 jobs:
   auto-merge:
-    uses: plures/.github/.github/workflows/dependabot-auto-merge.yml@main
-    secrets: inherit
+    uses: plures/.github/.github/workflows/dependabot-auto-merge.yml@9c7f19fdb1505e1bd6b755328a0ba40da796b0da
