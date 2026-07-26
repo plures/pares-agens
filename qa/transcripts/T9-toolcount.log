@@ -1,0 +1,59 @@
+[2m2026-07-26T09:58:13.061873Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens[0m[2m:[0m Starting Pares Agens daemon [3mcommit[0m[2m=[0m"a54b0afa"
+[2m2026-07-26T09:58:13.061946Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens[0m[2m:[0m Copilot auth enabled
+[2m2026-07-26T09:58:13.061955Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens[0m[2m:[0m Model: gpt-4.1 (copilot)
+[2m2026-07-26T09:58:13.061975Z[0m [32m INFO[0m main ThreadId(01) [2mpluresdb_storage[0m[2m:[0m opening sled storage [3mpath[0m[2m=[0m/tmp\.pares-agens/runtime-state
+[2m2026-07-26T09:58:13.073876Z[0m [32m INFO[0m main ThreadId(01) [2mhnsw_rs::hnsw[0m[2m:[0m Hnsw max_nb_connection 16
+[2m2026-07-26T09:58:13.073912Z[0m [32m INFO[0m main ThreadId(01) [2mhnsw_rs::hnsw[0m[2m:[0m Hnsw nb elements 1024
+[2m2026-07-26T09:58:13.073919Z[0m [32m INFO[0m main ThreadId(01) [2mhnsw_rs::hnsw[0m[2m:[0m Hnsw ef_construction 200
+[2m2026-07-26T09:58:13.073923Z[0m [32m INFO[0m main ThreadId(01) [2mhnsw_rs::hnsw[0m[2m:[0m Hnsw distance "anndists::dist::distances::DistCosine"
+[2m2026-07-26T09:58:13.073928Z[0m [32m INFO[0m main ThreadId(01) [2mhnsw_rs::hnsw[0m[2m:[0m Hnsw extend candidates false
+[2m2026-07-26T09:58:13.073950Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens[0m[2m:[0m headroom compression configured [3menabled[0m[2m=[0mtrue [3mmin_tokens[0m[2m=[0m500
+[2m2026-07-26T09:58:13.075339Z[0m [32m INFO[0m main ThreadId(01) [2mpluresdb_storage[0m[2m:[0m opening sled storage [3mpath[0m[2m=[0m/tmp\.pares-agens/memory
+[2m2026-07-26T09:58:13.391527Z[0m [32m INFO[0m main ThreadId(01) [2mhnsw_rs::hnsw[0m[2m:[0m Hnsw max_nb_connection 16
+[2m2026-07-26T09:58:13.391577Z[0m [32m INFO[0m main ThreadId(01) [2mhnsw_rs::hnsw[0m[2m:[0m Hnsw nb elements 1024
+[2m2026-07-26T09:58:13.391584Z[0m [32m INFO[0m main ThreadId(01) [2mhnsw_rs::hnsw[0m[2m:[0m Hnsw ef_construction 200
+[2m2026-07-26T09:58:13.391588Z[0m [32m INFO[0m main ThreadId(01) [2mhnsw_rs::hnsw[0m[2m:[0m Hnsw distance "anndists::dist::distances::DistCosine"
+[2m2026-07-26T09:58:13.391594Z[0m [32m INFO[0m main ThreadId(01) [2mhnsw_rs::hnsw[0m[2m:[0m Hnsw extend candidates false
+[2m2026-07-26T09:58:13.391770Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens_core::memory::store[0m[2m:[0m PluresDB opened with native fastembed (BAAI/bge-small-en-v1.5, 384-dim) [3mpath[0m[2m=[0m/tmp\.pares-agens/memory
+[2m2026-07-26T09:58:13.391808Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens[0m[2m:[0m PluresDB with native fastembed (auto-embed on every write)
+[2m2026-07-26T09:58:13.424855Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens[0m[2m:[0m Serving in --stdio mode (channel-agnostic, no Telegram adapter)
+[2m2026-07-26T09:58:13.425386Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens_core::agent[0m[2m:[0m received event [3mrequest_id[0m[2m=[0mf101361c-fdf5-4e78-89de-30bbb19fdbad [3mevent_kind[0m[2m=[0mmessage
+[2m2026-07-26T09:58:13.493849Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens_core::agent[0m[2m:[0m hydrated conversation history from PluresDB [3mchannel[0m[2m=[0m"stdin" [3mtotal[0m[2m=[0m10 [3mtrimmed[0m[2m=[0m10
+[2m2026-07-26T09:58:13.494042Z[0m [32m INFO[0m main ThreadId(01) [1mpreprocess[0m[1m{[0m[3mevent[0m[2m=[0mMessage { id: "ef9a2bfa-1d25-40b2-bee7-66cf69f7a8d7", channel: "stdin", sender: "stdio-user", content: "How many tools do you have registered right now?" }[1m}[0m[2m:[0m [2mpares_agens_core::cerebellum[0m[2m:[0m embedding computed [3membed_ms[0m[2m=[0m0
+[2m2026-07-26T09:58:13.732735Z[0m [32m INFO[0m main ThreadId(01) [1mpreprocess[0m[1m{[0m[3mevent[0m[2m=[0mMessage { id: "ef9a2bfa-1d25-40b2-bee7-66cf69f7a8d7", channel: "stdin", sender: "stdio-user", content: "How many tools do you have registered right now?" }[1m}[0m[2m:[0m [2mpares_agens_core::cerebellum[0m[2m:[0m memory recall complete [3mrecall_ms[0m[2m=[0m238 [3mmemories_found[0m[2m=[0m10
+[2m2026-07-26T09:58:13.732846Z[0m [32m INFO[0m main ThreadId(01) [1mpreprocess[0m[1m{[0m[3mevent[0m[2m=[0mMessage { id: "ef9a2bfa-1d25-40b2-bee7-66cf69f7a8d7", channel: "stdin", sender: "stdio-user", content: "How many tools do you have registered right now?" }[1m}[0m[2m:[0m [2mpares_agens_core::cerebellum[0m[2m:[0m context managed [3mevent_kind[0m[2m=[0m"message" [3mcontext_len[0m[2m=[0m1362 [3mcontext_items[0m[2m=[0m10 [3mtokens_used[0m[2m=[0m297 [3mtoken_budget[0m[2m=[0m4096 [3mtopic_shifted[0m[2m=[0mfalse [3mtopic_shift_outcome[0m[2m=[0m"skipped_no_prior_turn" [3mentities[0m[2m=[0m0
+[2m2026-07-26T09:58:13.732882Z[0m [32m INFO[0m main ThreadId(01) [1mpreprocess[0m[1m{[0m[3mevent[0m[2m=[0mMessage { id: "ef9a2bfa-1d25-40b2-bee7-66cf69f7a8d7", channel: "stdin", sender: "stdio-user", content: "How many tools do you have registered right now?" }[1m}[0m[2m:[0m [2mpares_agens_core::cerebellum[0m[2m:[0m cerebellum preprocess complete [3mpreprocess_ms[0m[2m=[0m238 [3mroute[0m[2m=[0mConscious
+[2m2026-07-26T09:58:13.732922Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens_core::agent[0m[2m:[0m cerebellum routing decision [3mroute[0m[2m=[0mConscious [3mevent_kind[0m[2m=[0m"message" [3mcontext_len[0m[2m=[0m1362
+[2m2026-07-26T09:58:13.732930Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens_core::agent[0m[2m:[0m handle_event: routing to model (Fast/Conscious/Deep) [3mid[0m[2m=[0m"ef9a2bfa-1d25-40b2-bee7-66cf69f7a8d7" [3mchannel[0m[2m=[0m"stdin" [3mroute[0m[2m=[0mConscious
+[2m2026-07-26T09:58:13.732941Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens_core::agent[0m[2m:[0m handle_model_message: starting model call [3mid[0m[2m=[0m"ef9a2bfa-1d25-40b2-bee7-66cf69f7a8d7" [3mchannel[0m[2m=[0m"stdin"
+[2m2026-07-26T09:58:13.732969Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens_core::agent[0m[2m:[0m model selection: task/memory-aware context-size-gated routing [3mwords[0m[2m=[0m9 [3mbase_complexity[0m[2m=[0m3 [3mcomplexity[0m[2m=[0m4 [3mintent[0m[2m=[0mQuestion [3mneeds_tools[0m[2m=[0mtrue [3mneeds_deep[0m[2m=[0mfalse [3mrecall_bytes[0m[2m=[0m1362 [3mest_tokens[0m[2m=[0m11 [3mhas_fast[0m[2m=[0mfalse [3mhas_deep[0m[2m=[0mtrue
+[2m2026-07-26T09:58:13.732986Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens_core::agent[0m[2m:[0m routing to Premium tier (complexity=4)
+[2m2026-07-26T09:58:13.734806Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens_core::headroom_bridge[0m[2m:[0m headroom: compressed transient message clone [3mrequest_id[0m[2m=[0m"998ba223-afa8-491a-b51e-722fab6b430c" [3mmessages[0m[2m=[0m12 [3moriginal_tokens[0m[2m=[0m1322 [3mcompressed_tokens[0m[2m=[0m333 [3msaved_tokens[0m[2m=[0m989 [3melapsed_ms[0m[2m=[0m1
+[2m2026-07-26T09:58:13.734837Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens_core::agent[0m[2m:[0m ABOUT TO CALL model_client.complete [3mturn[0m[2m=[0m0 [3mmessage_count[0m[2m=[0m12 [3mtool_count[0m[2m=[0m13
+[2m2026-07-26T09:58:13.734858Z[0m [32m INFO[0m main ThreadId(01) [2mpares_radix_core::auth::copilot[0m[2m:[0m Copilot session token expired or missing, refreshing
+[2m2026-07-26T09:58:13.734949Z[0m [32m INFO[0m main ThreadId(01) [2mpares_radix_core::auth::copilot[0m[2m:[0m exchanging OAuth token for Copilot session token [3murl[0m[2m=[0m"https://api.github.com/copilot_internal/v2/token"
+[2m2026-07-26T09:58:14.308230Z[0m [32m INFO[0m main ThreadId(01) [2mpares_radix_core::auth::copilot[0m[2m:[0m derived API base from token proxy-ep [3mproxy_ep[0m[2m=[0m"proxy.enterprise.githubcopilot.com" [3mapi_base[0m[2m=[0mhttps://api.enterprise.githubcopilot.com
+[2m2026-07-26T09:58:14.308274Z[0m [32m INFO[0m main ThreadId(01) [2mpares_radix_core::auth::copilot[0m[2m:[0m Copilot session token acquired [3mapi_base[0m[2m=[0mhttps://api.enterprise.githubcopilot.com [3mexpires_at[0m[2m=[0m1785061694
+[2m2026-07-26T09:58:14.308403Z[0m [32m INFO[0m main ThreadId(01) [2mpares_radix_core::auth::copilot[0m[2m:[0m sending Copilot completion request [3murl[0m[2m=[0mhttps://api.enterprise.githubcopilot.com/chat/completions [3mmodel[0m[2m=[0mclaude-opus-4.6 [3mrequest_id[0m[2m=[0m13fdb483-8d22-496a-a183-e65a6746b6c0 [3mmessage_count[0m[2m=[0m12 [3mtool_count[0m[2m=[0m13
+[2m2026-07-26T09:58:18.073850Z[0m [32m INFO[0m main ThreadId(01) [2mpares_radix_core::auth::copilot[0m[2m:[0m Copilot completion response [3mstatus[0m[2m=[0m200 OK [3mrequest_id[0m[2m=[0m13fdb483-8d22-496a-a183-e65a6746b6c0 [3mlatency_ms[0m[2m=[0m3765 [3mbody_len[0m[2m=[0m2189 [3mbody_preview[0m[2m=[0m"{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"I have 13 tools registered:\\n\\n1. **read_file** ΓÇô Read a text file\\n2. **write_file** ΓÇô Write a text file\\n3. **edit_file** ΓÇô Replace te"
+[2m2026-07-26T09:58:18.073981Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens_core::agent[0m[2m:[0m model completion received [3mturn[0m[2m=[0m0 [3mlatency_ms[0m[2m=[0m4339 [3mtool_calls[0m[2m=[0m0
+[2m2026-07-26T09:58:18.074022Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens_core::agent[0m[2m:[0m model loop complete [3mmodel_ms[0m[2m=[0m4341
+[2m2026-07-26T09:58:18.074029Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens_core::agent[0m[2m:[0m LLM response generated [3minput_len[0m[2m=[0m48 [3moutput_len[0m[2m=[0m634
+[2m2026-07-26T09:58:23.487526Z[0m [32m INFO[0m main ThreadId(01) [2mpares_agens_core::memory[0m[2m:[0m capturing memory [3mid[0m[2m=[0m"d77b1d95-8899-4381-932b-d5d8c76f4b11" [3mcategory[0m[2m=[0mConversation
+I have 13 tools registered:
+
+1. **read_file** ΓÇô Read a text file
+2. **write_file** ΓÇô Write a text file
+3. **edit_file** ΓÇô Replace text in a file
+4. **list_directory** ΓÇô List files in a directory
+5. **web_fetch** ΓÇô Fetch a URL
+6. **web_search** ΓÇô Search the web
+7. **browser_open** ΓÇô Open a URL in a browser
+8. **browser_screenshot** ΓÇô Capture a browser screenshot
+9. **browser_click** ΓÇô Click browser coordinates
+10. **browser_type** ΓÇô Type into the browser
+11. **screen_capture** ΓÇô Capture screen/window
+12. **cdp_execute** ΓÇô Execute Chrome DevTools Protocol script
+13. **run_command** ΓÇô Run a shell command
+[2m2026-07-26T09:58:23.502523Z[0m [32m INFO[0m main ThreadId(01) [2mhnsw_rs::hnsw[0m[2m:[0m entering PointIndexation drop
+[2m2026-07-26T09:58:23.502560Z[0m [32m INFO[0m main ThreadId(01) [2mhnsw_rs::hnsw[0m[2m:[0m  drop sys time(s) 0 cpu time 0
