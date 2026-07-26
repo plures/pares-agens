@@ -15,7 +15,7 @@
 
 constraint steer_only_when_turn_live:
   when: inbound.is_control == false
-  require: route.action == "steer" implies active_turn.exists == true
+  require: route.action != "steer" || active_turn.exists == true
   severity: error
   message: "A message may only steer when a live turn exists for that chat; otherwise start a new turn"
 
@@ -27,7 +27,7 @@ constraint new_turn_when_idle:
 
 constraint control_action_is_known:
   when: inbound.is_control == true
-  require: control.action in ["stop", "approve", "reject"]
+  require: control.action == "stop" || control.action == "approve" || control.action == "reject"
   severity: error
   message: "Callback control actions are limited to stop, approve, reject"
 
@@ -38,7 +38,7 @@ constraint control_targets_live_request:
   message: "A stop control must target the request_id of the currently registered turn"
 
 constraint approval_resolution_is_terminal:
-  when: control.action in ["approve", "reject"]
+  when: control.action == "approve" || control.action == "reject"
   require: control.answers_callback == true
   severity: error
   message: "An approval control must answer the Telegram callback so the spinner clears, exactly once"

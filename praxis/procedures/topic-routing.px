@@ -137,7 +137,7 @@ procedure steer_continuation(decision: object from "topic_unchanged") -> write i
 # ═══════════════════════════════════════════════════════════════════════
 
 # Force topic decision when reevaluation queue is full
-procedure force_topic_resolution(from "reeval_overflow") -> write into "topic_decision":
+procedure force_topic_resolution(trigger: object from "reeval_overflow") -> write into "topic_decision":
   given: "When reevaluation queue exceeds bounds, force a classification with all pending context"
 
   read_state {key: "topic:pending_reeval"} -> $pending
