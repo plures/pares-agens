@@ -38,10 +38,21 @@ Pares Agens: message → PluresDB procedure fires → model call → response
 ## Features
 
 - **Any model** — OpenAI, Anthropic Claude, Google Gemini, local models via Docker Model Runner, or any OpenAI-compatible endpoint. Route different tasks to different models (local for cron, cloud for interactive).
+- **BitNet local model** — runs BitNet as the default local model, no Ollama dependency required.
 - **Persistent memory** — PluresLM auto-captures conversations, decisions, preferences. Recalls relevant context before every response.
+- **Headroom-aware context management** — messages above a size threshold are automatically compressed to preserve headroom; smaller messages pass through untouched, with role/tool metadata preserved.
+- **Runtime skill discovery** — dynamically discovers and injects available skills at runtime (OpenClaw-parity `<available_skills>` behavior), not a hardcoded list.
 - **Reactive procedures** — Agent behavior defined as database procedures that fire on events (messages, timers, state changes). Not code.
 - **Decision ledger** — Praxis logs every interaction. High-stakes actions require approval gates before executing.
+- **Terminal UI (TUI)** — a ratatui-based text UI for interacting with the agent outside the desktop app.
 - **Native on every device** — Desktop app (Windows/macOS/Linux), mobile (iOS/Android), all synced via PluresDB + Hyperswarm. No messages lost, no server required.
+
+> **Channel support note:** Telegram is the only fully implemented chat channel adapter today. Discord and
+> Microsoft Teams adapters, and full approval-card UX parity on non-Telegram channels, exist only as design
+> docs (ADRs) — no adapter code has been written yet. This section previously implied broader channel
+> support than is currently real; corrected 2026-07-26 after a source-tree audit (`FEATURES.md`) found zero
+> Discord/Teams/ApprovalCard implementation files.
+
 - **Offline-capable** — With a local model, everything works without internet.
 - **P2P sync** — Hyperswarm connects your devices. Memories sync without a server.
 - **Cross-platform nodes** — One agent brain, many hands. Windows, macOS, mobile nodes provide platform capabilities.
