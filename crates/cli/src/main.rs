@@ -1937,9 +1937,16 @@ enum Commands {
 
     /// Run the agent as a headless daemon with a channel adapter.
     Serve {
-        /// Telegram bot token (from BotFather).
+        /// Telegram bot token (from BotFather). Required unless `--stdio` is set.
         #[arg(long, env = "PARES_TELEGRAM_TOKEN")]
-        telegram_token: String,
+        telegram_token: Option<String>,
+
+        /// Run a channel-agnostic headless mode: read lines from stdin, print
+        /// agent responses to stdout. No external adapter/token required.
+        /// Enables local/CI QA of core agent behavior without Telegram
+        /// (see pares-agens issue #672 / qa/RUN1-FINDINGS.md).
+        #[arg(long)]
+        stdio: bool,
 
         /// OpenAI-compatible API URL (GitHub Models or OpenAI compatible endpoint).
         #[arg(
@@ -2098,6 +2105,7 @@ async fn main() {
 
         Commands::Serve {
             telegram_token,
+            stdio,
             model_url,
             model,
             copilot,
@@ -2117,6 +2125,18 @@ async fn main() {
             tracing::info!(commit = env!("GIT_COMMIT_HASH"), "Starting Pares Agens daemon");
             let started_at = Instant::now();
             let sync_enabled = sync_topic_key.is_some();
+
+            // Resolve the token early: required unless --stdio is set. In
+            // --stdio mode we still need a placeholder for host-adapter
+            // bookkeeping below (never used to hit the real Telegram API in
+            // that path since the Telegram adapter is never constructed).
+            if !stdio && telegram_token.is_none() {
+                eprintln!(
+                    "error: --telegram-token (or PARES_TELEGRAM_TOKEN) is required unless --stdio is set"
+                );
+                std::process::exit(1);
+            }
+            let telegram_token = telegram_token.unwrap_or_default();
 
             let system_prompt_path = system_prompt;
 
@@ -2572,6 +2592,31 @@ async fn main() {
                     agent.set_plugin_context(Some(schema_ctx));
                     tracing::info!("Plugin schema context injected into system prompt");
                 }
+            }
+
+            // Channel-agnostic headless mode: no Telegram token, no external
+            // adapter. Reads lines from stdin, prints agent responses to
+            // stdout. Exists so core agent behavior (memory, routing,
+            // procedures, decision ledger, etc.) can be QA'd without a live
+            // Telegram bot (C-TEST-001/002; pares-agens#672).
+            if stdio {
+                tracing::info!("Serving in --stdio mode (channel-agnostic, no Telegram adapter)");
+                let stdin_adapter = pares_agens_channels::stdin::StdinAdapter::new("stdio-user");
+                let agent_clone = Arc::clone(&agent_handle);
+                let run_result = stdin_adapter
+                    .run(move |event| {
+                        let agent = Arc::clone(&agent_clone);
+                        Box::pin(async move {
+                            let agent = agent.read().await.clone();
+                            agent.handle_event(event).await
+                        })
+                    })
+                    .await;
+                if let Err(e) = run_result {
+                    tracing::error!("stdio serve loop exited with error: {e}");
+                    std::process::exit(1);
+                }
+                return;
             }
 
             // Set up Telegram adapter
