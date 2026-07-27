@@ -401,6 +401,11 @@ impl RuntimeAgentFactory {
                                     px_parse_failures.push((path.clone(), e.to_string()));
                                 }
                             }
+                        } else {
+                            tracing::error!(
+                                file = %path.display(),
+                                "px_loader: FAILED to read procedure file - this policy file is NOT active"
+                            );
                         }
                     }
                 }
