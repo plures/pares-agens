@@ -1,3 +1,7 @@
+## [1.62.1] — 2026-07-27
+
+- fix(px): loader fail-loud + CI parse-gate + fix 4 broken .px files (#678) (1af7e05)
+
 ## [1.62.0] — 2026-07-27
 
 - SECURITY FIX: remove arbitrary shell-injection fallback in praxis_run (#679) (9084bb5)
