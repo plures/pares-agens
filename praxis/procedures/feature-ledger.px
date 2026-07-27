@@ -13,7 +13,7 @@ entity feature_record:
     status: enum(in_review, shipped, deprecated)
     introduced_version: String
     last_verified_version: String
-    last_qa_result: String
+    last_qa_result: enum(unverified, passed, failed, blocked)
     owner: String
 
 entity feature_qa_result:
