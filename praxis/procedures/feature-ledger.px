@@ -1,0 +1,70 @@
+# feature-ledger.px — canonical feature identity and release-readiness model
+#
+# Product logic lives here: feature records are PluresDB state, FEATURE.md is a
+# deterministic materialized view, and promotion to shipped is a procedure-gated
+# state transition. Rust is limited to the PluresDB/renderer/CI IO boundary.
+
+entity feature_record:
+  prefix: "feature:pares-agens:"
+  fields:
+    id: String
+    name: String
+    description: String
+    status: enum(in_review, shipped, deprecated)
+    introduced_version: String
+    last_verified_version: String
+    last_qa_result: String
+    owner: String
+
+entity feature_qa_result:
+  prefix: "feature-qa:pares-agens:"
+  fields:
+    feature_id: String
+    candidate_version: String
+    candidate_commit: String
+    outcome: enum(passed, failed, blocked)
+    evidence: String
+
+constraint feature_record_requires_identity:
+  scope: feature_record
+  phase: pre_write
+  when: feature.write_requested == true
+  require: feature.id != "" AND feature.name != "" AND feature.description != "" AND feature.owner != ""
+  severity: error
+  message: "Feature records require id, name, description, and owner."
+
+constraint new_feature_starts_in_review:
+  scope: feature_record
+  phase: pre_write
+  when: feature.is_new == true
+  require: feature.status == "in_review"
+  severity: error
+  message: "New capabilities begin in_review; only a passing QA promotion may mark them shipped."
+
+constraint shipped_feature_has_passing_candidate_qa:
+  scope: feature_record
+  phase: pre_write
+  when: feature.status == "shipped"
+  require: feature.last_qa_result == "passed" AND feature.last_verified_version != ""
+  severity: error
+  message: "A shipped feature requires passing QA for its verified candidate version."
+
+procedure validate_feature_record:
+  trigger: manual
+  given: "Validate feature state before it is persisted or rendered"
+  validate_feature_state {feature: $feature} -> $validation
+  return $validation
+
+procedure decide_feature_promotion:
+  trigger: manual
+  given: "Promote exactly one in-review feature only after candidate QA passed"
+  validate_feature_promotion {feature: $feature, qa_result: $qa_result, candidate_version: $candidate_version, candidate_commit: $candidate_commit} -> $decision
+  return $decision
+
+procedure render_feature_ledger:
+  trigger: manual
+  given: "Produce the deterministic feature view from PluresDB feature records"
+  list_state {prefix: "feature:pares-agens:"} -> $features
+  sort_feature_records {features: $features} -> $ordered
+  format_feature_ledger_markdown {features: $ordered} -> $markdown
+  return $markdown
