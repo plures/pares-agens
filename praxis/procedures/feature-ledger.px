@@ -64,7 +64,7 @@ procedure decide_feature_promotion:
 procedure render_feature_ledger:
   trigger: manual
   given: "Produce the deterministic feature view from PluresDB feature records"
-  list_state {prefix: "feature:pares-agens:"} -> $features
+  db_get_prefix {prefix: "feature:pares-agens:"} -> $features
   sort_feature_records {features: $features} -> $ordered
   format_feature_ledger_markdown {features: $ordered} -> $markdown
   return $markdown
