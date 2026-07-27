@@ -1,10 +1,13 @@
 [workspace]
 resolver = "2"
 members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client", "crates/cli", "crates/privacy", "crates/marketplace", "crates/agenda", "crates/sync", "crates/audit", "crates/tauri-app", "crates/tui", "crates/agens-plugin", "crates/bitnet-sys", "crates/bitnet", "crates/mcp-server", "crates/agens-hostkit", "crates/agens-buildinfo"]
+default-members = ["crates/core", "crates/channels", "crates/models", "crates/mcp-client", "crates/cli", "crates/privacy", "crates/marketplace", "crates/agenda", "crates/sync", "crates/audit", "crates/tui", "crates/agens-plugin", "crates/bitnet-sys", "crates/bitnet", "crates/mcp-server", "crates/agens-hostkit", "crates/agens-buildinfo"]
 # Keep the Tauri desktop app crates in the workspace so their dependency graph
 # is captured in the root Cargo.lock. They may still be built separately by
 # installer workflows via `cargo tauri build --locked`, but the lockfile must
 # already include the Tauri/GTK/WebKit dependencies for locked builds to work.
+# Excluding GUI crates from default-members keeps plain `cargo test` usable on
+# generic Linux runners that don't have GTK/GLib system packages preinstalled.
 
 [workspace.package]
 version = "1.60.1"
