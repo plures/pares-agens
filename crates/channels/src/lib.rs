@@ -17,6 +17,7 @@ pub mod http_spine;
 pub mod stdin;
 pub mod tauri_ipc;
 pub mod telegram;
+pub mod model_picker;
 pub mod turn_ux;
 pub mod active_turns;
 pub mod threading;

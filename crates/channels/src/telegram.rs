@@ -18,7 +18,7 @@
 
 use async_trait::async_trait;
 use pares_agens_core::diagnostics::current_process_rss_kib;
-use pares_agens_marketplace::{installer::Installer, SkillCategory, SkillMetadata};
+use pares_agens_marketplace::{SkillCategory, SkillMetadata, installer::Installer};
 use pares_radix_core::Event;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -37,6 +37,10 @@ use uuid::Uuid;
 
 use crate::adapter::{ChannelAdapter, ChannelError};
 use crate::group_context::{GroupContextBuffer, GroupMessage};
+use crate::model_picker::{
+    DEFAULT_PAGE_SIZE, ModelPickerStore, PickerLocation, PickerOutcome, entries_from_catalog_page,
+    parse_callback as parse_model_picker_callback,
+};
 use pares_agens_agenda::scheduler::Scheduler;
 use pares_radix_core::channel_contract::{ChannelContract, GroupChatPolicy};
 use pares_radix_core::event_spine::EventSpineHandle;
@@ -80,10 +84,10 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 33] = [
         "/reasoning",
         "toggle deep model escalation (or /reasoning on|off)",
     ),
-    ("/model", "show current primary + deep model"),
-    ("/models", "list all discovered models with tier + context"),
-    ("/model <name>", "switch primary model at runtime"),
-    ("/model deep <name>", "switch deep model at runtime"),
+    ("/model", "open the interactive model picker"),
+    ("/models", "list all discovered models"),
+    ("/model <name>", "legacy runtime primary-model switch"),
+    ("/model deep <name>", "legacy runtime deep-model switch"),
     (
         "/config",
         "show runtime config (model, endpoint, log level)",
@@ -889,6 +893,12 @@ impl TelegramAdapter {
         out
     }
 
+    fn escape_telegram_html(text: &str) -> String {
+        text.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    }
+
     /// Build an [`InlineKeyboardMarkup`] from a list of `(label, callback_data)` pairs.
     ///
     /// Used by Praxis decision gates to present approval/rejection buttons to the user.
@@ -912,6 +922,21 @@ impl TelegramAdapter {
             InlineKeyboardButton::callback("✅ Yes", format!("approval:yes:{request_id}")),
             InlineKeyboardButton::callback("❌ No", format!("approval:no:{request_id}")),
         ]])
+    }
+
+    /// Convert picker button rows to Telegram's native inline-keyboard type.
+    fn model_picker_keyboard(rows: &[Vec<(String, String)>]) -> InlineKeyboardMarkup {
+        InlineKeyboardMarkup::new(
+            rows.iter()
+                .map(|row| {
+                    row.iter()
+                        .map(|(label, data)| {
+                            InlineKeyboardButton::callback(label.clone(), data.clone())
+                        })
+                        .collect()
+                })
+                .collect::<Vec<Vec<InlineKeyboardButton>>>(),
+        )
     }
 
     /// Telegram enforces a 4096-character limit per message.
@@ -1341,10 +1366,13 @@ impl ChannelAdapter for TelegramAdapter {
 
     async fn run(
         &self,
-        on_event: impl Fn(Event) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<Event>> + Send>>
-            + Send
-            + Sync
-            + 'static,
+        on_event: impl Fn(
+            Event,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<Event>> + Send>>
+        + Send
+        + Sync
+        + 'static,
     ) -> Result<(), ChannelError> {
         info!("Starting Telegram adapter");
         let bot = Bot::new(self.config.token.clone());
@@ -1371,6 +1399,10 @@ impl ChannelAdapter for TelegramAdapter {
         let index_url = self.config.marketplace_index_url.clone();
         let model_control = self.config.model_control.clone();
         let pool_control = self.config.pool_control.clone();
+        // A process-local, short-lived store contains the catalog snapshot
+        // behind opaque callback ids; model identifiers never travel in
+        // Telegram callback_data.
+        let model_picker = Arc::new(ModelPickerStore::new());
         let runtime_control = self.config.runtime_control.clone();
         let config_control = self.config.config_control.clone();
         let personality_control = self.config.personality_control.clone();
@@ -1401,6 +1433,8 @@ impl ChannelAdapter for TelegramAdapter {
         // Cloned into the callback closure so an Allow/Deny press can wake a
         // tool call blocked on the token carried in `callback_data`.
         let approval_registry_cb = self.approval_registry.clone();
+        let pool_control_cb = pool_control.clone();
+        let model_picker_cb = model_picker.clone();
         let handler = Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
             let event = Self::message_to_event(&msg);
             let on_event = on_event.clone();
@@ -1408,6 +1442,7 @@ impl ChannelAdapter for TelegramAdapter {
             let index_url = index_url.clone();
             let model_control = model_control.clone();
             let pool_control = pool_control.clone();
+            let model_picker = model_picker.clone();
             let runtime_control = runtime_control.clone();
             let config_control = config_control.clone();
             let personality_control = personality_control.clone();
@@ -1543,7 +1578,9 @@ impl ChannelAdapter for TelegramAdapter {
                                 return respond(());
                             }
                             "models" => {
-                                let reply = if let Some(control) = &model_control {
+                                let reply = if let Some(pc) = &pool_control {
+                                    pc.model_list().await
+                                } else if let Some(control) = &model_control {
                                     let models = control.available_models().await;
                                     if models.is_empty() {
                                         "🧠 <b>Discovered models</b>\n\nNo models discovered at boot (discovery empty, failed, or not in auto mode).".to_string()
@@ -1646,29 +1683,69 @@ impl ChannelAdapter for TelegramAdapter {
                                 return respond(());
                             }
                             "model" => {
-                                // Pool-aware model commands (new)
+                                // Pool-aware model commands. `/model` opens a live,
+                                // button-based catalog; operational subcommands retain
+                                // their existing textual responses.
                                 if let Some(pc) = &pool_control {
                                     let args: Vec<&str> = cmd_parts.collect();
+                                    if matches!(args.as_slice(), [] | ["list"]) {
+                                        let Some(owner) = msg.from.as_ref().map(|user| user.id.0 as i64) else {
+                                            Self::send_reply_with_fallback(
+                                                &bot,
+                                                &msg,
+                                                "Unable to determine the Telegram user who opened the picker.",
+                                                None,
+                                                event_spine.as_ref(),
+                                            ).await;
+                                            Self::acknowledge_message(&bot, &msg).await;
+                                            return respond(());
+                                        };
+                                        let _ = pc.refresh().await;
+                                        let catalog = pc.catalog(0, 0).await;
+                                        let entries = entries_from_catalog_page(catalog);
+                                        let (primary, _) = pc.legacy_model_pair().await;
+                                        let (session_id, page) = model_picker.open(
+                                            owner,
+                                            msg.chat.id.0,
+                                            0,
+                                            entries,
+                                            Some(&primary),
+                                            DEFAULT_PAGE_SIZE,
+                                        );
+                                        let markup = Self::model_picker_keyboard(&page.rows);
+                                        match bot
+                                            .send_message(msg.chat.id, &page.text)
+                                            .parse_mode(ParseMode::Html)
+                                            .reply_parameters(ReplyParameters::new(msg.id))
+                                            .reply_markup(markup)
+                                            .await
+                                        {
+                                            Ok(sent) => model_picker.set_location(&session_id, msg.chat.id.0, sent.id.0),
+                                            Err(error) => {
+                                                warn!(%error, "failed to send Telegram model picker");
+                                                Self::send_reply_with_fallback(
+                                                    &bot,
+                                                    &msg,
+                                                    "Unable to send the model picker. Please try again.",
+                                                    None,
+                                                    event_spine.as_ref(),
+                                                ).await;
+                                            }
+                                        }
+                                        Self::acknowledge_message(&bot, &msg).await;
+                                        return respond(());
+                                    }
                                     let reply = match args.as_slice() {
-                                        [] | ["list"] => pc.model_list().await,
                                         ["stats"] => pc.stats(None).await,
                                         ["stats", id] => pc.stats(Some(id)).await,
-                                        ["disable", id] => {
-                                            pc.disable(id, None).await.unwrap_or_else(|e| format!("⚠️ {e}"))
-                                        }
+                                        ["disable", id] => pc.disable(id, None).await.unwrap_or_else(|e| format!("⚠️ {e}")),
                                         ["disable", id, rest @ ..] => {
                                             let reason = rest.join(" ");
                                             pc.disable(id, Some(&reason)).await.unwrap_or_else(|e| format!("⚠️ {e}"))
                                         }
-                                        ["enable", id] => {
-                                            pc.enable(id).await.unwrap_or_else(|e| format!("⚠️ {e}"))
-                                        }
-                                        ["prefer", id] => {
-                                            pc.prefer(id).await.unwrap_or_else(|e| format!("⚠️ {e}"))
-                                        }
-                                        ["reset"] => {
-                                            pc.reset().await.unwrap_or_else(|e| format!("⚠️ {e}"))
-                                        }
+                                        ["enable", id] => pc.enable(id).await.unwrap_or_else(|e| format!("⚠️ {e}")),
+                                        ["prefer", id] => pc.prefer(id).await.unwrap_or_else(|e| format!("⚠️ {e}")),
+                                        ["reset"] => pc.reset().await.unwrap_or_else(|e| format!("⚠️ {e}")),
                                         ["refresh"] => pc.refresh().await,
                                         _ => "Usage: /model [list|disable <id> [reason]|enable <id>|prefer <id>|stats [id]|reset|refresh]".to_string(),
                                     };
@@ -2771,9 +2848,101 @@ impl ChannelAdapter for TelegramAdapter {
                 let active_turns = active_turns_cb.clone();
                 let on_event = on_event_cb.clone();
                 let approval_registry = approval_registry_cb.clone();
+                let pool_control = pool_control_cb.clone();
+                let model_picker = model_picker_cb.clone();
                 async move {
                     let data = q.data.clone().unwrap_or_default();
                     let chat_id = q.message.as_ref().map(|m| m.chat().id.0);
+
+                    // Model-picker callbacks are handled before turn controls.
+                    // They carry an opaque session id + index only; `key` is
+                    // recovered server-side from the frozen catalog snapshot.
+                    if let Some(picker_action) = parse_model_picker_callback(&data) {
+                        let caller = q.from.id.0 as i64;
+                        let picker_location = q.message.as_ref().map(|message| {
+                            PickerLocation::new(message.chat().id.0, message.id().0)
+                        });
+                        let current_key = if let Some(pc) = &pool_control {
+                            let (primary, _) = pc.legacy_model_pair().await;
+                            Some(primary)
+                        } else {
+                            None
+                        };
+                        let ack = match model_picker.handle(
+                            &picker_action,
+                            caller,
+                            picker_location,
+                            current_key.as_deref(),
+                        ) {
+                            Some(PickerOutcome::Rendered(page)) => {
+                                if let Some(message) = q.message.as_ref() {
+                                    let _ = bot
+                                        .edit_message_text(
+                                            message.chat().id,
+                                            message.id(),
+                                            page.text,
+                                        )
+                                        .parse_mode(ParseMode::Html)
+                                        .reply_markup(Self::model_picker_keyboard(&page.rows))
+                                        .await;
+                                }
+                                "Page updated"
+                            }
+                            Some(PickerOutcome::Selected(entry)) => {
+                                let (text, ack) = match &pool_control {
+                                    Some(pc) => match pc.select_by_key(&entry.key).await {
+                                        Ok(selected) => (
+                                            format!(
+                                                "✅ <b>Selected model</b>\n<code>{}</code>",
+                                                Self::escape_telegram_html(&selected.key)
+                                            ),
+                                            "Model selected",
+                                        ),
+                                        Err(error) => (
+                                            format!(
+                                                "⚠️ Unable to select model: {}",
+                                                Self::escape_telegram_html(&error.to_string())
+                                            ),
+                                            "Selection failed",
+                                        ),
+                                    },
+                                    None => (
+                                        "⚠️ Model control is unavailable.".to_string(),
+                                        "Model control unavailable",
+                                    ),
+                                };
+                                if let Some(message) = q.message.as_ref() {
+                                    let _ = bot
+                                        .edit_message_text(
+                                            message.chat().id,
+                                            message.id(),
+                                            text,
+                                        )
+                                        .parse_mode(ParseMode::Html)
+                                        .reply_markup(InlineKeyboardMarkup::default())
+                                        .await;
+                                }
+                                ack
+                            }
+                            Some(PickerOutcome::Cancelled) => {
+                                if let Some(message) = q.message.as_ref() {
+                                    let _ = bot
+                                        .edit_message_text(
+                                            message.chat().id,
+                                            message.id(),
+                                            "Model selection cancelled.",
+                                        )
+                                        .reply_markup(InlineKeyboardMarkup::default())
+                                        .await;
+                                }
+                                "Cancelled"
+                            }
+                            Some(PickerOutcome::Ignored) | None => "This picker is no longer active",
+                        };
+                        let _ = bot.answer_callback_query(q.id.clone()).text(ack).await;
+                        return respond(());
+                    }
+
                     let action = crate::turn_ux::parse_callback(&data);
                     let ack = match (&action, chat_id) {
                         (Some(crate::turn_ux::ControlAction::Stop { request_id }), Some(cid)) => {
@@ -2842,9 +3011,7 @@ impl ChannelAdapter for TelegramAdapter {
             },
         );
 
-        let dispatch_handler = dptree::entry()
-            .branch(handler)
-            .branch(callback_handler);
+        let dispatch_handler = dptree::entry().branch(handler).branch(callback_handler);
 
         Dispatcher::builder(bot, dispatch_handler)
             .enable_ctrlc_handler()
@@ -2896,6 +3063,14 @@ mod tests {
                 "expected '{expected}' in escaped string '{escaped}'"
             );
         }
+    }
+
+    #[test]
+    fn escape_telegram_html_escapes_entities() {
+        assert_eq!(
+            TelegramAdapter::escape_telegram_html("a < b && c > d"),
+            "a &lt; b &amp;&amp; c &gt; d"
+        );
     }
 
     // ── build_inline_keyboard ─────────────────────────────────────────────
