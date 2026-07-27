@@ -7030,14 +7030,6 @@ impl AsyncActionHandler for ShellBackedProcedureHandler {
             // input). Unknown actions are now a typed error, matching the
             // idiomatic `ExecutionError::ActionFailed` pattern used by every
             // other arm in this handler; nothing reaches `Command::new`.
-            // SECURITY: unrecognized action/step names must NEVER be executed as a
-            // shell command. Previously this fallback ran
-            // `bash -c "{other} '{params_str}'"`, which allowed arbitrary shell
-            // injection via any unrecognized action/step name in a procedure
-            // passed to `praxis_run` (procedures are attacker-controlled MCP
-            // input). Unknown actions are now a typed error, matching the
-            // idiomatic `ExecutionError::ActionFailed` pattern used by every
-            // other arm in this handler; nothing reaches `Command::new`.
             other => Err(ExecutionError::ActionFailed {
                 action: other.to_string(),
                 message: format!(
