@@ -1,3 +1,8 @@
+## [1.62.0] — 2026-07-27
+
+- SECURITY FIX: remove arbitrary shell-injection fallback in praxis_run (#679) (9084bb5)
+- feat(telegram): interactive button-based /model command via structured PoolControl catalog (#671) (29d7fd6)
+
 ## [1.60.1] — 2026-07-26
 
 - fix(cli): wire TaskManager into RuntimeAgentFactory so commitments persist (fixes #675) (4d842af)
