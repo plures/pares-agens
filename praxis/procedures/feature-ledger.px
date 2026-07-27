@@ -52,7 +52,7 @@ constraint shipped_feature_has_passing_candidate_qa:
 procedure validate_feature_record:
   trigger: manual
   given: "Validate feature state before it is persisted or rendered"
-  validate_feature_state {feature: $feature} -> $validation
+  validate_feature_state {feature: "feature"} -> $validation
   return $validation
 
 procedure decide_feature_promotion:
