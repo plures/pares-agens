@@ -358,6 +358,7 @@ impl RuntimeAgentFactory {
                 ),
             ));
             let mut df_count = 0usize;
+            let mut px_parse_failures: Vec<(std::path::PathBuf, String)> = Vec::new();
 
             for dir in [&px_dir, &local_dir] {
                 if !dir.exists() {
@@ -370,7 +371,8 @@ impl RuntimeAgentFactory {
                             continue;
                         }
                         if let Ok(source) = std::fs::read_to_string(&path) {
-                            if let Ok(doc) = parse_px(&source) {
+                            match parse_px(&source) {
+                                Ok(doc) => {
                                 for proc in doc.statements.iter().filter_map(|s| match s {
                                     pares_radix_praxis::px::Statement::DataflowProcedure(p) => {
                                         Some(p)
@@ -389,10 +391,33 @@ impl RuntimeAgentFactory {
                                         df_count += 1;
                                     }
                                 }
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        file = %path.display(),
+                                        error = %e,
+                                        "px_loader: FAILED to parse procedure file - this policy file is NOT active"
+                                    );
+                                    px_parse_failures.push((path.clone(), e.to_string()));
+                                }
                             }
+                        } else {
+                            tracing::error!(
+                                file = %path.display(),
+                                "px_loader: FAILED to read procedure file - this policy file is NOT active"
+                            );
                         }
                     }
                 }
+            }
+
+            if !px_parse_failures.is_empty() {
+                tracing::error!(
+                    count = px_parse_failures.len(),
+                    files = ?px_parse_failures.iter().map(|(p, _)| p.display().to_string()).collect::<Vec<_>>(),
+                    "px_loader: {} .px procedure file(s) failed to parse and are NOT active",
+                    px_parse_failures.len()
+                );
             }
 
             if df_count > 0 {
@@ -5315,6 +5340,7 @@ pub(crate) async fn run_tui(
                 ),
             ));
                 let mut df_count = 0usize;
+                let mut px_parse_failures: Vec<(std::path::PathBuf, String)> = Vec::new();
 
                 for dir in [&px_dir, &local_dir] {
                     if !dir.exists() {
@@ -5327,7 +5353,8 @@ pub(crate) async fn run_tui(
                                 continue;
                             }
                             if let Ok(source) = std::fs::read_to_string(&path) {
-                                if let Ok(doc) = parse_px(&source) {
+                                match parse_px(&source) {
+                                    Ok(doc) => {
                                     for proc in doc.statements.iter().filter_map(|s| match s {
                                         pares_radix_praxis::px::Statement::DataflowProcedure(p) => {
                                             Some(p)
@@ -5346,10 +5373,33 @@ pub(crate) async fn run_tui(
                                             df_count += 1;
                                         }
                                     }
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(
+                                            file = %path.display(),
+                                            error = %e,
+                                            "px_loader: FAILED to parse procedure file (spine) - this policy file is NOT active"
+                                        );
+                                        px_parse_failures.push((path.clone(), e.to_string()));
+                                    }
                                 }
+                            } else {
+                                tracing::error!(
+                                    file = %path.display(),
+                                    "px_loader: FAILED to read procedure file (spine) - this policy file is NOT active"
+                                );
                             }
                         }
                     }
+                }
+
+                if !px_parse_failures.is_empty() {
+                    tracing::error!(
+                        count = px_parse_failures.len(),
+                        files = ?px_parse_failures.iter().map(|(p, _)| p.display().to_string()).collect::<Vec<_>>(),
+                        "px_loader: {} .px procedure file(s) failed to parse (spine) and are NOT active",
+                        px_parse_failures.len()
+                    );
                 }
 
                 if df_count > 0 {

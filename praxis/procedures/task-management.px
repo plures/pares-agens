@@ -4,12 +4,8 @@
 # The task tools (task_create, task_complete, task_list, task_get, task_update)
 # are always available. These instructions guide their use.
 
-procedure task_management_guidance()
-  """
-  Guidance for autonomous task management. The agent's pending tasks are
-  auto-injected into context as <pending_tasks> block. The agent is responsible
-  for creating and completing tasks consciously.
-  """
+procedure task_management_guidance:
+  given: "Guidance for autonomous task management. The agent's pending tasks are auto-injected into context as <pending_tasks> block. The agent is responsible for creating and completing tasks consciously."
 
   # --- When to create tasks ---
   step guidance_create

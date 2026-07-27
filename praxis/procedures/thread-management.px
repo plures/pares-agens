@@ -36,23 +36,25 @@ procedure route_to_thread(decision: object from "topic_decision") -> write into 
   read_state {key: "thread:config"} -> $config
   get_field {object: $config, field: "auto_create_threshold", default: 0.75} -> $threshold
 
-  branch $changed:
-    true:
-      evaluate_topic_confidence {confidence: $confidence, threshold: $threshold} -> $eval
-      get_field {object: $eval, field: "above_threshold"} -> $meets_threshold
+  when $changed == true:
+    evaluate_topic_confidence {confidence: $confidence, threshold: $threshold} -> $eval
+    get_field {object: $eval, field: "above_threshold"} -> $meets_threshold
 
-      branch $meets_threshold:
-        true:
-          find_or_create_thread {chat_id: $chat_id, topic: $new_topic} -> $thread_result
-          return $thread_result
-        false:
-          return {action: "continue", reason: "low_confidence", pending_topic: $new_topic}
+    when $meets_threshold == true:
+      find_or_create_thread {chat_id: $chat_id, topic: $new_topic} -> $thread_result
+      return $thread_result
+    end
+    when $meets_threshold == false:
+      return {action: "continue", reason: "low_confidence", pending_topic: $new_topic}
+    end
+  end
 
-    false:
-      return {action: "continue", reason: "same_topic"}
+  when $changed == false:
+    return {action: "continue", reason: "same_topic"}
+  end
 
 
-procedure archive_stale_threads(from "timer:thread_cleanup") -> write into "threads_archived":
+procedure archive_stale_threads(trigger: object from "timer:thread_cleanup") -> write into "threads_archived":
   given: "Archive threads that have been inactive beyond the configured threshold"
 
   read_state {key: "thread:config"} -> $config
@@ -73,30 +75,34 @@ procedure handle_thread_command(command: object from "thread_command") -> write 
   get_field {object: $command, field: "action"} -> $action
   get_field {object: $command, field: "chat_id"} -> $chat_id
 
-  branch $action:
-    "new":
-      get_field {object: $command, field: "topic", default: "untitled"} -> $topic
-      create_thread {chat_id: $chat_id, topic: $topic} -> $thread
-      return {action: "created", thread: $thread}
+  when $action == "new":
+    get_field {object: $command, field: "topic", default: "untitled"} -> $topic
+    create_thread {chat_id: $chat_id, topic: $topic} -> $thread
+    return {action: "created", thread: $thread}
+  end
 
-    "switch":
-      get_field {object: $command, field: "thread_id"} -> $target_id
-      switch_thread {chat_id: $chat_id, thread_id: $target_id} -> $result
-      return {action: "switched", result: $result}
+  when $action == "switch":
+    get_field {object: $command, field: "thread_id"} -> $target_id
+    switch_thread {chat_id: $chat_id, thread_id: $target_id} -> $result
+    return {action: "switched", result: $result}
+  end
 
-    "list":
-      list_threads {chat_id: $chat_id, include_archived: false} -> $threads
-      return {action: "listed", threads: $threads}
+  when $action == "list":
+    list_threads {chat_id: $chat_id, include_archived: false} -> $threads
+    return {action: "listed", threads: $threads}
+  end
 
-    "close":
-      get_field {object: $command, field: "thread_id"} -> $target_id
-      archive_thread {chat_id: $chat_id, thread_id: $target_id} -> $result
-      return {action: "archived", result: $result}
+  when $action == "close":
+    get_field {object: $command, field: "thread_id"} -> $target_id
+    archive_thread {chat_id: $chat_id, thread_id: $target_id} -> $result
+    return {action: "archived", result: $result}
+  end
 
-    "context":
-      read_state {key: "thread:{$chat_id}:active"} -> $active_id
-      read_state {key: "thread:{$chat_id}:{$active_id}:meta"} -> $meta
-      return {action: "context", active_thread: $meta}
+  when $action == "context":
+    read_state {key: "thread:{$chat_id}:active"} -> $active_id
+    read_state {key: "thread:{$chat_id}:{$active_id}:meta"} -> $meta
+    return {action: "context", active_thread: $meta}
+  end
 
 
 # Bridge: topic_decision → thread routing
@@ -112,17 +118,18 @@ procedure bridge_topic_to_thread(decision: object from "topic_decision") -> writ
   get_field {object: $decision, field: "confidence"} -> $confidence
 
   # Only emit when topic actually changed (optimization — avoid unnecessary routing)
-  branch $changed:
-    true:
-      emit_spine_event {
-        type: "topic_classified",
-        chat_id: $chat_id,
-        classification: {
-          topic_changed: true,
-          new_topic: $new_topic,
-          confidence: $confidence
-        }
-      } -> $emitted
-      return {bridged: true, event_id: $emitted.id}
-    false:
-      return {bridged: false, reason: "no_topic_change"}
+  when $changed == true:
+    emit_spine_event {
+      type: "topic_classified",
+      chat_id: $chat_id,
+      classification: {
+        topic_changed: true,
+        new_topic: $new_topic,
+        confidence: $confidence
+      }
+    } -> $emitted
+    return {bridged: true, event_id: $emitted.id}
+  end
+  when $changed == false:
+    return {bridged: false, reason: "no_topic_change"}
+  end
