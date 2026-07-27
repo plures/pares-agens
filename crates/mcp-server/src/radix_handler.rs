@@ -7022,38 +7022,23 @@ impl AsyncActionHandler for ShellBackedProcedureHandler {
                 Ok(params.clone())
             }
 
-            // Default: treat the step name as a shell command with params as JSON env
-            other => {
-                let params_str = serde_json::to_string(params).unwrap_or_default();
-                let output = tokio::process::Command::new("bash")
-                    .arg("-c")
-                    .arg(format!("{other} '{params_str}'"))
-                    .current_dir(&self.workdir)
-                    .output()
-                    .await
-                    .map_err(|e| ExecutionError::ActionFailed {
-                        action: other.to_string(),
-                        message: format!("command failed: {e}"),
-                    })?;
-
-                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-                if output.status.success() {
-                    let value = serde_json::from_str::<Value>(stdout.trim())
-                        .unwrap_or_else(|_| Value::String(stdout.trim().to_string()));
-                    Ok(value)
-                } else {
-                    Err(ExecutionError::ActionFailed {
-                        action: other.to_string(),
-                        message: format!(
-                            "exit {}: {}",
-                            output.status.code().unwrap_or(-1),
-                            stderr.trim()
-                        ),
-                    })
-                }
-            }
+            // SECURITY: unrecognized action/step names must NEVER be executed as a
+            // shell command. Previously this fallback ran
+            // `bash -c "{other} '{params_str}'"`, which allowed arbitrary shell
+            // injection via any unrecognized action/step name in a procedure
+            // passed to `praxis_run` (procedures are attacker-controlled MCP
+            // input). Unknown actions are now a typed error, matching the
+            // idiomatic `ExecutionError::ActionFailed` pattern used by every
+            // other arm in this handler; nothing reaches `Command::new`.
+            other => Err(ExecutionError::ActionFailed {
+                action: other.to_string(),
+                message: format!(
+                    "unknown action '{other}': no built-in handler is registered for it, \
+                     and unrecognized actions are not executed as shell commands. \
+                     Use the 'shell' | 'run' | 'exec' action with an explicit 'command' \
+                     parameter to run a shell command."
+                ),
+            }),
         }
     }
 }
@@ -8226,6 +8211,62 @@ mod tests {
         let parsed: Value = serde_json::from_str(&result.content).unwrap();
         assert_eq!(parsed["success"], true);
         assert_eq!(parsed["variables"]["out"]["stdout"], "hello");
+    }
+
+    /// SECURITY REGRESSION: an unrecognized action/step name must NEVER be
+    /// executed as a shell command. Previously `ShellBackedProcedureHandler`
+    /// fell through to `bash -c "{action} '{params_json}'"` for any action
+    /// name it didn't recognize, which allowed arbitrary shell injection
+    /// since procedures passed to `praxis_run` are attacker-controlled MCP
+    /// input. This test uses a malicious-looking action name that would
+    /// create a canary file if it were ever handed to a shell, and asserts
+    /// both that execution fails with a typed error AND that no subprocess
+    /// side effect occurred.
+    #[tokio::test]
+    async fn praxis_run_unknown_action_is_rejected_not_shelled_out() {
+        let handler = make_handler();
+
+        // Canary path: if the vulnerable code path ever ran this as a shell
+        // command, it would execute `touch <canary>` and create the file.
+        let canary = std::env::temp_dir().join(format!(
+            "pares-agens-shell-injection-canary-{}",
+            std::process::id()
+        ));
+        let _ = tokio::fs::remove_file(&canary).await;
+
+        let malicious_action = format!(
+            "touch {} #",
+            canary.display()
+        );
+
+        let source = format!(
+            "procedure test_injection:\n  trigger: manual\n  {} {{}}\n",
+            malicious_action
+        );
+
+        let result = handler
+            .call_tool("praxis_run", json!({ "source": source }))
+            .await;
+
+        // The procedure must fail (unknown action), not succeed via a shelled-out command.
+        assert!(
+            result.is_error || {
+                let parsed: Value = serde_json::from_str(&result.content).unwrap_or(json!({}));
+                parsed["success"] == false
+            },
+            "expected unknown action to fail, got: {}",
+            result.content
+        );
+
+        // The canary file must NOT exist: proof no subprocess was spawned for
+        // the unrecognized action name.
+        assert!(
+            !canary.exists(),
+            "vulnerable shell fallback executed the malicious action and created {}",
+            canary.display()
+        );
+
+        let _ = tokio::fs::remove_file(&canary).await;
     }
 
     // ── Chronos tool tests ──────────────────────────────────────────────────────
