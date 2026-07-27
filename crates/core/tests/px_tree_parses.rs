@@ -32,7 +32,7 @@ fn full_live_praxis_tree_parses_under_canonical_parser() {
 
     let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", dir.display()))
-        .filter_map(|e| e.ok())
+        .map(|e| e.unwrap_or_else(|e| panic!("failed to read entry in {}: {e}", dir.display())))
         .map(|e| e.path())
         .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("px"))
         .collect();
