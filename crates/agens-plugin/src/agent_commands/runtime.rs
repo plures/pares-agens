@@ -5383,7 +5383,12 @@ pub(crate) async fn run_tui(
                                         px_parse_failures.push((path.clone(), e.to_string()));
                                     }
                                 }
-                            }
+                                } else {
+                                    tracing::error!(
+                                        file = %path.display(),
+                                        "px_loader: FAILED to read procedure file (spine) - this policy file is NOT active"
+                                    );
+                                }
                         }
                     }
                 }
