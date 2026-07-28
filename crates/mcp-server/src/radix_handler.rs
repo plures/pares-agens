@@ -1523,6 +1523,182 @@ impl RadixToolHandler {
         )
     }
 
+    /// Generic prefix scan of the state store, returning just the values
+    /// (not key/value pairs). Backs the generic `list_state` action used by
+    /// .px procedures that only care about record contents, e.g.
+    /// feature-ledger.px's `list_state {prefix: "feature:pares-agens:"} ->
+    /// $features`. Deliberately not merged with `db_get_prefix`'s output
+    /// shape (key/value pairs) since that would be a breaking change for
+    /// existing `db_get_prefix` callers.
+    async fn list_state_values(&self, store: &Arc<dyn StateStore>, prefix: &str) -> ToolResult {
+        let keys = store.keys_with_prefix(prefix).await;
+        let mut items = Vec::new();
+        for key in &keys {
+            if let Some(value) = store.get(key).await {
+                if !value.is_null() {
+                    items.push(value);
+                }
+            }
+        }
+
+        let count = items.len();
+        ToolResult::ok(
+            serde_json::to_string_pretty(&json!({ "items": items, "count": count }))
+                .unwrap_or_default(),
+        )
+    }
+
+    /// Generic action: `list_state {prefix} -> {items, count}`. Returns the
+    /// raw values (not key/value pairs) matching a PluresDB key prefix. This
+    /// is the generic building block .px procedures call instead of
+    /// inventing feature-specific list actions (C-NOSTUB-001 / ADR-px-
+    /// production-wiring-and-loader-reliability).
+    async fn list_state(&self, args: &Value) -> ToolResult {
+        let store = match &self.state_store {
+            Some(s) => s,
+            None => return ToolResult::error("state store not configured"),
+        };
+
+        let prefix = match args.get("prefix").and_then(|v| v.as_str()) {
+            Some(p) => p,
+            None => return ToolResult::error("missing required parameter: prefix"),
+        };
+
+        self.list_state_values(store, prefix).await
+    }
+
+    /// Generic action: `sort_by_field {items, field, order?} -> sorted`.
+    /// Sorts an array of JSON objects by a named field (string, number, or
+    /// bool comparison), ascending by default. `order: "desc"` reverses it.
+    /// Fully generic -- not specific to feature records -- so any .px
+    /// procedure needing deterministic ordering can call it.
+    async fn sort_by_field(&self, args: &Value) -> ToolResult {
+        let items = match args.get("items") {
+            Some(Value::Array(items)) => items.clone(),
+            Some(_) => return ToolResult::error("'items' must be an array"),
+            None => return ToolResult::error("missing required parameter: items"),
+        };
+
+        let field = match args.get("field").and_then(|v| v.as_str()) {
+            Some(f) => f,
+            None => return ToolResult::error("missing required parameter: field"),
+        };
+
+        let descending = matches!(
+            args.get("order").and_then(|v| v.as_str()),
+            Some("desc") | Some("descending")
+        );
+
+        fn field_key(item: &Value, field: &str) -> Value {
+            item.get(field).cloned().unwrap_or(Value::Null)
+        }
+
+        fn cmp_values(a: &Value, b: &Value) -> std::cmp::Ordering {
+            use std::cmp::Ordering;
+            match (a, b) {
+                (Value::String(a), Value::String(b)) => a.cmp(b),
+                (Value::Number(a), Value::Number(b)) => {
+                    if let (Some(ai), Some(bi)) = (a.as_i64(), b.as_i64()) {
+                        ai.cmp(&bi)
+                    } else if let (Some(au), Some(bu)) = (a.as_u64(), b.as_u64()) {
+                        au.cmp(&bu)
+                    } else {
+                        a.as_f64()
+                            .partial_cmp(&b.as_f64())
+                            .unwrap_or(Ordering::Equal)
+                    }
+                }
+                (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+                (Value::Null, Value::Null) => Ordering::Equal,
+                (Value::Null, _) => Ordering::Less,
+                (_, Value::Null) => Ordering::Greater,
+                // Mixed/unsupported types: stringify for a stable, deterministic order.
+                (a, b) => a.to_string().cmp(&b.to_string()),
+            }
+        }
+
+        let mut sorted = items;
+        sorted.sort_by(|a, b| {
+            let ordering = cmp_values(&field_key(a, field), &field_key(b, field));
+            if descending {
+                ordering.reverse()
+            } else {
+                ordering
+            }
+        });
+
+        ToolResult::ok(
+            serde_json::to_string_pretty(&json!({ "items": sorted }))
+                .unwrap_or_default(),
+        )
+    }
+
+    /// Generic action: `render_markdown_table {items, columns} -> markdown`.
+    /// Renders an array of JSON objects as a GitHub-flavored markdown table.
+    /// `columns` is an ordered array of `{field, header}` (header optional,
+    /// defaults to the field name). Missing fields render as an empty cell.
+    /// Generic string rendering only -- no feature-specific knowledge.
+    async fn render_markdown_table(&self, args: &Value) -> ToolResult {
+        let items = match args.get("items") {
+            Some(Value::Array(items)) => items,
+            Some(_) => return ToolResult::error("'items' must be an array"),
+            None => return ToolResult::error("missing required parameter: items"),
+        };
+
+        let columns = match args.get("columns").and_then(|v| v.as_array()) {
+            Some(cols) if !cols.is_empty() => cols,
+            _ => return ToolResult::error("missing required non-empty parameter: columns"),
+        };
+
+        let mut fields = Vec::with_capacity(columns.len());
+        let mut headers = Vec::with_capacity(columns.len());
+        for col in columns {
+            let field = match col.get("field").and_then(|v| v.as_str()) {
+                Some(f) => f,
+                None => return ToolResult::error("each column requires a 'field' string"),
+            };
+            let header = col
+                .get("header")
+                .and_then(|v| v.as_str())
+                .unwrap_or(field);
+            fields.push(field.to_string());
+            headers.push(header.to_string());
+        }
+
+        fn cell_text(value: &Value) -> String {
+            match value {
+                Value::Null => String::new(),
+                Value::String(s) => s.replace('|', "\\|"),
+                other => other.to_string().replace('|', "\\|"),
+            }
+        }
+
+        let mut md = String::new();
+        md.push_str("| ");
+        md.push_str(
+            &headers
+                .iter()
+                .map(|h| h.replace('|', "\\|"))
+                .collect::<Vec<_>>()
+                .join(" | "),
+        );
+        md.push_str(" |\n|");
+        md.push_str(&" --- |".repeat(headers.len()));
+        md.push('\n');
+
+        for item in items {
+            md.push_str("| ");
+            let cells: Vec<String> = fields
+                .iter()
+                .map(|f| cell_text(&item.get(f).cloned().unwrap_or(Value::Null)))
+                .collect();
+            md.push_str(&cells.join(" | "));
+            md.push_str(" |\n");
+        }
+
+        ToolResult::ok(md)
+    }
+
     async fn send_message(&self, args: &Value) -> ToolResult {
         let emitter = match &self.pipeline_emitter {
             Some(e) => e,
@@ -2818,6 +2994,7 @@ impl RadixToolHandler {
                     shell: Arc::clone(&self.shell),
                     workdir: self.workdir.clone(),
                     children: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+                    state_store: self.state_store.clone(),
                 };
                 let handler = ComposableHandler::new(registry, shell_handler);
                 return match px_async::execute_async_with_vars(&loaded.data, &handler, initial_vars)
@@ -2937,6 +3114,7 @@ impl RadixToolHandler {
             shell: Arc::clone(&self.shell),
             workdir: self.workdir.clone(),
             children: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            state_store: self.state_store.clone(),
         };
         let handler = ComposableHandler::new(registry, shell_handler);
 
@@ -3258,6 +3436,7 @@ impl RadixToolHandler {
                     shell: Arc::clone(&self.shell),
                     workdir: self.workdir.clone(),
                     children: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+                    state_store: self.state_store.clone(),
                 };
 
                 use pares_radix_praxis::px::compose::pipe;
@@ -5350,6 +5529,48 @@ impl ToolHandler for RadixToolHandler {
                 },
             },
             Tool {
+                name: "list_state".into(),
+                description: Some(
+                    "Prefix scan of the state store. Returns the record values (not key/value pairs) matching the prefix -- generic building block for .px procedures.".into(),
+                ),
+                input_schema: ToolInputSchema {
+                    schema_type: "object".into(),
+                    properties: Some(json!({
+                        "prefix": {"type": "string", "description": "The key prefix to scan (e.g. 'feature:pares-agens:')"}
+                    })),
+                    required: Some(vec!["prefix".into()]),
+                },
+            },
+            Tool {
+                name: "sort_by_field".into(),
+                description: Some(
+                    "Sort an array of JSON objects by a named field. Generic -- not specific to any record type.".into(),
+                ),
+                input_schema: ToolInputSchema {
+                    schema_type: "object".into(),
+                    properties: Some(json!({
+                        "items": {"type": "array", "description": "Array of JSON objects to sort"},
+                        "field": {"type": "string", "description": "Field name to sort by"},
+                        "order": {"type": "string", "description": "'asc' (default) or 'desc'"}
+                    })),
+                    required: Some(vec!["items".into(), "field".into()]),
+                },
+            },
+            Tool {
+                name: "render_markdown_table".into(),
+                description: Some(
+                    "Render an array of JSON objects as a markdown table given ordered column definitions. Generic -- not specific to any record type.".into(),
+                ),
+                input_schema: ToolInputSchema {
+                    schema_type: "object".into(),
+                    properties: Some(json!({
+                        "items": {"type": "array", "description": "Array of JSON objects to render"},
+                        "columns": {"type": "array", "description": "Ordered array of {field, header?} column definitions"}
+                    })),
+                    required: Some(vec!["items".into(), "columns".into()]),
+                },
+            },
+            Tool {
                 name: "send_message".into(),
                 description: Some(
                     "Send a message to a chat via the spine pipeline. Emits a DeliveryRequest event.".into(),
@@ -6393,6 +6614,9 @@ impl RadixToolHandler {
             "db_keys" => self.db_keys(&arguments).await,
             "db_dump" => self.db_dump(&arguments).await,
             "db_get_prefix" => self.db_get_prefix(&arguments).await,
+            "list_state" => self.list_state(&arguments).await,
+            "sort_by_field" => self.sort_by_field(&arguments).await,
+            "render_markdown_table" => self.render_markdown_table(&arguments).await,
             "timestamp_now" => self.timestamp_now().await,
             "generate_id" => self.generate_id(&arguments).await,
             "send_message" => self.send_message(&arguments).await,
@@ -6490,6 +6714,12 @@ struct ShellBackedProcedureHandler {
     shell: Arc<ShellExecutor>,
     workdir: PathBuf,
     children: Arc<tokio::sync::Mutex<std::collections::HashMap<u32, tokio::process::Child>>>,
+    /// Optional state store, enabling generic DB-backed actions (`list_state`,
+    /// `db_get_prefix`, etc.) to be called from .px procedures executed via
+    /// this handler, not just via direct MCP tool dispatch. `None` when no
+    /// store is configured; those actions then fail loud with a real error
+    /// rather than silently no-op'ing.
+    state_store: Option<Arc<dyn StateStore>>,
 }
 
 #[async_trait]
@@ -7022,6 +7252,177 @@ impl AsyncActionHandler for ShellBackedProcedureHandler {
                 Ok(params.clone())
             }
 
+            // Built-in: list_state -- generic PluresDB prefix scan, values only.
+            // Real DB-backed implementation (not a stub): reads through the
+            // shared state store the same way the MCP `list_state`/
+            // `db_get_prefix` tools do, so .px procedures executed via this
+            // handler (e.g. feature-ledger.px's render_feature_ledger) see
+            // real persisted records.
+            "list_state" => {
+                let store = self.state_store.as_ref().ok_or_else(|| ExecutionError::ActionFailed {
+                    action: name.to_string(),
+                    message: "list_state: no state store configured for this procedure execution context".into(),
+                })?;
+                let prefix = params.get("prefix").and_then(|v| v.as_str()).ok_or_else(|| {
+                    ExecutionError::ActionFailed {
+                        action: name.to_string(),
+                        message: "missing 'prefix' parameter".into(),
+                    }
+                })?;
+                let keys = store.keys_with_prefix(prefix).await;
+                let mut items = Vec::new();
+                for key in &keys {
+                    if let Some(value) = store.get(key).await {
+                        if !value.is_null() {
+                            items.push(value);
+                        }
+                    }
+                }
+                Ok(json!({ "items": items, "count": items.len() }))
+            }
+
+            // Built-in: sort_by_field -- generic deterministic ordering of a
+            // JSON array by a named field. Not feature-specific.
+            "sort_by_field" => {
+                let items = match params.get("items") {
+                    Some(Value::Array(items)) => items.clone(),
+                    Some(_) => {
+                        return Err(ExecutionError::ActionFailed {
+                            action: name.to_string(),
+                            message: "'items' must be an array".into(),
+                        })
+                    }
+                    None => {
+                        return Err(ExecutionError::ActionFailed {
+                            action: name.to_string(),
+                            message: "missing 'items' parameter".into(),
+                        })
+                    }
+                };
+                let field = params.get("field").and_then(|v| v.as_str()).ok_or_else(|| {
+                    ExecutionError::ActionFailed {
+                        action: name.to_string(),
+                        message: "missing 'field' parameter".into(),
+                    }
+                })?;
+                let descending = matches!(
+                    params.get("order").and_then(|v| v.as_str()),
+                    Some("desc") | Some("descending")
+                );
+
+                fn field_key(item: &Value, field: &str) -> Value {
+                    item.get(field).cloned().unwrap_or(Value::Null)
+                }
+                fn cmp_values(a: &Value, b: &Value) -> std::cmp::Ordering {
+                    use std::cmp::Ordering;
+                    match (a, b) {
+                        (Value::String(a), Value::String(b)) => a.cmp(b),
+                        (Value::Number(a), Value::Number(b)) => {
+                            if let (Some(ai), Some(bi)) = (a.as_i64(), b.as_i64()) {
+                                ai.cmp(&bi)
+                            } else if let (Some(au), Some(bu)) = (a.as_u64(), b.as_u64()) {
+                                au.cmp(&bu)
+                            } else {
+                                a.as_f64()
+                                    .partial_cmp(&b.as_f64())
+                                    .unwrap_or(Ordering::Equal)
+                            }
+                        }
+                        (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+                        (Value::Null, Value::Null) => Ordering::Equal,
+                        (Value::Null, _) => Ordering::Less,
+                        (_, Value::Null) => Ordering::Greater,
+                        (a, b) => a.to_string().cmp(&b.to_string()),
+                    }
+                }
+
+                let mut sorted = items;
+                sorted.sort_by(|a, b| {
+                    let ordering = cmp_values(&field_key(a, field), &field_key(b, field));
+                    if descending {
+                        ordering.reverse()
+                    } else {
+                        ordering
+                    }
+                });
+                Ok(json!({ "items": sorted }))
+            }
+
+            // Built-in: render_markdown_table -- generic markdown table
+            // renderer for an array of JSON objects given ordered column
+            // definitions. Not feature-specific.
+            "render_markdown_table" => {
+                let items = match params.get("items") {
+                    Some(Value::Array(items)) => items.clone(),
+                    Some(_) => {
+                        return Err(ExecutionError::ActionFailed {
+                            action: name.to_string(),
+                            message: "'items' must be an array".into(),
+                        })
+                    }
+                    None => {
+                        return Err(ExecutionError::ActionFailed {
+                            action: name.to_string(),
+                            message: "missing 'items' parameter".into(),
+                        })
+                    }
+                };
+                let columns = match params.get("columns").and_then(|v| v.as_array()) {
+                    Some(cols) if !cols.is_empty() => cols.clone(),
+                    _ => {
+                        return Err(ExecutionError::ActionFailed {
+                            action: name.to_string(),
+                            message: "missing required non-empty parameter: columns".into(),
+                        })
+                    }
+                };
+
+                let mut fields = Vec::with_capacity(columns.len());
+                let mut headers = Vec::with_capacity(columns.len());
+                for col in &columns {
+                    let field = col.get("field").and_then(|v| v.as_str()).ok_or_else(|| {
+                        ExecutionError::ActionFailed {
+                            action: name.to_string(),
+                            message: "each column requires a 'field' string".into(),
+                        }
+                    })?;
+                    let header = col.get("header").and_then(|v| v.as_str()).unwrap_or(field);
+                    fields.push(field.to_string());
+                    headers.push(header.to_string());
+                }
+
+                fn cell_text(value: &Value) -> String {
+                    match value {
+                        Value::Null => String::new(),
+                        Value::String(s) => s.replace('|', "\\|"),
+                        other => other.to_string().replace('|', "\\|"),
+                    }
+                }
+
+                let mut md = String::new();
+                md.push_str("| ");
+                md.push_str(
+                    &headers
+                        .iter()
+                        .map(|h| h.replace('|', "\\|"))
+                        .collect::<Vec<_>>()
+                        .join(" | "),
+                );
+                md.push_str(" |\n|");
+                md.push_str(&" --- |".repeat(headers.len()));
+                md.push('\n');
+                for item in &items {
+                    md.push_str("| ");
+                    let cells: Vec<String> = fields
+                        .iter()
+                        .map(|f| cell_text(&item.get(f).cloned().unwrap_or(Value::Null)))
+                        .collect();
+                    md.push_str(&cells.join(" | "));
+                    md.push_str(" |\n");
+                }
+                Ok(Value::String(md))
+            }
+
             // SECURITY: unrecognized action/step names must NEVER be executed as a
             // shell command. Previously this fallback ran
             // `bash -c "{other} '{params_str}'"`, which allowed arbitrary shell
@@ -7511,6 +7912,160 @@ mod tests {
         assert!(result.content.contains("routing.interactive"));
         // Should not contain "model" since it doesn't start with "routing"
         assert!(!result.content.contains("gpt-4"));
+    }
+
+    #[tokio::test]
+    async fn list_state_returns_values_not_key_value_pairs() {
+        let handler = make_handler_with_state();
+        handler
+            .call_tool(
+                "db_put",
+                json!({"key": "feature:pares-agens:foo", "value": {"name": "foo", "status": "done"}}),
+            )
+            .await;
+        handler
+            .call_tool(
+                "db_put",
+                json!({"key": "feature:pares-agens:bar", "value": {"name": "bar", "status": "wip"}}),
+            )
+            .await;
+        handler
+            .call_tool(
+                "db_put",
+                json!({"key": "other:baz", "value": {"name": "baz"}}),
+            )
+            .await;
+
+        let result = handler
+            .call_tool("list_state", json!({"prefix": "feature:pares-agens:"}))
+            .await;
+        assert!(!result.is_error);
+        let parsed: Value = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(parsed["count"], 2);
+        let items = parsed["items"].as_array().unwrap();
+        // Generic values only -- no "key" wrapper field like db_get_prefix.
+        assert!(items.iter().all(|v| v.get("key").is_none()));
+        assert!(items.iter().any(|v| v["name"] == "foo"));
+        assert!(items.iter().any(|v| v["name"] == "bar"));
+        assert!(!items.iter().any(|v| v["name"] == "baz"));
+    }
+
+    #[tokio::test]
+    async fn list_state_missing_prefix_returns_error() {
+        let handler = make_handler_with_state();
+        let result = handler.call_tool("list_state", json!({})).await;
+        assert!(result.is_error);
+    }
+
+    #[tokio::test]
+    async fn list_state_without_store_returns_error() {
+        let shell = Arc::new(ShellExecutor::new());
+        let handler = RadixToolHandler::new(shell, PathBuf::from("/tmp"));
+        let result = handler
+            .call_tool("list_state", json!({"prefix": "x:"}))
+            .await;
+        assert!(result.is_error);
+        assert!(result.content.contains("state store not configured"));
+    }
+
+    #[tokio::test]
+    async fn sort_by_field_ascending_numbers() {
+        let handler = make_handler_with_state();
+        let result = handler
+            .call_tool(
+                "sort_by_field",
+                json!({
+                    "items": [{"n": 3}, {"n": 1}, {"n": 2}],
+                    "field": "n"
+                }),
+            )
+            .await;
+        assert!(!result.is_error);
+        let parsed: Value = serde_json::from_str(&result.content).unwrap();
+        let items = parsed["items"].as_array().unwrap();
+        assert_eq!(items[0]["n"], 1);
+        assert_eq!(items[1]["n"], 2);
+        assert_eq!(items[2]["n"], 3);
+    }
+
+    #[tokio::test]
+    async fn sort_by_field_descending_strings() {
+        let handler = make_handler_with_state();
+        let result = handler
+            .call_tool(
+                "sort_by_field",
+                json!({
+                    "items": [{"name": "alpha"}, {"name": "charlie"}, {"name": "bravo"}],
+                    "field": "name",
+                    "order": "desc"
+                }),
+            )
+            .await;
+        assert!(!result.is_error);
+        let parsed: Value = serde_json::from_str(&result.content).unwrap();
+        let items = parsed["items"].as_array().unwrap();
+        assert_eq!(items[0]["name"], "charlie");
+        assert_eq!(items[1]["name"], "bravo");
+        assert_eq!(items[2]["name"], "alpha");
+    }
+
+    #[tokio::test]
+    async fn sort_by_field_missing_items_returns_error() {
+        let handler = make_handler_with_state();
+        let result = handler
+            .call_tool("sort_by_field", json!({"field": "n"}))
+            .await;
+        assert!(result.is_error);
+    }
+
+    #[tokio::test]
+    async fn render_markdown_table_basic() {
+        let handler = make_handler_with_state();
+        let result = handler
+            .call_tool(
+                "render_markdown_table",
+                json!({
+                    "items": [
+                        {"name": "foo", "status": "done"},
+                        {"name": "bar", "status": "wip"}
+                    ],
+                    "columns": [
+                        {"field": "name", "header": "Name"},
+                        {"field": "status", "header": "Status"}
+                    ]
+                }),
+            )
+            .await;
+        assert!(!result.is_error);
+        assert!(result.content.contains("| Name | Status |"));
+        assert!(result.content.contains("| --- | --- |"));
+        assert!(result.content.contains("| foo | done |"));
+        assert!(result.content.contains("| bar | wip |"));
+    }
+
+    #[tokio::test]
+    async fn render_markdown_table_escapes_pipe_in_values() {
+        let handler = make_handler_with_state();
+        let result = handler
+            .call_tool(
+                "render_markdown_table",
+                json!({
+                    "items": [{"name": "a|b"}],
+                    "columns": [{"field": "name"}]
+                }),
+            )
+            .await;
+        assert!(!result.is_error);
+        assert!(result.content.contains("a\\|b"));
+    }
+
+    #[tokio::test]
+    async fn render_markdown_table_missing_columns_returns_error() {
+        let handler = make_handler_with_state();
+        let result = handler
+            .call_tool("render_markdown_table", json!({"items": []}))
+            .await;
+        assert!(result.is_error);
     }
 
     #[tokio::test]
@@ -9265,6 +9820,7 @@ mod tests {
             shell: Arc::new(ShellExecutor::new()),
             workdir: PathBuf::from("/tmp"),
             children: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            state_store: None,
         }
     }
 
