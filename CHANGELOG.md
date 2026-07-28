@@ -1,3 +1,9 @@
+## [1.64.0] — 2026-07-28
+
+- feat(mcp-server): generic list_state/sort_by_field/render_markdown_table actions (#682) (b76fb29)
+- feat(px): define feature ledger entity model (#681) (9600302)
+- Fix release test lane by excluding GUI crate from default workspace test set (#680) (26a2c6b)
+
 ## [1.62.1] — 2026-07-27
 
 - fix(px): loader fail-loud + CI parse-gate + fix 4 broken .px files (#678) (1af7e05)
