@@ -1519,6 +1519,7 @@ impl ChannelAdapter for TelegramAdapter {
                                     None
                                 };
                                 let version = env!("CARGO_PKG_VERSION");
+                                let radix_version = pares_radix_core::RADIX_CORE_VERSION;
                                 let commit = option_env!("GIT_COMMIT_HASH").unwrap_or("unknown");
                                 let event_spine_status = if event_spine.is_some() { "active" } else { "disabled" };
                                 let uptime = {
@@ -1554,7 +1555,7 @@ impl ChannelAdapter for TelegramAdapter {
                                     .unwrap_or_else(|_| "unknown".into())
                                     .trim().to_string();
                                 let status = format!(
-                                    "🤖 <b>Pares Radix v{version}</b> (<code>{commit}</code>)\n\
+                                    "🤖 <b>Pares Agens v{version}</b> (radix v{radix_version}, <code>{commit}</code>)\n\
                                      ⏱️ Uptime: {uptime} · PID: {} · RSS: {memory}\n\
                                      🧠 Model: <code>{model_line}</code>\n\
                                      {routing_block}\
@@ -1619,8 +1620,9 @@ impl ChannelAdapter for TelegramAdapter {
                             }
                             "version" => {
                                 let version = env!("CARGO_PKG_VERSION");
+                                let radix_version = pares_radix_core::RADIX_CORE_VERSION;
                                 let commit = option_env!("GIT_COMMIT_HASH").unwrap_or("unknown");
-                                let text = format!("v{version} ({commit})");
+                                let text = format!("pares-agens v{version} (radix v{radix_version}, {commit})");
                                 Self::send_reply_with_fallback(&bot, &msg, &text, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
