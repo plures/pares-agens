@@ -1597,10 +1597,17 @@ impl RadixToolHandler {
             use std::cmp::Ordering;
             match (a, b) {
                 (Value::String(a), Value::String(b)) => a.cmp(b),
-                (Value::Number(a), Value::Number(b)) => a
-                    .as_f64()
-                    .partial_cmp(&b.as_f64())
-                    .unwrap_or(Ordering::Equal),
+                (Value::Number(a), Value::Number(b)) => {
+                    if let (Some(ai), Some(bi)) = (a.as_i64(), b.as_i64()) {
+                        ai.cmp(&bi)
+                    } else if let (Some(au), Some(bu)) = (a.as_u64(), b.as_u64()) {
+                        au.cmp(&bu)
+                    } else {
+                        a.as_f64()
+                            .partial_cmp(&b.as_f64())
+                            .unwrap_or(Ordering::Equal)
+                    }
+                }
                 (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
                 (Value::Null, Value::Null) => Ordering::Equal,
                 (Value::Null, _) => Ordering::Less,
@@ -1662,13 +1669,19 @@ impl RadixToolHandler {
             match value {
                 Value::Null => String::new(),
                 Value::String(s) => s.replace('|', "\\|"),
-                other => other.to_string(),
+                other => other.to_string().replace('|', "\\|"),
             }
         }
 
         let mut md = String::new();
         md.push_str("| ");
-        md.push_str(&headers.join(" | "));
+        md.push_str(
+            &headers
+                .iter()
+                .map(|h| h.replace('|', "\\|"))
+                .collect::<Vec<_>>()
+                .join(" | "),
+        );
         md.push_str(" |\n|");
         md.push_str(&" --- |".repeat(headers.len()));
         md.push('\n');
@@ -7304,10 +7317,17 @@ impl AsyncActionHandler for ShellBackedProcedureHandler {
                     use std::cmp::Ordering;
                     match (a, b) {
                         (Value::String(a), Value::String(b)) => a.cmp(b),
-                        (Value::Number(a), Value::Number(b)) => a
-                            .as_f64()
-                            .partial_cmp(&b.as_f64())
-                            .unwrap_or(Ordering::Equal),
+                        (Value::Number(a), Value::Number(b)) => {
+                            if let (Some(ai), Some(bi)) = (a.as_i64(), b.as_i64()) {
+                                ai.cmp(&bi)
+                            } else if let (Some(au), Some(bu)) = (a.as_u64(), b.as_u64()) {
+                                au.cmp(&bu)
+                            } else {
+                                a.as_f64()
+                                    .partial_cmp(&b.as_f64())
+                                    .unwrap_or(Ordering::Equal)
+                            }
+                        }
                         (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
                         (Value::Null, Value::Null) => Ordering::Equal,
                         (Value::Null, _) => Ordering::Less,
@@ -7375,13 +7395,19 @@ impl AsyncActionHandler for ShellBackedProcedureHandler {
                     match value {
                         Value::Null => String::new(),
                         Value::String(s) => s.replace('|', "\\|"),
-                        other => other.to_string(),
+                        other => other.to_string().replace('|', "\\|"),
                     }
                 }
 
                 let mut md = String::new();
                 md.push_str("| ");
-                md.push_str(&headers.join(" | "));
+                md.push_str(
+                    &headers
+                        .iter()
+                        .map(|h| h.replace('|', "\\|"))
+                        .collect::<Vec<_>>()
+                        .join(" | "),
+                );
                 md.push_str(" |\n|");
                 md.push_str(&" --- |".repeat(headers.len()));
                 md.push('\n');
