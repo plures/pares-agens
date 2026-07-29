@@ -1,3 +1,7 @@
+## [1.64.1] — 2026-07-29
+
+- fix(channels): distinguish agens app version from radix platform version in /status, /version (#683) (3b5a91f)
+
 ## [1.64.0] — 2026-07-28
 
 - feat(mcp-server): generic list_state/sort_by_field/render_markdown_table actions (#682) (b76fb29)
