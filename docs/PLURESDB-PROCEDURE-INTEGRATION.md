@@ -27,11 +27,11 @@ let engine = ProcedureEngine::new(&store, &actor);
 let results = engine.exec_dsl("filter(category in [\"conversation\",\"decision\"]) | sort(score desc) | limit(10) | transform(format: \"toon\")")?;
 ```
 
-### 2. Subconscious Processing (AgensRuntime)
+### 2. DeepReasoner Processing (AgensRuntime)
 The existing `praxis/guidance.rs` `GuidanceService` becomes a consumer of `AgensRuntime` procedure output:
 
 ```rust
-// On startup, register cerebellum procedures
+// On startup, register orchestrator procedures
 runtime.register_timer("cerebellum_sweep", Duration::from_secs(300), Arc::new(move |_| {
     let primitives = engine.exec(&[
         Step::Filter { predicate: Predicate::eq("category", "primitive") },

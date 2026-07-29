@@ -16,8 +16,8 @@ pares-agens currently gates risky actions ad hoc:
   good precedent (C-TEST-002: logic is unit-testable with zero transport),
   but it is only ever *invoked* from the Telegram adapter today. Teams/Slack/
   stdio channels have no equivalent entry point.
-- `crates/core/src/cerebellum/mod.rs` defines `ApprovalRequest` for a
-  different purpose (cerebellum action classification), not exec-command
+- `crates/core/src/orchestrator/mod.rs` defines `ApprovalRequest` for a
+  different purpose (orchestrator action classification), not exec-command
   gating — naming collision risk with the design below.
 - The actual block-and-await approval primitive already exists and is
   **channel-agnostic by construction**: `pares-radix-core::approval`
@@ -211,12 +211,12 @@ start.
 
 ### 6. Naming collision to resolve during implementation
 
-`crates/core/src/cerebellum/mod.rs::ApprovalRequest` already exists for an
-unrelated purpose (cerebellum action classification). The new
+`crates/core/src/orchestrator/mod.rs::ApprovalRequest` already exists for an
+unrelated purpose (orchestrator action classification). The new
 exec-approval `ApprovalRequest` type already lives in
 `pares-radix-core::approval` under a different crate, so there is no
 compile collision, but human readers will conflate the two. Implementation
-should either rename the cerebellum type or add crate-qualified
+should either rename the orchestrator type or add crate-qualified
 re-exports/docs at the pares-agens boundary to disambiguate.
 
 ## Consequences

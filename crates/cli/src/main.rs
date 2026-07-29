@@ -39,7 +39,7 @@ use pares_agens_hostkit::{
     spawn_systemd_watchdog, systemd_notify, value_to_tool_content, ToolCallTrace,
 };
 use pares_radix_core::auth::copilot::{CopilotAuth, CopilotModelClient};
-use pares_agens_core::cerebellum::{Cerebellum, CerebellumConfig};
+use pares_agens_core::orchestrator::{Orchestrator, CerebellumConfig};
 use pares_agens_core::delegation::{broker::DelegationBroker, registry::AgentRegistry};
 use pares_agens_core::memory::{
     embed::{EmbeddingProvider, MockEmbedder, OpenAiEmbedder},
@@ -298,7 +298,7 @@ impl RuntimeAgentFactory {
         let memory = Arc::new(PluresMemory {
             plures_lm: Arc::clone(&plures_lm),
         });
-        let cerebellum = Cerebellum::new(CerebellumConfig::default());
+        let orchestrator = Orchestrator::new(CerebellumConfig::default());
         let system_prompt = build_system_prompt(self.system_prompt_path.clone())?;
 
         // Create default personality contract. Runtime seeding into PluresDB
@@ -311,7 +311,7 @@ impl RuntimeAgentFactory {
         );
         let turn_store: Arc<dyn pares_agens_core::memory::store::MemoryStore> = self.store.clone();
 
-        let mut agent = Agent::with_cerebellum(memory, cerebellum, plures_lm)
+        let mut agent = Agent::with_cerebellum(memory, orchestrator, plures_lm)
             .with_model(
                 Arc::clone(&self.model_client),
                 Arc::clone(&self.tool_dispatcher),
@@ -2938,7 +2938,7 @@ async fn main() {
                 plugin_runtime: None,
             });
 
-            let cerebellum = Cerebellum::new(CerebellumConfig::default());
+            let orchestrator = Orchestrator::new(CerebellumConfig::default());
             let system_prompt_text = build_system_prompt(system_prompt)
                 .unwrap_or_else(|e| {
                     eprintln!("Warning: {e}");
@@ -2985,7 +2985,7 @@ async fn main() {
             };
 
             let agent = Arc::new(
-                Agent::with_cerebellum(memory, cerebellum, plures_lm)
+                Agent::with_cerebellum(memory, orchestrator, plures_lm)
                     .with_model(
                         Arc::clone(&model_client),
                         Arc::clone(&tool_dispatcher),

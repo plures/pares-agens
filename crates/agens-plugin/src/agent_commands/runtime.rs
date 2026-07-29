@@ -46,8 +46,8 @@ use pares_agens_hostkit::{
     spawn_systemd_watchdog, systemd_notify, value_to_tool_content, ToolCallTrace,
 };
 use pares_radix_core::auth::copilot::{CopilotAuth, CopilotModelClient};
-use pares_agens_core::cerebellum::px_bridge::PxBridge;
-use pares_agens_core::cerebellum::{Cerebellum, CerebellumConfig};
+use pares_agens_core::orchestrator::px_bridge::PxBridge;
+use pares_agens_core::orchestrator::{Orchestrator, CerebellumConfig};
 use pares_agens_core::delegation::{broker::DelegationBroker, registry::AgentRegistry};
 use pares_agens_core::memory::{
     embed::{EmbeddingProvider, MockEmbedder, OpenAiEmbedder},
@@ -277,34 +277,34 @@ impl RuntimeAgentFactory {
         let memory = Arc::new(PluresMemory {
             plures_lm: Arc::clone(&plures_lm),
         });
-        let cerebellum = Cerebellum::new(CerebellumConfig::default());
+        let orchestrator = Orchestrator::new(CerebellumConfig::default());
 
-        // Attach BitNet classifier if a cerebellum model path is configured
+        // Attach BitNet classifier if a orchestrator model path is configured
         #[cfg(feature = "bitnet-native")]
-        let cerebellum = if let Some(ref path) = self.cerebellum_model_path {
+        let orchestrator = if let Some(ref path) = self.cerebellum_model_path {
             match super::bitnet_classifier::BitNetClassifier::new(path) {
                 Ok(backend) => {
-                    let classifier = pares_agens_core::cerebellum::classifier::CerebellumClassifier::with_backend(
+                    let classifier = pares_agens_core::orchestrator::classifier::CerebellumClassifier::with_backend(
                         std::sync::Arc::new(backend),
                         vec![],
                     );
-                    tracing::info!("cerebellum classifier enabled (BitNet)");
-                    cerebellum.with_classifier(classifier)
+                    tracing::info!("orchestrator classifier enabled (BitNet)");
+                    orchestrator.with_classifier(classifier)
                 }
                 Err(e) => {
                     tracing::warn!(
                         "BitNet classifier failed to load: {e}, falling back to heuristic"
                     );
-                    let classifier = pares_agens_core::cerebellum::classifier::CerebellumClassifier::heuristic_only(vec![]);
-                    cerebellum.with_classifier(classifier)
+                    let classifier = pares_agens_core::orchestrator::classifier::CerebellumClassifier::heuristic_only(vec![]);
+                    orchestrator.with_classifier(classifier)
                 }
             }
         } else {
-            cerebellum
+            orchestrator
         };
 
-        // Load .px procedures for cerebellum routing/classification
-        let cerebellum = {
+        // Load .px procedures for orchestrator routing/classification
+        let orchestrator = {
             // Try ~/.pares-radix/praxis/procedures/ first (production)
             let home = std::env::var("HOME")
                 .or_else(|_| std::env::var("USERPROFILE"))
@@ -314,33 +314,33 @@ impl RuntimeAgentFactory {
                 .join("praxis")
                 .join("procedures");
             let bridge = Arc::new(PxBridge::new(Arc::new(
-                pares_agens_core::cerebellum::actions::CerebellumActionHandler::new_minimal(),
+                pares_agens_core::orchestrator::actions::CerebellumActionHandler::new_minimal(),
             )));
             let loaded = bridge.load_from_directory_sync(&px_dir);
             if loaded > 0 {
-                tracing::info!(count = loaded, dir = %px_dir.display(), "px_bridge: loaded cerebellum procedures");
-                cerebellum.with_px_bridge(bridge)
+                tracing::info!(count = loaded, dir = %px_dir.display(), "px_bridge: loaded orchestrator procedures");
+                orchestrator.with_px_bridge(bridge)
             } else {
                 // Also try the repo-local praxis/procedures/ directory
                 let local_dir = std::path::PathBuf::from("praxis/procedures");
                 let loaded_local = bridge.load_from_directory_sync(&local_dir);
                 if loaded_local > 0 {
-                    tracing::info!(count = loaded_local, dir = %local_dir.display(), "px_bridge: loaded cerebellum procedures (local)");
-                    cerebellum.with_px_bridge(bridge)
+                    tracing::info!(count = loaded_local, dir = %local_dir.display(), "px_bridge: loaded orchestrator procedures (local)");
+                    orchestrator.with_px_bridge(bridge)
                 } else {
                     tracing::debug!("px_bridge: no .px procedures found, using Rust fallback");
-                    cerebellum
+                    orchestrator
                 }
             }
         };
 
         // Load dataflow procedures (queue-driven, no triggers)
-        let cerebellum = {
-            use pares_agens_core::cerebellum::dataflow_bridge::DataflowBridge;
+        let orchestrator = {
+            use pares_agens_core::orchestrator::dataflow_bridge::DataflowBridge;
             use pares_radix_praxis::dataflow::{ast_to_node, parse_px};
 
             let action_handler_for_df = Arc::new(
-                pares_agens_core::cerebellum::actions::CerebellumActionHandler::new_minimal(),
+                pares_agens_core::orchestrator::actions::CerebellumActionHandler::new_minimal(),
             );
 
             let home = std::env::var("HOME")
@@ -353,7 +353,7 @@ impl RuntimeAgentFactory {
             let local_dir = std::path::PathBuf::from("praxis/procedures");
 
             let mut df_bridge = DataflowBridge::new(Arc::new(
-                pares_agens_core::cerebellum::dataflow_bridge::DataflowActionAdapter::new(
+                pares_agens_core::orchestrator::dataflow_bridge::DataflowActionAdapter::new(
                     Arc::clone(&action_handler_for_df) as Arc<dyn pares_radix_core::px_adapter::AsyncActionHandler>,
                 ),
             ));
@@ -422,10 +422,10 @@ impl RuntimeAgentFactory {
 
             if df_count > 0 {
                 tracing::info!(count = df_count, "dataflow_bridge: loaded procedures");
-                cerebellum.with_dataflow_bridge(Arc::new(df_bridge))
+                orchestrator.with_dataflow_bridge(Arc::new(df_bridge))
             } else {
                 tracing::debug!("dataflow_bridge: no dataflow procedures found");
-                cerebellum
+                orchestrator
             }
         };
 
@@ -442,7 +442,7 @@ impl RuntimeAgentFactory {
         );
         let turn_store: Arc<dyn pares_agens_core::memory::store::MemoryStore> = self.store.clone();
 
-        let agent = Agent::with_cerebellum(memory, cerebellum, plures_lm)
+        let agent = Agent::with_cerebellum(memory, orchestrator, plures_lm)
                 .with_model(
                     Arc::clone(&self.model_client),
                     Arc::clone(&self.tool_dispatcher),
@@ -4508,7 +4508,7 @@ pub(crate) async fn run_serve(
             registry.register_builtins();
             let registry = Arc::new(registry);
 
-            // Auto-download BitNet model for cerebellum if not explicitly provided
+            // Auto-download BitNet model for orchestrator if not explicitly provided
             #[cfg(feature = "bitnet-native")]
             let cerebellum_model_path = if cerebellum_model_path.is_some() {
                 cerebellum_model_path
@@ -4516,7 +4516,7 @@ pub(crate) async fn run_serve(
                 let model_manager = pares_radix_core::model_download::ModelManager::new();
                 match model_manager.ensure_bitnet_model().await {
                     Ok(path) => {
-                        tracing::info!(path = %path.display(), "Auto-downloaded BitNet model for cerebellum");
+                        tracing::info!(path = %path.display(), "Auto-downloaded BitNet model for orchestrator");
                         Some(path)
                     }
                     Err(e) => {
@@ -5238,21 +5238,21 @@ pub(crate) async fn run_tui(
                     .title(" pares-radix ")
                     .borders(Borders::ALL)
                     .style(Style::default().fg(Color::Cyan));
-                let text = Paragraph::new("Building agent...\n\nInitializing tools and cerebellum")
+                let text = Paragraph::new("Building agent...\n\nInitializing tools and orchestrator")
                     .block(block)
                     .alignment(Alignment::Center)
                     .style(Style::default().fg(Color::White));
                 f.render_widget(text, chunks[1]);
             });
 
-            // Auto-download BitNet for cerebellum if not explicitly provided
+            // Auto-download BitNet for orchestrator if not explicitly provided
             let _cerebellum_model_path = if cerebellum_model_path.is_some() {
                 cerebellum_model_path.clone()
             } else {
                 let model_manager = pares_radix_core::model_download::ModelManager::new();
                 match model_manager.ensure_bitnet_model().await {
                     Ok(path) => {
-                        tracing::info!(path = %path.display(), "Auto-downloaded BitNet model for cerebellum (TUI)");
+                        tracing::info!(path = %path.display(), "Auto-downloaded BitNet model for orchestrator (TUI)");
                         Some(path)
                     }
                     Err(e) => {
@@ -5264,30 +5264,30 @@ pub(crate) async fn run_tui(
                 }
             };
 
-            let cerebellum = Cerebellum::new(CerebellumConfig::default());
+            let orchestrator = Orchestrator::new(CerebellumConfig::default());
             #[cfg(feature = "bitnet-native")]
-            let cerebellum = if let Some(ref path) = cerebellum_model_path {
+            let orchestrator = if let Some(ref path) = cerebellum_model_path {
                 match super::bitnet_classifier::BitNetClassifier::new(path) {
                     Ok(backend) => {
-                        let classifier = pares_agens_core::cerebellum::classifier::CerebellumClassifier::with_backend(
+                        let classifier = pares_agens_core::orchestrator::classifier::CerebellumClassifier::with_backend(
                             Arc::new(backend),
                             vec![],
                         );
-                        tracing::info!("cerebellum classifier enabled (BitNet)");
-                        cerebellum.with_classifier(classifier)
+                        tracing::info!("orchestrator classifier enabled (BitNet)");
+                        orchestrator.with_classifier(classifier)
                     }
                     Err(e) => {
                         tracing::warn!("BitNet classifier load failed: {e}, using heuristic");
-                        let classifier = pares_agens_core::cerebellum::classifier::CerebellumClassifier::heuristic_only(vec![]);
-                        cerebellum.with_classifier(classifier)
+                        let classifier = pares_agens_core::orchestrator::classifier::CerebellumClassifier::heuristic_only(vec![]);
+                        orchestrator.with_classifier(classifier)
                     }
                 }
             } else {
-                cerebellum
+                orchestrator
             };
 
-            // Load .px procedures for cerebellum routing/classification (serve-spine)
-            let cerebellum = {
+            // Load .px procedures for orchestrator routing/classification (serve-spine)
+            let orchestrator = {
                 let home = std::env::var("HOME")
                     .or_else(|_| std::env::var("USERPROFILE"))
                     .unwrap_or_default();
@@ -5296,33 +5296,33 @@ pub(crate) async fn run_tui(
                     .join("praxis")
                     .join("procedures");
                 let bridge = Arc::new(PxBridge::new(Arc::new(
-                    pares_agens_core::cerebellum::actions::CerebellumActionHandler::new_minimal(),
+                    pares_agens_core::orchestrator::actions::CerebellumActionHandler::new_minimal(),
                 )));
                 let loaded = bridge.load_from_directory_sync(&px_dir);
                 if loaded > 0 {
-                    tracing::info!(count = loaded, dir = %px_dir.display(), "px_bridge: loaded cerebellum procedures (spine)");
-                    cerebellum.with_px_bridge(bridge)
+                    tracing::info!(count = loaded, dir = %px_dir.display(), "px_bridge: loaded orchestrator procedures (spine)");
+                    orchestrator.with_px_bridge(bridge)
                 } else {
                     let local_dir = std::path::PathBuf::from("praxis/procedures");
                     let loaded_local = bridge.load_from_directory_sync(&local_dir);
                     if loaded_local > 0 {
                         tracing::info!(
                             count = loaded_local,
-                            "px_bridge: loaded cerebellum procedures (local/spine)"
+                            "px_bridge: loaded orchestrator procedures (local/spine)"
                         );
-                        cerebellum.with_px_bridge(bridge)
+                        orchestrator.with_px_bridge(bridge)
                     } else {
                         tracing::debug!(
                             "px_bridge: no .px procedures found (spine), using Rust fallback"
                         );
-                        cerebellum
+                        orchestrator
                     }
                 }
             };
 
             // Load dataflow procedures (queue-driven, no triggers) for serve-spine
-            let cerebellum = {
-                use pares_agens_core::cerebellum::dataflow_bridge::DataflowBridge;
+            let orchestrator = {
+                use pares_agens_core::orchestrator::dataflow_bridge::DataflowBridge;
                 use pares_radix_praxis::dataflow::{ast_to_node, parse_px};
 
                 let home = std::env::var("HOME")
@@ -5335,8 +5335,8 @@ pub(crate) async fn run_tui(
                 let local_dir = std::path::PathBuf::from("praxis/procedures");
 
                 let mut df_bridge = DataflowBridge::new(Arc::new(
-                pares_agens_core::cerebellum::dataflow_bridge::DataflowActionAdapter::new(
-                    Arc::new(pares_agens_core::cerebellum::actions::CerebellumActionHandler::new_minimal()),
+                pares_agens_core::orchestrator::dataflow_bridge::DataflowActionAdapter::new(
+                    Arc::new(pares_agens_core::orchestrator::actions::CerebellumActionHandler::new_minimal()),
                 ),
             ));
                 let mut df_count = 0usize;
@@ -5404,9 +5404,9 @@ pub(crate) async fn run_tui(
 
                 if df_count > 0 {
                     tracing::info!(count = df_count, "dataflow_bridge: loaded procedures (spine)");
-                    cerebellum.with_dataflow_bridge(Arc::new(df_bridge))
+                    orchestrator.with_dataflow_bridge(Arc::new(df_bridge))
                 } else {
-                    cerebellum
+                    orchestrator
                 }
             };
 
@@ -5419,7 +5419,7 @@ pub(crate) async fn run_tui(
             registry.register_builtins();
 
             let agent = Arc::new(
-                Agent::with_cerebellum(memory, cerebellum, plures_lm)
+                Agent::with_cerebellum(memory, orchestrator, plures_lm)
                     .with_model(
                         Arc::clone(&model_client),
                         Arc::clone(&tool_dispatcher),
@@ -5773,7 +5773,7 @@ pub(crate) async fn run_ask(
 pub(crate) async fn run_classify(message: String, bitnet_model_path: std::path::PathBuf) {
 
             use super::bitnet_classifier::BitNetClassifier;
-            use pares_agens_core::cerebellum::classifier::ClassifierBackend;
+            use pares_agens_core::orchestrator::classifier::ClassifierBackend;
 
             let start = std::time::Instant::now();
 

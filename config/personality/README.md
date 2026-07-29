@@ -12,7 +12,7 @@ Default personality files for pares-agens. These are seeded into PluresDB on fir
 
 ## How it works
 
-On startup, `seed_from_directory()` reads these files and stores them as PluresDB personality document nodes. They're included in every system prompt via the cerebellum.
+On startup, `seed_from_directory()` reads these files and stores them as PluresDB personality document nodes. They're included in every system prompt via the orchestrator.
 
 To customize: edit these files and restart, OR use `/personality doc <type> set <content>` to modify at runtime (persists in PluresDB, no restart needed).
 

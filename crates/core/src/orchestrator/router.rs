@@ -28,7 +28,7 @@ struct Signals {
 pub fn decide(event: &Event, learned_context: &str, config: &CerebellumConfig) -> Route {
     match event {
         Event::Timer { .. } => Route::Procedural,
-        Event::ToolResult { .. } => Route::Conscious,
+        Event::ToolResult { .. } => Route::Standard,
         Event::ModelResponse { .. } => Route::Drop,
         Event::StateChange { .. } => Route::Procedural,
         Event::PreActionConstraint { .. } => Route::Drop,
@@ -46,14 +46,14 @@ fn decide_message(content: &str, learned_context: &str, config: &CerebellumConfi
         return Route::Drop;
     }
 
-    // Conversational/social messages go straight to conscious — never delegate
+    // Conversational/social messages go straight to standard — never delegate
     if signals.conversational && !signals.code {
-        return Route::Conscious;
+        return Route::Standard;
     }
 
-    // Short commands go to conscious
+    // Short commands go to standard
     if signals.simple && !signals.analytical {
-        return Route::Conscious;
+        return Route::Standard;
     }
 
     if signals.decomposable {
@@ -77,7 +77,7 @@ fn decide_message(content: &str, learned_context: &str, config: &CerebellumConfi
         }
     }
 
-    Route::Conscious
+    Route::Standard
 }
 
 fn analyze(content: &str) -> Signals {
@@ -327,7 +327,7 @@ mod tests {
             sender: "u".into(),
             content: "push now".into(),
         };
-        assert_eq!(decide(&event, "", &config()), Route::Conscious);
+        assert_eq!(decide(&event, "", &config()), Route::Standard);
     }
 
     #[test]
@@ -375,6 +375,6 @@ mod tests {
             sender: "u".into(),
             content: "Analyze the architecture deeply and explain why".into(),
         };
-        assert_eq!(decide(&event, "", &cfg), Route::Conscious);
+        assert_eq!(decide(&event, "", &cfg), Route::Standard);
     }
 }

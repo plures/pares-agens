@@ -1,11 +1,11 @@
-//! Built-in procedure pipelines for the cerebellum.
+//! Built-in procedure pipelines for the orchestrator.
 //!
 //! These are the standard procedures that ship with pares-radix:
 //!
 //! - **autorecall** — retrieve + compress memories before agent execution
 //! - **primitive-extract** — extract typed primitives (decisions, facts, risks)
 //!   from a conversation exchange
-//! - **cerebellum-sweep** — periodic background maintenance (prune stale,
+//! - **orchestrator-sweep** — periodic background maintenance (prune stale,
 //!   consolidate duplicates, update ledger)
 
 use std::collections::HashSet;
@@ -287,7 +287,7 @@ fn find_duplicate_groups(
 // ── autorecall ───────────────────────────────────────────────────────────────
 
 /// Autorecall procedure — retrieves and compresses memories into learned
-/// context before the conscious agent runs.
+/// context before the standard agent runs.
 ///
 /// Pipeline:
 /// 1. Extract key terms from the message content (tokenisation + stop-word removal).
@@ -430,7 +430,7 @@ impl Procedure for PrimitiveExtract {
     }
 }
 
-// ── cerebellum sweep ─────────────────────────────────────────────────────────
+// ── orchestrator sweep ─────────────────────────────────────────────────────────
 
 /// Periodic maintenance sweep — runs on timer events.
 ///
@@ -462,7 +462,7 @@ impl CerebellumSweep {
 #[async_trait]
 impl Procedure for CerebellumSweep {
     fn name(&self) -> &str {
-        "cerebellum-sweep"
+        "orchestrator-sweep"
     }
 
     fn handles(&self) -> &str {
@@ -477,19 +477,19 @@ impl Procedure for CerebellumSweep {
 
         debug!(
             staleness_days = self.staleness_days,
-            "cerebellum-sweep: starting"
+            "orchestrator-sweep: starting"
         );
 
         let all_entries = match self.memory.scan_all().await {
             Ok(entries) => entries,
             Err(e) => {
-                debug!(error = %e, "cerebellum-sweep: failed to scan memory");
+                debug!(error = %e, "orchestrator-sweep: failed to scan memory");
                 return vec![];
             }
         };
 
         if all_entries.is_empty() {
-            debug!("cerebellum-sweep: no entries to sweep");
+            debug!("orchestrator-sweep: no entries to sweep");
             return vec![];
         }
 
@@ -511,7 +511,7 @@ impl Procedure for CerebellumSweep {
                             id = entry.id,
                             created_at = entry.created_at,
                             error = %e,
-                            "cerebellum-sweep: skipping entry with unparseable timestamp"
+                            "orchestrator-sweep: skipping entry with unparseable timestamp"
                         );
                         false
                     }
@@ -523,10 +523,10 @@ impl Procedure for CerebellumSweep {
         if !stale_ids.is_empty() {
             debug!(
                 count = stale_ids.len(),
-                "cerebellum-sweep: found stale entries"
+                "orchestrator-sweep: found stale entries"
             );
             events.push(Event::StateChange {
-                key: "cerebellum.sweep.stale".into(),
+                key: "orchestrator.sweep.stale".into(),
                 old_value: None,
                 new_value: serde_json::json!({ "ids": stale_ids }),
             });
@@ -537,30 +537,30 @@ impl Procedure for CerebellumSweep {
         if !duplicate_groups.is_empty() {
             debug!(
                 groups = duplicate_groups.len(),
-                "cerebellum-sweep: found duplicate groups"
+                "orchestrator-sweep: found duplicate groups"
             );
             events.push(Event::StateChange {
-                key: "cerebellum.sweep.duplicates".into(),
+                key: "orchestrator.sweep.duplicates".into(),
                 old_value: None,
                 new_value: serde_json::json!({ "groups": duplicate_groups }),
             });
         }
 
-        debug!(events = events.len(), "cerebellum-sweep: sweep complete");
+        debug!(events = events.len(), "orchestrator-sweep: sweep complete");
         events
     }
 }
 
-/// Register all built-in cerebellum procedures into a registry.
+/// Register all built-in orchestrator procedures into a registry.
 #[cfg(test)]
 pub(crate) fn register_builtins(
     registry: &mut pares_radix_core::procedure::ProcedureRegistry,
     memory: Arc<PluresLm>,
     config: &super::CerebellumConfig,
 ) {
-    // Cerebellum itself handles messages first (lowest priority number = runs first)
+    // Orchestrator itself handles messages first (lowest priority number = runs first)
     registry.register(Box::new(super::CerebellumProcedure::stub()));
-    registry.set_priority("cerebellum", -200);
+    registry.set_priority("orchestrator", -200);
 
     // Autorecall runs next, injecting learned context
     registry.register(Box::new(Autorecall::new(memory.clone(), config)));
@@ -572,13 +572,13 @@ pub(crate) fn register_builtins(
 
     // Sweep runs on timers
     registry.register(Box::new(CerebellumSweep::new(memory, config)));
-    registry.set_priority("cerebellum-sweep", 0);
+    registry.set_priority("orchestrator-sweep", 0);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cerebellum::CerebellumConfig;
+    use crate::orchestrator::CerebellumConfig;
     use crate::memory::{
         embed::MockEmbedder,
         entry::{Exchange, MemoryCategory, MemoryEntry},
@@ -616,10 +616,10 @@ mod tests {
 
         let message_procs: Vec<&str> = registry.matching("message").map(|p| p.name()).collect();
 
-        // cerebellum (-200) → autorecall (-100) → primitive-extract (0)
+        // orchestrator (-200) → autorecall (-100) → primitive-extract (0)
         assert_eq!(
             message_procs,
-            vec!["cerebellum", "autorecall", "primitive-extract"]
+            vec!["orchestrator", "autorecall", "primitive-extract"]
         );
     }
 
@@ -630,7 +630,7 @@ mod tests {
 
         let timer_procs: Vec<&str> = registry.matching("timer").map(|p| p.name()).collect();
 
-        assert_eq!(timer_procs, vec!["cerebellum-sweep"]);
+        assert_eq!(timer_procs, vec!["orchestrator-sweep"]);
     }
 
     // ── key-term extraction ───────────────────────────────────────────────────
@@ -838,7 +838,7 @@ mod tests {
         )));
     }
 
-    // ── cerebellum-sweep ──────────────────────────────────────────────────────
+    // ── orchestrator-sweep ──────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn sweep_returns_empty_for_non_timer() {
@@ -896,7 +896,7 @@ mod tests {
         let stale_event = results.iter().find(|e| {
             matches!(
                 e,
-                Event::StateChange { key, .. } if key == "cerebellum.sweep.stale"
+                Event::StateChange { key, .. } if key == "orchestrator.sweep.stale"
             )
         });
         assert!(stale_event.is_some(), "sweep should detect the stale entry");
@@ -954,7 +954,7 @@ mod tests {
         assert!(
             results.iter().any(|e| matches!(
                 e,
-                Event::StateChange { key, .. } if key == "cerebellum.sweep.duplicates"
+                Event::StateChange { key, .. } if key == "orchestrator.sweep.duplicates"
             )),
             "sweep should detect duplicate group"
         );
@@ -1284,7 +1284,7 @@ mod tests {
         let stale_event = results.iter().find(|e| {
             matches!(
                 e,
-                Event::StateChange { key, .. } if key == "cerebellum.sweep.stale"
+                Event::StateChange { key, .. } if key == "orchestrator.sweep.stale"
             )
         });
         assert!(
@@ -1329,7 +1329,7 @@ mod tests {
         let stale_event = results.iter().find(|e| {
             matches!(
                 e,
-                Event::StateChange { key, .. } if key == "cerebellum.sweep.stale"
+                Event::StateChange { key, .. } if key == "orchestrator.sweep.stale"
             )
         });
         assert!(

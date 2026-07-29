@@ -106,7 +106,7 @@ procedure switch_context(decision: object from "topic_changed") -> write into "c
   # Clear reevaluation queue (new topic resolves ambiguity)
   write_state {key: "topic:pending_reeval", value: []}
 
-  # Return loaded context for the cerebellum to use
+  # Return loaded context for the orchestrator to use
   return {topic: $new_topic, context: $context, switched: true}
 
 

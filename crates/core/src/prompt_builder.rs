@@ -10,7 +10,7 @@ use crate::personality::{BehaviorRule, PersonalityContract};
 pub struct AgentContext<'a> {
     /// Current channel name (e.g. "telegram", "discord").
     pub channel: Option<&'a str>,
-    /// Recalled memory context from PluresLM / cerebellum.
+    /// Recalled memory context from PluresLM / orchestrator.
     pub learned_context: &'a str,
     /// Recent conversation summary (optional).
     pub conversation_summary: Option<&'a str>,

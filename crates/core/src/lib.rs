@@ -1,5 +1,5 @@
 #![allow(missing_docs)] // TODO: re-enable once API stabilizes
-//! `pares-agens-core` — cognition layer (agent, cerebellum, delegation, memory).
+//! `pares-agens-core` — cognition layer (agent, orchestrator, delegation, memory).
 //!
 //! As of Stage S-C this crate owns **only** the cognition surface. The platform
 //! runtime (event loop, procedure executor, state, model client, plugins, spine,
@@ -11,7 +11,7 @@
 //! The message-classifier contract (`ClassifierBackend`, `MessageClassification`,
 //! `MessageIntent`, `CLASSIFIER_SYSTEM_PROMPT`) is owned by
 //! [`pares_radix_core::classifier`] and re-exported here for ergonomic access;
-//! the higher-level [`cerebellum::classifier::CerebellumClassifier`] orchestrator
+//! the higher-level [`orchestrator::classifier::CerebellumClassifier`] orchestrator
 //! is owned by this crate and implements/uses that contract.
 
 // ---------------------------------------------------------------------------
@@ -20,8 +20,8 @@
 
 /// High-level agent abstraction and in-memory storage.
 pub mod agent;
-/// Cerebellum orchestrator — autorecall, routing, and pipeline execution.
-pub mod cerebellum;
+/// Orchestrator orchestrator — autorecall, routing, and pipeline execution.
+pub mod orchestrator;
 /// Local multi-agent delegation and concurrent sub-task execution.
 pub mod delegation;
 /// Lightweight process diagnostics primitives (VmRSS / resident-set sampling).
@@ -36,7 +36,7 @@ pub mod headroom_bridge;
 pub mod heartbeat;
 /// PluresLM — native memory recall, capture, and context injection.
 pub mod memory;
-/// Model selection chain — BitNet → conscious → deep fallback.
+/// Model selection chain — BitNet → standard → deep fallback.
 pub mod model_chain;
 /// Personality contracts — identity, tone, and behavioral rules.
 pub mod personality;

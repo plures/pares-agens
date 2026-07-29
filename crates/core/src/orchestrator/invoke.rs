@@ -87,7 +87,7 @@ pub enum InvokeError {
 ///
 /// ```rust,no_run
 /// use std::sync::Arc;
-/// use pares_agens_core::cerebellum::invoke::{AgentInvoke, InvokeConfig};
+/// use pares_agens_core::orchestrator::invoke::{AgentInvoke, InvokeConfig};
 ///
 /// # async fn example(client: Arc<dyn pares_radix_core::model::ModelClient>) {
 /// let invoker = AgentInvoke::with_config(

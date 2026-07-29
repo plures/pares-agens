@@ -1,24 +1,24 @@
-//! Cerebellum — the orchestrator layer of the Three-Agent Cognitive Architecture.
+//! Orchestrator — the orchestrator layer of the Three-Agent Cognitive Architecture.
 //!
-//! The cerebellum receives every inbound event **first**, before the conscious or
-//! subconscious agents. It:
+//! The orchestrator receives every inbound event **first**, before the standard or
+//! deep_reasoner agents. It:
 //!
 //! 1. Runs **autorecall** — retrieves and compresses relevant memories into
 //!    learned context.
-//! 2. **Routes** the event — decides whether the conscious agent can handle it
-//!    alone, or whether the subconscious should also be spawned for deep
+//! 2. **Routes** the event — decides whether the standard agent can handle it
+//!    alone, or whether the deep_reasoner should also be spawned for deep
 //!    analysis.
 //! 3. **Assembles** the final response from one or more agent outputs.
 //!
-//! The cerebellum itself uses a cheap/fast model (or no model at all for
+//! The orchestrator itself uses a cheap/fast model (or no model at all for
 //! pure-procedure routing). Expensive reasoning is delegated to the
-//! subconscious.
+//! deep_reasoner.
 //!
 //! # Design
 //!
 //! ```text
-//! User ──► Cerebellum ──┬──► Conscious  (directed executor)
-//!                       └──► Subconscious (deep reasoner, optional)
+//! User ──► Orchestrator ──┬──► Standard  (directed executor)
+//!                       └──► DeepReasoner (deep reasoner, optional)
 //!                ▲                │
 //!                └────────────────┘  (results flow back)
 //! ```
@@ -34,7 +34,7 @@ pub mod px_bridge;
 pub mod router;
 
 use pares_radix_core::pluresdb_bridge::PluresDbBridge;
-use crate::cerebellum::px_bridge::PxBridge;
+use crate::orchestrator::px_bridge::PxBridge;
 use crate::delegation::broker::SubTask;
 use pares_radix_core::event::Event;
 use crate::memory::entry::MemoryCategory;
@@ -50,35 +50,35 @@ use tracing::{debug, info, instrument, warn};
 
 // ── routing decision ─────────────────────────────────────────────────────────
 
-/// Where the cerebellum decides to send an event.
+/// Where the orchestrator decides to send an event.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Route {
     /// Fast-tier model for simple/short responses (haiku, mini, flash).
     Fast,
-    /// Conscious agent only — standard-tier model (sonnet, gpt-4o).
-    Conscious,
-    /// Both conscious and subconscious in parallel.
-    /// The `reason` field is injected into the subconscious prompt.
+    /// Standard agent only — standard-tier model (sonnet, gpt-4o).
+    Standard,
+    /// Both standard and deep_reasoner in parallel.
+    /// The `reason` field is injected into the deep_reasoner prompt.
     Deep {
-        /// Human-readable explanation of why the subconscious is being invoked.
+        /// Human-readable explanation of why the deep_reasoner is being invoked.
         reason: String,
     },
     /// Delegate to specialist sub-agents via the delegation broker.
     Delegate {
         /// Human-readable explanation of why the task is decomposed.
         reason: String,
-        /// Sub-tasks created by the cerebellum for specialist agents.
+        /// Sub-tasks created by the orchestrator for specialist agents.
         tasks: Vec<SubTask>,
     },
-    /// Pure procedure — no LLM needed, cerebellum handles it directly.
+    /// Pure procedure — no LLM needed, orchestrator handles it directly.
     Procedural,
     /// Drop the event (e.g. noise, heartbeat-ok).
     Drop,
 }
 
-// ── cerebellum config ────────────────────────────────────────────────────────
+// ── orchestrator config ────────────────────────────────────────────────────────
 
-/// Tuning knobs for the cerebellum.
+/// Tuning knobs for the orchestrator.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct CerebellumConfig {
@@ -86,18 +86,18 @@ pub struct CerebellumConfig {
     pub recall_limit: usize,
     /// Memory categories to exclude from autorecall.
     pub exclude_categories: Vec<String>,
-    /// Whether to run the subconscious at all. If false, all events go to
-    /// conscious only.
+    /// Whether to run the deep_reasoner at all. If false, all events go to
+    /// standard only.
     pub enable_subconscious: bool,
     /// Complexity threshold (0.0–1.0). Events scoring above this trigger
-    /// the subconscious.
+    /// the deep_reasoner.
     pub complexity_threshold: f32,
     /// Token budget for autorecall context injection (number of tokens).
     pub context_token_budget: usize,
     /// Number of days after which a memory entry is considered stale.
     pub staleness_days: u32,
     /// Cosine similarity threshold above which two entries are considered
-    /// duplicates during a cerebellum sweep.
+    /// duplicates during a orchestrator sweep.
     pub similarity_threshold: f32,
     /// Cosine similarity threshold below which a new message is treated as a
     /// topic shift for selective history management.
@@ -121,7 +121,7 @@ impl Default for CerebellumConfig {
     }
 }
 
-// ── cerebellum context ───────────────────────────────────────────────────────
+// ── orchestrator context ───────────────────────────────────────────────────────
 
 /// Approval required for a destructive or external action (ADR-0012 level 4).
 ///
@@ -135,7 +135,7 @@ pub struct ApprovalRequest {
     pub rationale: String,
 }
 
-/// The enriched context the cerebellum produces for downstream agents.
+/// The enriched context the orchestrator produces for downstream agents.
 #[derive(Debug, Clone)]
 pub struct CerebellumContext {
     /// The original event.
@@ -154,20 +154,20 @@ pub struct CerebellumContext {
     pub approval_required: Option<ApprovalRequest>,
 }
 
-// ── cerebellum ───────────────────────────────────────────────────────────────
+// ── orchestrator ───────────────────────────────────────────────────────────────
 
-/// The Cerebellum orchestrator.
+/// The Orchestrator orchestrator.
 ///
 /// Stateless — all persistent state lives in PluresDB via the `PluresLm`
-/// memory client. The cerebellum reads from memory and procedures, makes
+/// memory client. The orchestrator reads from memory and procedures, makes
 /// routing decisions, and produces enriched contexts for downstream agents.
 ///
-/// When `pluresdb` is `Some`, the cerebellum can delegate procedure pipelines
+/// When `pluresdb` is `Some`, the orchestrator can delegate procedure pipelines
 /// (VectorSearch, Transform, etc.) to the native PluresDB engine for
 /// autorecall and compression.  When `None`, the pure-Rust implementations
 /// are used as fallback.
-pub struct Cerebellum {
-    /// Tuning configuration for this cerebellum instance.
+pub struct Orchestrator {
+    /// Tuning configuration for this orchestrator instance.
     pub config: CerebellumConfig,
     /// Optional PluresDB bridge for native procedure execution.
     pub pluresdb: Option<PluresDbBridge>,
@@ -189,8 +189,8 @@ pub struct Cerebellum {
     dataflow_bridge: Option<Arc<dataflow_bridge::DataflowBridge>>,
 }
 
-impl Cerebellum {
-    /// Create a cerebellum without a PluresDB bridge (pure-Rust fallback).
+impl Orchestrator {
+    /// Create a orchestrator without a PluresDB bridge (pure-Rust fallback).
     pub fn new(config: CerebellumConfig) -> Self {
         Self {
             config,
@@ -205,7 +205,7 @@ impl Cerebellum {
         }
     }
 
-    /// Create a cerebellum with an attached [`PluresDbBridge`].
+    /// Create a orchestrator with an attached [`PluresDbBridge`].
     pub fn with_bridge(config: CerebellumConfig, bridge: PluresDbBridge) -> Self {
         Self {
             config,
@@ -231,7 +231,7 @@ impl Cerebellum {
 
     /// Attach a .px bridge for calling .px procedures instead of hardcoded Rust logic.
     ///
-    /// When set, the cerebellum will try .px procedures for classification and routing
+    /// When set, the orchestrator will try .px procedures for classification and routing
     /// FIRST, falling back to Rust implementations only when .px returns None or errors.
     pub fn with_px_bridge(mut self, bridge: Arc<PxBridge>) -> Self {
         self.px_bridge = Some(bridge);
@@ -245,7 +245,7 @@ impl Cerebellum {
         self
     }
 
-    /// Attach a message classifier to this cerebellum.
+    /// Attach a message classifier to this orchestrator.
     pub fn with_classifier(mut self, classifier: classifier::CerebellumClassifier) -> Self {
         self.classifier = Some(classifier);
         self
@@ -253,7 +253,7 @@ impl Cerebellum {
 
     /// Record the outcome of a model interaction.
     ///
-    /// Call this after the conscious model responds. The cerebellum uses
+    /// Call this after the standard model responds. The orchestrator uses
     /// this to adjust relevance weights — context items that were present
     /// during successful interactions get boosted; failed ones get decayed.
     pub fn record_outcome(&self, success: bool) {
@@ -263,7 +263,7 @@ impl Cerebellum {
         tracing::debug!(
             success,
             context_items = items.len(),
-            "cerebellum outcome recorded"
+            "orchestrator outcome recorded"
         );
     }
 
@@ -271,7 +271,7 @@ impl Cerebellum {
     ///
     /// 1. Autorecall — retrieve + compress memories
     /// 2. Authorization gate (ADR-0012) — evaluate 5-level gate
-    /// 3. Route — decide conscious / deep / procedural / drop
+    /// 3. Route — decide standard / deep / procedural / drop
     /// 4. Package context for downstream agents
     #[instrument(skip(self, memory, _registry))]
     pub async fn preprocess(
@@ -468,7 +468,7 @@ impl Cerebellum {
                     Ok(Some(val)) => {
                         parse_px_route(&val).unwrap_or_else(|| {
                             debug!(raw = %val, "dataflow route returned unparseable result, trying px_bridge");
-                            Route::Conscious // signal to try next tier
+                            Route::Standard // signal to try next tier
                         })
                     }
                     Ok(None) => {
@@ -527,7 +527,7 @@ impl Cerebellum {
         tracing::info!(
             preprocess_ms = preprocess_elapsed.as_millis(),
             route = ?route,
-            "cerebellum preprocess complete"
+            "orchestrator preprocess complete"
         );
 
         // 4. Package
@@ -551,7 +551,7 @@ impl Cerebellum {
     /// the imperative preprocess/route/invoke cycle.
     ///
     /// Returns `Some(DeliveryResult)` if the graph produced a response, `None` to
-    /// fall through to the legacy cerebellum path.
+    /// fall through to the legacy orchestrator path.
     pub async fn try_full_dataflow(
         &self,
         chat_id: i64,
@@ -721,7 +721,7 @@ impl TopicShiftOutcome {
     }
 }
 
-/// Cerebellum-level errors.
+/// Orchestrator-level errors.
 #[derive(Debug, thiserror::Error)]
 pub enum CerebellumError {
     /// A memory subsystem operation failed.
@@ -738,17 +738,17 @@ pub enum CerebellumError {
     },
 }
 
-// ── cerebellum as a Procedure ────────────────────────────────────────────────
+// ── orchestrator as a Procedure ────────────────────────────────────────────────
 
-/// Adapter that lets the cerebellum participate in the procedure registry
+/// Adapter that lets the orchestrator participate in the procedure registry
 /// as a first-class procedure handling `"message"` events.
 ///
 /// When constructed with [`CerebellumProcedure::with_cerebellum`], the procedure
-/// delegates to [`Cerebellum::preprocess`] for autorecall, topic detection, and
+/// delegates to [`Orchestrator::preprocess`] for autorecall, topic detection, and
 /// context management.  The [`CerebellumProcedure::stub`] variant is available
 /// for registration and dispatch testing without a live memory system.
 pub struct CerebellumProcedure {
-    cerebellum: Option<Arc<Cerebellum>>,
+    orchestrator: Option<Arc<Orchestrator>>,
     memory: Option<Arc<PluresLm>>,
     registry: Option<Arc<ProcedureRegistry>>,
 }
@@ -757,20 +757,20 @@ impl CerebellumProcedure {
     /// Create a stub procedure for registration and dispatch testing.
     pub fn stub() -> Self {
         Self {
-            cerebellum: None,
+            orchestrator: None,
             memory: None,
             registry: None,
         }
     }
 
-    /// Create a fully-wired procedure that delegates to a live [`Cerebellum`].
+    /// Create a fully-wired procedure that delegates to a live [`Orchestrator`].
     pub fn with_cerebellum(
-        cerebellum: Arc<Cerebellum>,
+        orchestrator: Arc<Orchestrator>,
         memory: Arc<PluresLm>,
         registry: Arc<ProcedureRegistry>,
     ) -> Self {
         Self {
-            cerebellum: Some(cerebellum),
+            orchestrator: Some(orchestrator),
             memory: Some(memory),
             registry: Some(registry),
         }
@@ -780,7 +780,7 @@ impl CerebellumProcedure {
 #[async_trait]
 impl Procedure for CerebellumProcedure {
     fn name(&self) -> &str {
-        "cerebellum"
+        "orchestrator"
     }
 
     fn handles(&self) -> &str {
@@ -788,30 +788,30 @@ impl Procedure for CerebellumProcedure {
     }
 
     async fn execute(&self, event: &Event) -> Vec<Event> {
-        let (cerebellum, memory, registry) = match (&self.cerebellum, &self.memory, &self.registry)
+        let (orchestrator, memory, registry) = match (&self.orchestrator, &self.memory, &self.registry)
         {
             (Some(c), Some(m), Some(r)) => (c, m, r),
             _ => {
                 debug!(
                     event_kind = event.kind(),
-                    "cerebellum procedure stub (no live system)"
+                    "orchestrator procedure stub (no live system)"
                 );
                 return vec![];
             }
         };
 
-        match cerebellum.preprocess(event, memory, registry).await {
+        match orchestrator.preprocess(event, memory, registry).await {
             Ok(ctx) => {
                 info!(
                     context_len = ctx.learned_context.len(),
                     clear_history = ctx.clear_history,
                     route = ?ctx.route,
-                    "cerebellum preprocessed message"
+                    "orchestrator preprocessed message"
                 );
-                // Emit a StateChange event with the cerebellum context so
-                // downstream procedures (conscious agent) can consume it.
+                // Emit a StateChange event with the orchestrator context so
+                // downstream procedures (standard agent) can consume it.
                 vec![Event::StateChange {
-                    key: "cerebellum:context".to_string(),
+                    key: "orchestrator:context".to_string(),
                     old_value: None,
                     new_value: serde_json::json!({
                         "learned_context": ctx.learned_context,
@@ -822,7 +822,7 @@ impl Procedure for CerebellumProcedure {
                 }]
             }
             Err(e) => {
-                warn!(error = %e, "cerebellum preprocess failed");
+                warn!(error = %e, "orchestrator preprocess failed");
                 vec![]
             }
         }
@@ -900,7 +900,7 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 
 /// Build an [`RuleContext`] for the authorization gate from an event.
 ///
-/// The cerebellum derives gate payload flags from what it can observe in the
+/// The orchestrator derives gate payload flags from what it can observe in the
 /// event.  Flags that would require external queries (e.g. `completed_recently`,
 /// `known_failure`) default to `false` here; the orchestration layer may enrich
 /// the context further before re-evaluating the gate directly.
@@ -908,8 +908,8 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 /// | Payload field | Source |
 /// |---------------|--------|
 /// | `blocked_by_constraint` | always `false` (handled by executor's PraxisGate) |
-/// | `completed_recently` | always `false` (no dedup log in cerebellum) |
-/// | `known_failure` | always `false` (no failure log in cerebellum) |
+/// | `completed_recently` | always `false` (no dedup log in orchestrator) |
+/// | `known_failure` | always `false` (no failure log in orchestrator) |
 /// | `is_destructive` | `true` for `ToolResult` with destructive tool prefixes |
 /// | `is_external` | `true` for `ToolResult` whose name suggests an external call |
 fn build_authorization_context(event: &Event) -> RuleContext {
@@ -946,7 +946,7 @@ fn build_authorization_context(event: &Event) -> RuleContext {
 ///
 /// Expected .px output format:
 /// ```json
-/// {"route": "conscious"}
+/// {"route": "standard"}
 /// {"route": "deep", "reason": "..."}
 /// {"route": "delegate", "reason": "...", "tasks": [...]}
 /// {"route": "procedural"}
@@ -955,7 +955,7 @@ fn build_authorization_context(event: &Event) -> RuleContext {
 fn parse_px_route(val: &serde_json::Value) -> Option<Route> {
     let route_str = val.get("route")?.as_str()?;
     match route_str {
-        "conscious" => Some(Route::Conscious),
+        "standard" => Some(Route::Standard),
         "procedural" => Some(Route::Procedural),
         "drop" => Some(Route::Drop),
         "deep" => {
@@ -1077,7 +1077,7 @@ mod tests {
             .expect("memory insert should succeed");
 
         let memory = PluresLm::new(store, Box::new(MockEmbedder), 128_000);
-        let cerebellum = Cerebellum::new(CerebellumConfig::default());
+        let orchestrator = Orchestrator::new(CerebellumConfig::default());
         let registry = ProcedureRegistry::new();
 
         let rust_msg = Event::Message {
@@ -1086,7 +1086,7 @@ mod tests {
             sender: "u".into(),
             content: "How does async Rust work with tokio?".into(),
         };
-        let rust_ctx = cerebellum
+        let rust_ctx = orchestrator
             .preprocess(&rust_msg, &memory, &registry)
             .await
             .expect("first preprocess should succeed");
@@ -1101,7 +1101,7 @@ mod tests {
             sender: "u".into(),
             content: "What is the best way to bake sourdough bread?".into(),
         };
-        let cooking_ctx = cerebellum
+        let cooking_ctx = orchestrator
             .preprocess(&cooking_msg, &memory, &registry)
             .await
             .expect("second preprocess should succeed");
@@ -1116,7 +1116,7 @@ mod tests {
             sender: "u".into(),
             content: "Back to Rust: when should I use async channels?".into(),
         };
-        let rust_return_ctx = cerebellum
+        let rust_return_ctx = orchestrator
             .preprocess(&rust_return_msg, &memory, &registry)
             .await
             .expect("topic return preprocess should succeed");
@@ -1132,42 +1132,42 @@ mod tests {
 
     #[test]
     fn topic_shift_short_reply_is_skipped_not_shifted() {
-        let cerebellum = Cerebellum::new(CerebellumConfig::default());
+        let orchestrator = Orchestrator::new(CerebellumConfig::default());
         let event = Event::Message {
             id: "1".into(),
             channel: "chan-a".into(),
             sender: "u".into(),
             content: "yes".into(), // < 20 chars
         };
-        let outcome = cerebellum.detect_topic_shift(&event, &[1.0, 0.0, 0.0]);
+        let outcome = orchestrator.detect_topic_shift(&event, &[1.0, 0.0, 0.0]);
         assert_eq!(outcome, TopicShiftOutcome::SkippedShortReply);
         assert!(!outcome.is_shift());
     }
 
     #[test]
     fn topic_shift_first_turn_in_channel_is_skipped_no_prior() {
-        let cerebellum = Cerebellum::new(CerebellumConfig::default());
+        let orchestrator = Orchestrator::new(CerebellumConfig::default());
         let event = Event::Message {
             id: "1".into(),
             channel: "chan-b".into(),
             sender: "u".into(),
             content: "This is a long enough first message in the channel".into(),
         };
-        let outcome = cerebellum.detect_topic_shift(&event, &[1.0, 0.0, 0.0]);
+        let outcome = orchestrator.detect_topic_shift(&event, &[1.0, 0.0, 0.0]);
         assert_eq!(outcome, TopicShiftOutcome::SkippedNoPriorTurn);
         assert!(!outcome.is_shift());
     }
 
     #[test]
     fn topic_shift_similar_embedding_is_not_shifted() {
-        let cerebellum = Cerebellum::new(CerebellumConfig::default());
+        let orchestrator = Orchestrator::new(CerebellumConfig::default());
         let event = Event::Message {
             id: "1".into(),
             channel: "chan-c".into(),
             sender: "u".into(),
             content: "This is a long enough first message in the channel".into(),
         };
-        let first = cerebellum.detect_topic_shift(&event, &[1.0, 0.0, 0.0]);
+        let first = orchestrator.detect_topic_shift(&event, &[1.0, 0.0, 0.0]);
         assert_eq!(first, TopicShiftOutcome::SkippedNoPriorTurn);
 
         let follow_up = Event::Message {
@@ -1176,21 +1176,21 @@ mod tests {
             sender: "u".into(),
             content: "This is another long enough message about the same topic".into(),
         };
-        let outcome = cerebellum.detect_topic_shift(&follow_up, &[0.99, 0.01, 0.0]);
+        let outcome = orchestrator.detect_topic_shift(&follow_up, &[0.99, 0.01, 0.0]);
         assert_eq!(outcome, TopicShiftOutcome::NotShifted);
         assert!(!outcome.is_shift());
     }
 
     #[test]
     fn topic_shift_dissimilar_embedding_is_shifted() {
-        let cerebellum = Cerebellum::new(CerebellumConfig::default());
+        let orchestrator = Orchestrator::new(CerebellumConfig::default());
         let event = Event::Message {
             id: "1".into(),
             channel: "chan-d".into(),
             sender: "u".into(),
             content: "This is a long enough first message about cooking recipes".into(),
         };
-        let first = cerebellum.detect_topic_shift(&event, &[1.0, 0.0, 0.0]);
+        let first = orchestrator.detect_topic_shift(&event, &[1.0, 0.0, 0.0]);
         assert_eq!(first, TopicShiftOutcome::SkippedNoPriorTurn);
 
         let unrelated = Event::Message {
@@ -1199,14 +1199,14 @@ mod tests {
             sender: "u".into(),
             content: "Completely different subject about rocket engine design".into(),
         };
-        let outcome = cerebellum.detect_topic_shift(&unrelated, &[0.0, 1.0, 0.0]);
+        let outcome = orchestrator.detect_topic_shift(&unrelated, &[0.0, 1.0, 0.0]);
         assert_eq!(outcome, TopicShiftOutcome::Shifted);
         assert!(outcome.is_shift());
     }
 
     #[test]
     fn topic_shift_poisoned_cache_recovers_instead_of_permanently_disabling() {
-        let cerebellum = Cerebellum::new(CerebellumConfig::default());
+        let orchestrator = Orchestrator::new(CerebellumConfig::default());
         let event = Event::Message {
             id: "1".into(),
             channel: "chan-e".into(),
@@ -1215,16 +1215,16 @@ mod tests {
         };
         // Seed a prior embedding so the poisoned-lock branch (not the
         // no-prior-turn branch) is what gets exercised after recovery.
-        let _ = cerebellum.detect_topic_shift(&event, &[1.0, 0.0, 0.0]);
+        let _ = orchestrator.detect_topic_shift(&event, &[1.0, 0.0, 0.0]);
 
         // Poison the mutex by panicking while holding the lock.
         let poison_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = cerebellum.topic_embeddings.lock().unwrap();
+            let _guard = orchestrator.topic_embeddings.lock().unwrap();
             panic!("deliberate poison for test");
         }));
         assert!(poison_result.is_err(), "the panic should have poisoned the mutex");
         assert!(
-            cerebellum.topic_embeddings.lock().is_err(),
+            orchestrator.topic_embeddings.lock().is_err(),
             "mutex should now report poisoned"
         );
 
@@ -1236,7 +1236,7 @@ mod tests {
             sender: "u".into(),
             content: "Unrelated topic entirely about deep sea biology now".into(),
         };
-        let outcome = cerebellum.detect_topic_shift(&follow_up, &[0.0, 1.0, 0.0]);
+        let outcome = orchestrator.detect_topic_shift(&follow_up, &[0.0, 1.0, 0.0]);
         assert_eq!(
             outcome,
             TopicShiftOutcome::Shifted,

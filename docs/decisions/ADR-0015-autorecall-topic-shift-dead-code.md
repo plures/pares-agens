@@ -2,7 +2,7 @@
 
 **Status:** PROPOSED (design only — no implementation until reviewed)
 **Date:** 2026-07-24
-**Epic:** `pares-agens:autorecall-cerebellum-fixes`
+**Epic:** `pares-agens:autorecall-orchestrator-fixes`
 **Supersedes:** none
 **Related:** ADR-0012 (authorization gate), #549 (topic-shift detection introduced), #624 (amnesia/timeout fixes)
 
@@ -12,7 +12,7 @@ The prior analysis pass flagged `actions.rs::detect_topic_shift_action` as
 "looks dead/orphaned vs `mod.rs`'s real implementation." This retry
 **verifies that finding is correct** and designs the fix: delete the dead
 stub, document the live path, and close two real gaps in the live topic-shift
-implementation (`Cerebellum::detect_topic_shift` in `mod.rs`) that the epic's
+implementation (`Orchestrator::detect_topic_shift` in `mod.rs`) that the epic's
 "topic-shift suppression" complaint is actually about.
 
 No code changes are made in this document. It is the design artifact gating
@@ -22,7 +22,7 @@ implementation.
 
 ### 2.1 Evidence
 
-`crates/core/src/cerebellum/actions.rs:530`:
+`crates/core/src/orchestrator/actions.rs:530`:
 
 ```rust
 /// Detect topic shift (placeholder — needs embedding comparison).
@@ -58,21 +58,21 @@ detect_topic_shift {topic: $topic} -> $topic_shift
 - The only Rust call sites for `classify_message` as a *named procedure
   invocation* are: `px_bridge.rs:196` (`PxBridge::classify_message`, a thin
   wrapper) and `px_bridge.rs:267` (a **unit test only**, `bridge.classify_message("hello", ...)`).
-- **No production code path in `cerebellum/mod.rs`, `agent.rs`, or
+- **No production code path in `orchestrator/mod.rs`, `agent.rs`, or
   `agents-plugin/runtime.rs` calls `PxBridge::classify_message` or
   `PxBridge::call("classify_message", ...)`.** `rg` over
   `crates/core/src` and `crates/agens-plugin/src` confirms the only
   non-test caller of `.classify_message(` is the doc test in
   `px_bridge.rs`.
-- Cerebellum's real preprocessing entry point is
-  `Cerebellum::preprocess()` (`mod.rs:277`), called from
+- Orchestrator's real preprocessing entry point is
+  `Orchestrator::preprocess()` (`mod.rs:277`), called from
   `agent.rs:794` and `agent.rs:924`. That function does **not** call
   `px_bridge.classify_message` or `dataflow_bridge` for classification —
   it calls `self.detect_topic_shift(event, &query_embedding)` directly
   (`mod.rs:314`), a private method defined at `mod.rs:622` with real
   cosine-similarity logic and an embedding cache
   (`self.topic_embeddings: Mutex<HashMap<...>>`).
-- Cerebellum's `route()` path (`mod.rs:456-484`) does route through
+- Orchestrator's `route()` path (`mod.rs:456-484`) does route through
   `dataflow_bridge` → `px_bridge` → `router::decide()` in that
   precedence order, but that path is for **routing decisions**
   (`route_event` / `router::decide`), not for the `classify_message`
@@ -98,10 +98,10 @@ a different file, reached through a completely different call path.
 
 This also means: **the epic's "topic-shift suppression" symptom, if real,
 is not caused by this dead stub.** The live implementation
-(`Cerebellum::detect_topic_shift`, `mod.rs:622`) is the only candidate, and
+(`Orchestrator::detect_topic_shift`, `mod.rs:622`) is the only candidate, and
 Section 3 audits it directly.
 
-## 3. Live Implementation Audit: `Cerebellum::detect_topic_shift` (`mod.rs:622`)
+## 3. Live Implementation Audit: `Orchestrator::detect_topic_shift` (`mod.rs:622`)
 
 ```rust
 fn detect_topic_shift(&self, event: &Event, current_embedding: &[f32]) -> bool {
@@ -185,12 +185,12 @@ mechanism).
 
 | Seam | File | Change type |
 |------|------|-------------|
-| S1 | `crates/core/src/cerebellum/actions.rs` | **Delete** `detect_topic_shift_action` fn + its `"detect_topic_shift" => ...` dispatch arm. Add a `// REMOVED:` comment pointing to `mod.rs::detect_topic_shift` for future readers who grep the old name. |
+| S1 | `crates/core/src/orchestrator/actions.rs` | **Delete** `detect_topic_shift_action` fn + its `"detect_topic_shift" => ...` dispatch arm. Add a `// REMOVED:` comment pointing to `mod.rs::detect_topic_shift` for future readers who grep the old name. |
 | S2 | `praxis/procedures/classify.px` | Remove `detect_topic_shift {topic: $topic} -> $topic_shift` line from `classify_message`, since its only implementation is being deleted and the procedure has no live caller. Add a header comment noting `classify_message` is currently unreachable from production Rust (dataflow wiring not done) so nobody re-adds calls to a phantom action. |
-| S3 | `crates/core/src/cerebellum/mod.rs` (`preprocess`, `mod.rs:277-330`) | Replace the binary `skip_recall` short-circuit with a **three-way** path: `skip_recall_for_length` (≤3 words) still skips *recall* (expensive embedding lookup unchanged for cost reasons) but no longer implicitly forces `topic_shifted = false` — instead it explicitly records `topic_shift_check = Skipped { reason: "short_message" }` in a new observability struct (see S4), preserving current *behavior* (still no shift triggered — we are not embedding 3-word messages, that's an explicit non-goal) while making the omission visible. |
-| S4 | `crates/core/src/cerebellum/mod.rs` (`detect_topic_shift`, `mod.rs:622-651`) | Change return type from `bool` to a small enum `TopicShiftOutcome { Shifted, NotShifted, SkippedShortMessage, SkippedShortReply, SkippedCachePoisoned, SkippedNoPriorTurn }` (or equivalent struct with a reason field) so callers get both the boolean *and* the reason. `preprocess()` derives `topic_shifted: bool` from it (`matches!(outcome, Shifted)`) so **no behavior changes** for the `items.clear()` decision at `mod.rs:369` — only observability changes. |
-| S5 | `crates/core/src/cerebellum/mod.rs` (poisoned-lock branch, `mod.rs:642-645`) | Recovery path: on `PoisonError`, call `.into_inner()` to recover the guard (mutex poisoning here only reflects "a prior thread panicked while holding it", the `HashMap` itself is not corrupt) instead of unconditionally returning `false` forever. Keep the `warn!` but change it to reflect that recovery succeeded, and add a counter metric `cerebellum_topic_embeddings_lock_recovered_total` so repeated recoveries are visible (signal of a real panic bug elsewhere, without permanently disabling topic-shift detection as a side effect). |
-| S6 | new: `crates/core/src/cerebellum/mod.rs` tests module (`mod.rs:960+`, existing `#[cfg(test)]`) | Add table-driven unit tests, one per row in §3.1's table, asserting the returned `TopicShiftOutcome` variant for: ≤3-word message, <20-char message, poisoned lock (recovered, not permanently false), first-turn-per-channel, and a genuine shift (low cosine similarity) — plus a regression test that `actions.rs` no longer contains `detect_topic_shift_action` (grep-based `assert!` in a `#[test]` is acceptable, or CI grep, see §4.5). |
+| S3 | `crates/core/src/orchestrator/mod.rs` (`preprocess`, `mod.rs:277-330`) | Replace the binary `skip_recall` short-circuit with a **three-way** path: `skip_recall_for_length` (≤3 words) still skips *recall* (expensive embedding lookup unchanged for cost reasons) but no longer implicitly forces `topic_shifted = false` — instead it explicitly records `topic_shift_check = Skipped { reason: "short_message" }` in a new observability struct (see S4), preserving current *behavior* (still no shift triggered — we are not embedding 3-word messages, that's an explicit non-goal) while making the omission visible. |
+| S4 | `crates/core/src/orchestrator/mod.rs` (`detect_topic_shift`, `mod.rs:622-651`) | Change return type from `bool` to a small enum `TopicShiftOutcome { Shifted, NotShifted, SkippedShortMessage, SkippedShortReply, SkippedCachePoisoned, SkippedNoPriorTurn }` (or equivalent struct with a reason field) so callers get both the boolean *and* the reason. `preprocess()` derives `topic_shifted: bool` from it (`matches!(outcome, Shifted)`) so **no behavior changes** for the `items.clear()` decision at `mod.rs:369` — only observability changes. |
+| S5 | `crates/core/src/orchestrator/mod.rs` (poisoned-lock branch, `mod.rs:642-645`) | Recovery path: on `PoisonError`, call `.into_inner()` to recover the guard (mutex poisoning here only reflects "a prior thread panicked while holding it", the `HashMap` itself is not corrupt) instead of unconditionally returning `false` forever. Keep the `warn!` but change it to reflect that recovery succeeded, and add a counter metric `cerebellum_topic_embeddings_lock_recovered_total` so repeated recoveries are visible (signal of a real panic bug elsewhere, without permanently disabling topic-shift detection as a side effect). |
+| S6 | new: `crates/core/src/orchestrator/mod.rs` tests module (`mod.rs:960+`, existing `#[cfg(test)]`) | Add table-driven unit tests, one per row in §3.1's table, asserting the returned `TopicShiftOutcome` variant for: ≤3-word message, <20-char message, poisoned lock (recovered, not permanently false), first-turn-per-channel, and a genuine shift (low cosine similarity) — plus a regression test that `actions.rs` no longer contains `detect_topic_shift_action` (grep-based `assert!` in a `#[test]` is acceptable, or CI grep, see §4.5). |
 
 ### 4.4 Recovery paths
 
@@ -214,7 +214,7 @@ mechanism).
 
 ### 4.5 Test plan (design-level; no code yet)
 
-1. `cargo test -p pares-radix-core cerebellum::` — existing suite must
+1. `cargo test -p pares-radix-core orchestrator::` — existing suite must
    stay green through S3–S5 (no behavior regression for the
    `items.clear()` semantics currently tested, e.g. `mod.rs:1024,1039,1054`
    preprocess integration tests).
@@ -247,7 +247,7 @@ mechanism).
   it's a frequent real-world miss.
 - **R3:** Metric names in S5 are illustrative; align with whatever
   metrics/telemetry convention `pares-agens` already uses elsewhere in
-  `cerebellum/` before implementation (check for an existing `metrics`
+  `orchestrator/` before implementation (check for an existing `metrics`
   crate usage pattern in the codebase during the fix stage, not this
   design stage).
 

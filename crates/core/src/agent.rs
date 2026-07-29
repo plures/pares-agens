@@ -3,10 +3,10 @@
 //! [`Agent`] is the top-level entry point used by channel adapters (stdin,
 //! Telegram) to process inbound [`Event`]s and produce an optional response.
 //!
-//! When built with a [`Cerebellum`] via [`Agent::with_cerebellum`], every
-//! inbound [`Event::Message`] is first preprocessed by the cerebellum:
+//! When built with a [`Orchestrator`] via [`Agent::with_cerebellum`], every
+//! inbound [`Event::Message`] is first preprocessed by the orchestrator:
 //! autorecall retrieves relevant memories, the router determines the path
-//! (conscious / deep / procedural / drop), and any recalled context is
+//! (standard / deep / procedural / drop), and any recalled context is
 //! injected into the response.
 //!
 //! [`Memory`] is the trait implemented by storage backends.  [`InMemory`]
@@ -22,7 +22,7 @@ use tokio::sync::Mutex as TokioMutex;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::cerebellum::{Cerebellum, Route};
+use crate::orchestrator::{Orchestrator, Route};
 use pares_radix_core::chronos::{ChronosAction, ChronosTimeline};
 use crate::delegation::aggregator::ResultAggregator;
 use crate::delegation::broker::DelegationBroker;
@@ -119,11 +119,11 @@ impl Memory for InMemory {
 /// # Behaviour
 ///
 /// For [`Event::Message`] events the agent:
-/// 1. Runs the event through the [`Cerebellum`] (if configured) to perform
+/// 1. Runs the event through the [`Orchestrator`] (if configured) to perform
 ///    autorecall and routing.  A [`Route::Drop`] causes the event to be
 ///    silently discarded.
 /// 2. Dispatches the event based on the chosen route:
-///    - Conscious/Deep: call the model client with context + history
+///    - Standard/Deep: call the model client with context + history
 ///    - Procedural: execute matching procedures from the registry
 /// 3. Captures the conversation exchange in memory when a response is
 ///    produced.
@@ -131,13 +131,13 @@ impl Memory for InMemory {
 /// All other event kinds follow the routing decision or return `None`.
 pub struct Agent {
     memory: Arc<dyn Memory + Send + Sync>,
-    /// Optional cerebellum for autorecall and routing.
-    cerebellum: Option<Cerebellum>,
-    /// PluresLM memory client passed to the cerebellum's `preprocess()`.
+    /// Optional orchestrator for autorecall and routing.
+    orchestrator: Option<Orchestrator>,
+    /// PluresLM memory client passed to the orchestrator's `preprocess()`.
     plures_lm: Option<Arc<PluresLm>>,
     /// Procedure registry used for `Route::Procedural` dispatch.
     procedure_registry: ProcedureRegistry,
-    /// Model client for conscious/subconscious completions.
+    /// Model client for standard/deep_reasoner completions.
     model_client: Option<Arc<dyn ModelClient>>,
     /// Optional deep model client for low-confidence escalation.
     deep_model_client: Option<Arc<dyn ModelClient>>,
@@ -255,11 +255,11 @@ impl Default for ChannelBranches {
 }
 
 impl Agent {
-    /// Create a basic agent backed by `memory` (no cerebellum).
+    /// Create a basic agent backed by `memory` (no orchestrator).
     pub fn new(memory: Arc<dyn Memory + Send + Sync>) -> Self {
         Self {
             memory,
-            cerebellum: None,
+            orchestrator: None,
             plures_lm: None,
             procedure_registry: ProcedureRegistry::new(),
             model_client: None,
@@ -288,20 +288,20 @@ impl Agent {
         }
     }
 
-    /// Create an agent with a [`Cerebellum`] wired in.
+    /// Create an agent with a [`Orchestrator`] wired in.
     ///
     /// Every inbound [`Event::Message`] is routed through
-    /// `cerebellum.preprocess()` before being handled.  The `plures_lm`
+    /// `orchestrator.preprocess()` before being handled.  The `plures_lm`
     /// instance is used for autorecall; pass the same [`PluresLm`] that
     /// backs the application's memory store so recalled memories are live.
     pub fn with_cerebellum(
         memory: Arc<dyn Memory + Send + Sync>,
-        cerebellum: Cerebellum,
+        orchestrator: Orchestrator,
         plures_lm: Arc<PluresLm>,
     ) -> Self {
         Self {
             memory,
-            cerebellum: Some(cerebellum),
+            orchestrator: Some(orchestrator),
             plures_lm: Some(plures_lm),
             procedure_registry: ProcedureRegistry::new(),
             model_client: None,
@@ -469,16 +469,16 @@ impl Agent {
         let base = Self::estimate_complexity(content, word_count);
 
         // Task/intent signal: reuse the existing CerebellumClassifier instead of
-        // re-deriving anything. When no cerebellum/classifier is wired, fall back
-        // to a heuristic-only classifier (same heuristic path the cerebellum uses),
+        // re-deriving anything. When no orchestrator/classifier is wired, fall back
+        // to a heuristic-only classifier (same heuristic path the orchestrator uses),
         // so this is a real degrade, never a fabricated intent (C-NOSTUB-001).
         let classification = self
-            .cerebellum
+            .orchestrator
             .as_ref()
             .and_then(|c| c.classifier.as_ref())
             .map(|cls| cls.classify(content))
             .unwrap_or_else(|| {
-                crate::cerebellum::classifier::CerebellumClassifier::heuristic_only(vec![])
+                crate::orchestrator::classifier::CerebellumClassifier::heuristic_only(vec![])
                     .classify(content)
             });
 
@@ -666,10 +666,10 @@ impl Agent {
     /// absence degrades to base-only, never a fabricated tier (C-NOSTUB-001).
     fn composite_complexity(
         base: u8,
-        classification: &crate::cerebellum::classifier::MessageClassification,
+        classification: &crate::orchestrator::classifier::MessageClassification,
         learned_context: &str,
     ) -> u8 {
-        use crate::cerebellum::classifier::MessageIntent;
+        use crate::orchestrator::classifier::MessageIntent;
 
         // Task adjustment: apply the single largest-magnitude matching rule so
         // the term stays bounded and interpretable (-1..=+2), not a sum.
@@ -751,7 +751,7 @@ impl Agent {
         // If the dataflow bridge is active, run the entire pipeline through .px
         // procedures. This handles routing, context, model invocation, tool loops,
         // and delivery all within the PluresDB dataflow graph.
-        if let Some(cerebellum) = &self.cerebellum {
+        if let Some(orchestrator) = &self.orchestrator {
             if let Event::Message { ref id, ref sender, ref content, ref channel, .. } = event {
                 // Parse chat_id from message id (format: "chat_id:msg_id" or just numeric)
                 let chat_id = id.split(':').next()
@@ -760,7 +760,7 @@ impl Agent {
                 // Load conversation history so the dataflow pipeline has multi-turn context
                 let session_channel = self.resolve_branch_channel(channel);
                 let history = self.load_history(&session_channel).await;
-                if let Some(delivery) = cerebellum.try_full_dataflow(
+                if let Some(delivery) = orchestrator.try_full_dataflow(
                     chat_id,
                     sender,
                     content,
@@ -785,41 +785,41 @@ impl Agent {
             }
         }
 
-        // ── Legacy Cerebellum: autorecall + routing ──────────────────────────
+        // ── Legacy Orchestrator: autorecall + routing ──────────────────────────
         // Falls through here when dataflow bridge isn't active or didn't produce output.
-        let (route, learned_context, clear_history) = if let (Some(cerebellum), Some(plures_lm)) =
-            (&self.cerebellum, &self.plures_lm)
+        let (route, learned_context, clear_history) = if let (Some(orchestrator), Some(plures_lm)) =
+            (&self.orchestrator, &self.plures_lm)
         {
-            match cerebellum
+            match orchestrator
                 .preprocess(&event, plures_lm, &self.procedure_registry)
                 .await
             {
                 Ok(ctx) => {
-                    debug!(route = ?ctx.route, context_len = ctx.learned_context.len(), "cerebellum preprocessed event");
+                    debug!(route = ?ctx.route, context_len = ctx.learned_context.len(), "orchestrator preprocessed event");
                     if ctx.route == Route::Drop {
                         debug!(
                             event_kind = event.kind(),
-                            "cerebellum dropped event (Route::Drop)"
+                            "orchestrator dropped event (Route::Drop)"
                         );
                         return None;
                     }
                     (ctx.route, ctx.learned_context, ctx.clear_history)
                 }
                 Err(e) => {
-                    error!(error = %e, "agent: cerebellum preprocess failed, continuing without context");
-                    (Route::Conscious, String::new(), false)
+                    error!(error = %e, "agent: orchestrator preprocess failed, continuing without context");
+                    (Route::Standard, String::new(), false)
                 }
             }
         } else {
             let default_route = match event {
                 Event::Timer { .. } | Event::StateChange { .. } => Route::Procedural,
-                _ => Route::Conscious,
+                _ => Route::Standard,
             };
             (default_route, String::new(), false)
         };
 
         // Log routing decision (Chronos recording disabled - causes sled deadlock in async context)
-        info!(route = ?route, event_kind = event.kind(), context_len = learned_context.len(), "cerebellum routing decision");
+        info!(route = ?route, event_kind = event.kind(), context_len = learned_context.len(), "orchestrator routing decision");
 
         if route == Route::Drop {
             return None;
@@ -859,12 +859,12 @@ impl Agent {
                         .await
                     }
                 }
-                Route::Fast | Route::Conscious | Route::Deep { .. } => {
+                Route::Fast | Route::Standard | Route::Deep { .. } => {
                     info!(
                         id,
                         channel,
                         route = ?route,
-                        "handle_event: routing to model (Fast/Conscious/Deep)"
+                        "handle_event: routing to model (Fast/Standard/Deep)"
                     );
                     self.handle_model_message(id, channel, content, &learned_context, clear_history)
                         .await
@@ -917,10 +917,10 @@ impl Agent {
             }
         }
 
-        // Cerebellum preprocessing (same as handle_event)
+        // Orchestrator preprocessing (same as handle_event)
         let (route, learned_context, clear_history) =
-            if let (Some(cerebellum), Some(plures_lm)) = (&self.cerebellum, &self.plures_lm) {
-                match cerebellum
+            if let (Some(orchestrator), Some(plures_lm)) = (&self.orchestrator, &self.plures_lm) {
+                match orchestrator
                     .preprocess(&event, plures_lm, &self.procedure_registry)
                     .await
                 {
@@ -932,14 +932,14 @@ impl Agent {
                         (ctx.route, ctx.learned_context, ctx.clear_history)
                     }
                     Err(e) => {
-                        error!(error = %e, "cerebellum preprocess failed (streaming)");
-                        (Route::Conscious, String::new(), false)
+                        error!(error = %e, "orchestrator preprocess failed (streaming)");
+                        (Route::Standard, String::new(), false)
                     }
                 }
             } else {
                 let default_route = match event {
                     Event::Timer { .. } | Event::StateChange { .. } => Route::Procedural,
-                    _ => Route::Conscious,
+                    _ => Route::Standard,
                 };
                 (default_route, String::new(), false)
             };
@@ -985,7 +985,7 @@ impl Agent {
                         .await
                     }
                 }
-                Route::Fast | Route::Conscious | Route::Deep { .. } => {
+                Route::Fast | Route::Standard | Route::Deep { .. } => {
                     self.handle_model_message_streaming(
                         id,
                         channel,
@@ -1153,7 +1153,7 @@ impl Agent {
                         model_label = "deep-model";
                     }
                     Err(e) => {
-                        warn!(error = %e, "deep model completion failed, using conscious reply");
+                        warn!(error = %e, "deep model completion failed, using standard reply");
                     }
                 }
             } else {
@@ -2757,10 +2757,10 @@ mod tests {
         assert!(results.is_empty());
     }
 
-    // ── Cerebellum-aware agent tests ─────────────────────────────────────
+    // ── Orchestrator-aware agent tests ─────────────────────────────────────
 
     fn make_agent_with_cerebellum() -> Agent {
-        use crate::cerebellum::{Cerebellum, CerebellumConfig};
+        use crate::orchestrator::{Orchestrator, CerebellumConfig};
         use crate::memory::{embed::MockEmbedder, store::InMemoryStore, PluresLm};
 
         let store = Arc::new(InMemoryStore::new());
@@ -2769,8 +2769,8 @@ mod tests {
             Box::new(MockEmbedder),
             128_000,
         ));
-        let cerebellum = Cerebellum::new(CerebellumConfig::default());
-        Agent::with_cerebellum(Arc::new(InMemory::new()), cerebellum, plures_lm).with_model(
+        let orchestrator = Orchestrator::new(CerebellumConfig::default());
+        Agent::with_cerebellum(Arc::new(InMemory::new()), orchestrator, plures_lm).with_model(
             Arc::new(MockModel),
             Arc::new(MockTools),
             "You are a test agent.".into(),
@@ -2780,11 +2780,11 @@ mod tests {
     #[tokio::test]
     async fn agent_with_cerebellum_returns_response_for_conscious_route() {
         let agent = make_agent_with_cerebellum();
-        // Short message → Conscious route → response returned.
+        // Short message → Standard route → response returned.
         let response = agent.handle_event(msg("push now")).await;
         assert!(
             matches!(response, Some(Event::ModelResponse { .. })),
-            "expected ModelResponse for Conscious route"
+            "expected ModelResponse for Standard route"
         );
     }
 
@@ -2798,7 +2798,7 @@ mod tests {
 
     #[tokio::test]
     async fn agent_with_cerebellum_injects_learned_context_when_memories_exist() {
-        use crate::cerebellum::{Cerebellum, CerebellumConfig};
+        use crate::orchestrator::{Orchestrator, CerebellumConfig};
         use crate::memory::{
             embed::{EmbeddingProvider, MockEmbedder},
             entry::{MemoryCategory, MemoryEntry},
@@ -2807,7 +2807,7 @@ mod tests {
         };
 
         let store = Arc::new(InMemoryStore::new());
-        // Pre-populate with a memory related to async Rust so the cerebellum
+        // Pre-populate with a memory related to async Rust so the orchestrator
         // can recall it when asked "How do I use async in Rust?".
         let embedding = MockEmbedder
             .embed("Use tokio for async Rust tasks")
@@ -2831,8 +2831,8 @@ mod tests {
             Box::new(MockEmbedder),
             128_000,
         ));
-        let cerebellum = Cerebellum::new(CerebellumConfig::default());
-        let agent = Agent::with_cerebellum(Arc::new(InMemory::new()), cerebellum, plures_lm)
+        let orchestrator = Orchestrator::new(CerebellumConfig::default());
+        let agent = Agent::with_cerebellum(Arc::new(InMemory::new()), orchestrator, plures_lm)
             .with_model(
                 Arc::new(MockModel),
                 Arc::new(MockTools),
@@ -3158,9 +3158,9 @@ mod history_persistence_tests {
 
     // ── task/memory-aware routing (composite_complexity) ──────────────────
 
-    use crate::cerebellum::classifier::{CerebellumClassifier, MessageIntent};
+    use crate::orchestrator::classifier::{CerebellumClassifier, MessageIntent};
 
-    fn classify(content: &str) -> crate::cerebellum::classifier::MessageClassification {
+    fn classify(content: &str) -> crate::orchestrator::classifier::MessageClassification {
         CerebellumClassifier::heuristic_only(vec![]).classify(content)
     }
 

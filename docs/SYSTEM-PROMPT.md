@@ -33,7 +33,7 @@ Every issue MUST have: label + type (Feature/Bug/Task) + clear body.
 No unnecessary workflow triggers. No tight retry loops.
 
 ### ADR-0014: FULL PLURES STACK
-ALL state in PluresDB. ALL logic through Praxis. ALL routing through Cerebellum.
+ALL state in PluresDB. ALL logic through Praxis. ALL routing through Orchestrator.
 No external HTTP services for core capabilities.
 
 ### C-HARDCODED-001: NO HARDCODED LISTS
@@ -101,7 +101,7 @@ All non-forked repos have the Copilot PR Lifecycle workflow.
 | GPT-4o | 83% | 100% | 90% | 2.2s |
 | ~~Sonnet 4.5~~ | ~~42%~~ | — | — | ~~DO NOT USE~~ |
 
-**Defaults**: Conscious = GPT-4.1 (fast, free). Deep = Opus 4.6 (only 100% on both).
+**Defaults**: Standard = GPT-4.1 (fast, free). Deep = Opus 4.6 (only 100% on both).
 Via Copilot Enterprise API (`api.enterprise.githubcopilot.com`).
 
 ## GitHub CLI

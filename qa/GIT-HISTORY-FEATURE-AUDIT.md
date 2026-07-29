@@ -114,15 +114,15 @@ in the feature ledger.**
     implementation).
   - Downstream consumers of the resulting `agent_promises` state key are real: `crates/core/src/heartbeat.rs:269`
     (`if let Some(promises) = self.state.get("agent_promises").await`) and
-    `crates/core/src/cerebellum/actions.rs:564` (mirrors task-steering.px as a Rust fallback
+    `crates/core/src/orchestrator/actions.rs:564` (mirrors task-steering.px as a Rust fallback
     "until PxBridge wires fully" — same pattern, same caveat, in a second location).
-  - PxBridge itself is real and wired elsewhere for comparison: `crates/core/src/cerebellum/px_bridge.rs`
+  - PxBridge itself is real and wired elsewhere for comparison: `crates/core/src/orchestrator/px_bridge.rs`
     defines it; `crates/agens-plugin/src/agent_commands/runtime.rs:316,5273` construct
-    `PxBridge::new(...)`; `crates/core/src/cerebellum/mod.rs:186,236` thread it through
-    `Cerebellum`. So the bridge mechanism works — it's just not called from
-    `detect_and_store_promises` or from `cerebellum/actions.rs:558` (which has the same
+    `PxBridge::new(...)`; `crates/core/src/orchestrator/mod.rs:186,236` thread it through
+    `Orchestrator`. So the bridge mechanism works — it's just not called from
+    `detect_and_store_promises` or from `orchestrator/actions.rs:558` (which has the same
     "Mirrors task-steering.px logic as a Rust fallback until PxBridge wires fully" caveat at
-    `crates/core/src/cerebellum/actions.rs:558`).
+    `crates/core/src/orchestrator/actions.rs:558`).
   - `crates/agens-plugin/src/agent_commands/runtime.rs:4785-4786` — a THIRD instance of the
     identical pattern: `// TODO: Route through PxBridge.call("evaluate_dispatch", {tick}) once // PxBridge is available in the serve path. Until then, this is a minimal ...`
 - **Referenced in FEATURES.md already:** **No.** `Select-Object`/grep against `FEATURES.md`
@@ -141,9 +141,9 @@ in the feature ledger.**
   2. Either (a) actually wire `crates/core/src/agent.rs:1907` through the already-working
      `PxBridge` (construction pattern is proven at `runtime.rs:316`/`5273` — a
      `PxBridge` instance would need to be threaded into `Agent` the same way it's threaded
-     into `Cerebellum` at `cerebellum/mod.rs:186`), or (b) if the regex fallback is judged
+     into `Orchestrator` at `orchestrator/mod.rs:186`), or (b) if the regex fallback is judged
      good enough long-term, delete the three stale TODO comments (`agent.rs:1911-1912`,
-     `cerebellum/actions.rs:558`, `runtime.rs:4785-4786`) so they stop reading as
+     `orchestrator/actions.rs:558`, `runtime.rs:4785-4786`) so they stop reading as
      "known-incomplete" when they're actually the accepted implementation. Leaving
      TODO-with-no-ticket in three places is itself the smell the QA pilot's own guidance
      (C-NOSTUB-001) would flag if it were an internal ledger claim of "PxBridge-driven".
@@ -212,7 +212,7 @@ autonomous-code-modification feature was ever attempted in this repo's history).
 |---|---|---|---|---|
 | ModelChain/BitNet/offline | `2e24fd0`,`91c21f7`,`83f5c40`,`29ffb21`,`ae47596` | Unit-tested only, never constructed by CLI (`model_chain.rs:12`, zero hits in `crates/cli`) | Yes (2 rows, #673 filed) | No new action — already tracked |
 | Distributed BitNet/Hyperswarm expert pool | `29ffb21`,`83f5c40`,`2641806` | Crate `crates/inference` deleted wholesale in `f6660ab`; zero trace in current tree | No (correctly absent) | None — clean deletion, not a stub |
-| Commitment/promise detection via PxBridge | comment-only intent, no commit adds the missing wiring | Live regex fallback (`agent.rs:1907-1968`), reachable (`agent.rs:1207`), 3 separate TODO-PxBridge stubs across `agent.rs`/`cerebellum/actions.rs`/`runtime.rs` | **No — missing entirely** | Add FEATURES.md row; wire PxBridge or retire the TODOs |
+| Commitment/promise detection via PxBridge | comment-only intent, no commit adds the missing wiring | Live regex fallback (`agent.rs:1907-1968`), reachable (`agent.rs:1207`), 3 separate TODO-PxBridge stubs across `agent.rs`/`orchestrator/actions.rs`/`runtime.rs` | **No — missing entirely** | Add FEATURES.md row; wire PxBridge or retire the TODOs |
 | Self-update | `234df62`,`d544a2b`,`b1edf6c`,`2e62d7f`,`13d6cdd` | Fully implemented, consolidated (ADR-0010), wired at `runtime.rs:4741` | No row (but no gap) | Optional ledger row only |
 
 Generated 2026-07-26 by read-only git-history audit subagent. No source files modified.

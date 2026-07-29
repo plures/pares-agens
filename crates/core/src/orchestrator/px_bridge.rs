@@ -1,4 +1,4 @@
-//! Bridge module: routes cerebellum logic calls through .px procedures
+//! Bridge module: routes orchestrator logic calls through .px procedures
 //! when available, falling back to hardcoded Rust implementations.
 //!
 //! This is the transitional layer for the .px-first migration. As .px
@@ -7,7 +7,7 @@
 //! # Architecture
 //!
 //! ```text
-//! Cerebellum (caller)
+//! Orchestrator (caller)
 //!     │
 //!     ▼
 //! PxBridge (this module)
@@ -29,7 +29,7 @@ use tracing::{debug, info};
 
 use pares_radix_core::px_adapter::{load_px_procedures, AsyncActionHandler, PxProcedureAdapter};
 
-/// Holds loaded .px procedures for cerebellum logic, keyed by procedure name.
+/// Holds loaded .px procedures for orchestrator logic, keyed by procedure name.
 pub struct PxBridge {
     /// Loaded procedure adapters, keyed by name
     procedures: RwLock<HashMap<String, Arc<PxProcedureAdapter>>>,
@@ -67,7 +67,7 @@ impl PxBridge {
         if count > 0 {
             self.active
                 .store(true, std::sync::atomic::Ordering::Relaxed);
-            info!(count, "px_bridge: loaded cerebellum procedures");
+            info!(count, "px_bridge: loaded orchestrator procedures");
         }
 
         Ok(count)
@@ -88,7 +88,7 @@ impl PxBridge {
         if count > 0 {
             self.active
                 .store(true, std::sync::atomic::Ordering::Relaxed);
-            info!(count, dir = %dir.display(), "px_bridge: loaded cerebellum procedures from directory");
+            info!(count, dir = %dir.display(), "px_bridge: loaded orchestrator procedures from directory");
         }
 
         count
@@ -129,7 +129,7 @@ impl PxBridge {
         if count > 0 {
             self.active
                 .store(true, std::sync::atomic::Ordering::Relaxed);
-            info!(count, dir = %dir.display(), "px_bridge: loaded cerebellum procedures from directory (sync)");
+            info!(count, dir = %dir.display(), "px_bridge: loaded orchestrator procedures from directory (sync)");
         }
 
         count

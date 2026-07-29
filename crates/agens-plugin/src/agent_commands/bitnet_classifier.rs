@@ -1,10 +1,10 @@
-//! BitNet-backed cerebellum classifier — single-token classification.
+//! BitNet-backed orchestrator classifier — single-token classification.
 //!
 //! Uses the local BitNet model for fast message routing decisions.
 //! Each classification is a single-token generation (~20ms on modern CPUs).
 
 use pares_agens_bitnet::BitNetRunner;
-use pares_agens_core::cerebellum::classifier::{
+use pares_agens_core::orchestrator::classifier::{
     ClassifierBackend, MessageClassification, MessageIntent,
 };
 use std::path::Path;
@@ -200,7 +200,7 @@ impl ClassifierBackend for BitNetClassifier {
             latency_ms = elapsed_us / 1000,
             avg_latency_ms = avg_us / 1000,
             total_classifications = count,
-            "BitNet cerebellum classification"
+            "BitNet orchestrator classification"
         );
 
         // Construct the JSON that the existing classifier expects

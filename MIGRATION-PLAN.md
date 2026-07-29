@@ -148,7 +148,7 @@ Confirmed **REMOVED** at v1.55.13 (dirs absent):
 
 ### 3.2 `crates/core` (pares-agens-core) — **NO code changes**
 
-- `src/cerebellum/mod.rs:42` `use pares_radix_core::praxis::constraints::AuthorizationGate;` — **unchanged**.
+- `src/orchestrator/mod.rs:42` `use pares_radix_core::praxis::constraints::AuthorizationGate;` — **unchanged**.
 - `:442` `AuthorizationGate.evaluate(&gate_ctx)` — **unchanged** (signature identical at v1.55.13).
 - `:445` `if let RuleResult::Fail { reason } = &gate_result` — **unchanged** (variant identical).
 - test sites `:1123`, `:1136`, `:1151` (`RuleResult::{Pass, Gate{..}}`) — **unchanged**.

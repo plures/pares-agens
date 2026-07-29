@@ -53,7 +53,7 @@ work item requested in this ADR.
 **"ADR-0015" status:** in `design-dojo` there is no ADR-0015 (no `.praxis`/ADR directory exists in
 that repo at all — governance for design-dojo docs lives in `docs/`, not ADR files). The
 `pares-agens:ADR-0015` slot is already occupied (`docs/decisions/ADR-0015-autorecall-topic-shift-
-dead-code.md`, unrelated: dead-code retirement in Cerebellum topic-shift detection, currently
+dead-code.md`, unrelated: dead-code retirement in Orchestrator topic-shift detection, currently
 PROPOSED). **This is therefore a NEW ADR (0019, next free slot in `pares-agens/docs/decisions/`),
 not an ADR-0015 revision** — the task brief's premise that ADR-0015 covers this feature was
 incorrect; there is no prior ADR for debug-mode/Chronos-viewer to revise.

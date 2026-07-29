@@ -1,6 +1,6 @@
 //! Dataflow bridge: the COMPLETE message pipeline as a PluresDB dataflow graph.
 //!
-//! This replaces the imperative cerebellum orchestration. The flow is:
+//! This replaces the imperative orchestrator orchestration. The flow is:
 //!   1. Channel adapter writes InboundMessage to "inbound" queue
 //!   2. Graph runs to quiescence (all procedures fire via data availability)
 //!   3. "delivery" queue contains the response to send
@@ -22,7 +22,7 @@ use tracing::{debug, info};
 
 /// The dataflow-driven message pipeline.
 ///
-/// Replaces: cerebellum/mod.rs orchestration, router.rs, classifier.rs,
+/// Replaces: orchestrator/mod.rs orchestration, router.rs, classifier.rs,
 /// context_manager.rs, invoke.rs, pipeline.rs.
 ///
 /// Keeps: CerebellumActionHandler (IO boundary dispatch).
@@ -168,8 +168,8 @@ impl DataflowBridge {
         Ok(None)
     }
 
-    /// Legacy compatibility: process_event for the cerebellum's current routing path.
-    /// TODO: Remove once cerebellum is fully replaced by process_message.
+    /// Legacy compatibility: process_event for the orchestrator's current routing path.
+    /// TODO: Remove once orchestrator is fully replaced by process_message.
     pub async fn process_event(
         &self,
         event_type: &str,

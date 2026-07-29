@@ -225,9 +225,9 @@ impl HeartbeatRunner {
 
     /// Execute a single heartbeat tick.
     ///
-    /// This is the cerebellum-gated heartbeat:
+    /// This is the orchestrator-gated heartbeat:
     /// 1. Check for pending work (zero tokens — pure PluresDB/state queries)
-    /// 2. Only escalate to the conscious model if there's actual work
+    /// 2. Only escalate to the standard model if there's actual work
     /// 3. Skip silently if nothing needs attention
     async fn tick(&self) {
         if !self.config.enabled {
@@ -238,7 +238,7 @@ impl HeartbeatRunner {
             return;
         }
 
-        // ── Cerebellum gate (zero tokens) ────────────────────────────
+        // ── Orchestrator gate (zero tokens) ────────────────────────────
         // Check for work without calling any model.
         let mut work_items: Vec<String> = Vec::new();
 
@@ -310,7 +310,7 @@ impl HeartbeatRunner {
             return;
         }
 
-        // ── Escalate to conscious (tokens spent here) ────────────────
+        // ── Escalate to standard (tokens spent here) ────────────────
         info!(
             items = work_items.len(),
             "heartbeat: work found, escalating"
@@ -340,7 +340,7 @@ impl HeartbeatRunner {
             }
         }
 
-        // ── Fallback: escalate to conscious (tokens spent here) ───────
+        // ── Fallback: escalate to standard (tokens spent here) ───────
         let combined = work_items.join("\n");
         if let Some(spine) = &self.event_spine {
             spine.emit_inbound_message(

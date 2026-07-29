@@ -25,11 +25,11 @@ pares-agens MUST use the full plures technology stack natively. No external serv
 └─────────────────┬───────────────────────────────────────────┘
                   │ Event
 ┌─────────────────▼───────────────────────────────────────────┐
-│                   CEREBELLUM (3-consciousness)               │
-│  Conscious: direct response path (fast)                      │
-│  Subconscious: deep analysis, background tasks (async)       │
-│  Cerebellum: routing, complexity detection, coordination     │
-│  crates/core/cerebellum + pluresdb-procedures                │
+│                   ORCHESTRATOR (3-consciousness)               │
+│  Standard: direct response path (fast)                      │
+│  DeepReasoner: deep analysis, background tasks (async)       │
+│  Orchestrator: routing, complexity detection, coordination     │
+│  crates/core/orchestrator + pluresdb-procedures                │
 └─────────────────┬───────────────────────────────────────────┘
                   │ Routed Event + Recalled Context
 ┌─────────────────▼───────────────────────────────────────────┐
@@ -72,10 +72,10 @@ pares-agens MUST use the full plures technology stack natively. No external serv
 
 | Technology | Crate | Role | Integration Point |
 |---|---|---|---|
-| **PluresDB** | `pluresdb` | ALL persistent state | `core/memory/store.rs`, cerebellum bridge |
+| **PluresDB** | `pluresdb` | ALL persistent state | `core/memory/store.rs`, orchestrator bridge |
 | **Praxis** | `crates/praxis` | ALL business logic, constraints, rules | Every action goes through praxis gates |
-| **Cerebellum** | `core/cerebellum` | 3-consciousness routing | Event processing pipeline |
-| **PluresDB Procedures** | `pluresdb-procedures` | Reactive data-driven procedures | Cerebellum bridge, background tasks |
+| **Orchestrator** | `core/orchestrator` | 3-consciousness routing | Event processing pipeline |
+| **PluresDB Procedures** | `pluresdb-procedures` | Reactive data-driven procedures | Orchestrator bridge, background tasks |
 | **Chronos** | NEW dependency | State chronicle, audit trail | Every agent action gets a Chronos entry |
 | **design-dojo** | `crates/tauri-app/ui` | ALL UI components | Tauri frontend |
 | **plures-vault** | `crates/arca` | ALL secret storage | API keys, tokens — NEVER env vars in production |
@@ -106,7 +106,7 @@ pares-agens MUST use the full plures technology stack natively. No external serv
 Every component in pares-agens MUST be expressible as Praxis primitives:
 
 1. **Channel adapters** → Praxis Facts (message received, user context)
-2. **Cerebellum routing** → Praxis Rules (if complexity > threshold → subconscious)
+2. **Orchestrator routing** → Praxis Rules (if complexity > threshold → deep_reasoner)
 3. **Tool execution** → Praxis Constraints (authorization gates before shell exec)
 4. **Memory capture** → Praxis Events (conversation stored, memory consolidated)
 5. **Decision making** → Praxis Decision Ledger (every significant choice recorded)
@@ -117,7 +117,7 @@ This ADR is enforced at three levels:
 
 1. **CI expectations** — `crates/praxis/expectations/` verify architecture rules at build time
 2. **PluresDB constraints** — stored in agent's own database, checked before every action
-3. **Cerebellum preprocessing** — recalled as context before every LLM call
+3. **Orchestrator preprocessing** — recalled as context before every LLM call
 
 ```rust
 // Example praxis constraint
@@ -139,7 +139,7 @@ Constraint::new("arch-no-external-services")
 | **Privacy** | Trust-based | crates/privacy PII filter + crates/arca encrypted vault |
 | **Tool execution** | Plugin sandbox (Node.js) | Native procedures (Rust, zero overhead) |
 | **Desktop automation** | Browser relay (fragile) | pares-manus (native screen capture, GUI automation) |
-| **Consciousness** | Single-threaded loop | 3-tier (conscious/subconscious/cerebellum) |
+| **Consciousness** | Single-threaded loop | 3-tier (standard/deep_reasoner/orchestrator) |
 | **Plugins** | JS plugins that break on update | PluresDB procedures (data, not code) |
 | **CI/CD** | External GitHub Actions only | crates/faber (agent-first CI runner) |
 | **Research** | Manual | crates/autoresearch (autonomous experiment loop) |
@@ -148,7 +148,7 @@ Constraint::new("arch-no-external-services")
 
 ## Implementation Order
 
-Phase 1 (NOW): Core agent loop with PluresDB + Cerebellum + Praxis + tools ← DONE
+Phase 1 (NOW): Core agent loop with PluresDB + Orchestrator + Praxis + tools ← DONE
 Phase 2 (THIS WEEK): Chronos integration, real embeddings, multi-channel
 Phase 3 (NEXT WEEK): pares-manus, plures-vault production, P2P sync
 Phase 4 (MONTH 1): pares-radix plugin loading, marketplace, training pipeline
@@ -162,7 +162,7 @@ This ADR is considered implemented when:
 - [ ] Chronos records every agent action
 - [ ] plures-vault stores all secrets (no env vars in production)
 - [ ] PluresDB is the ONLY persistence layer
-- [ ] Cerebellum routes every event through 3-consciousness
+- [ ] Orchestrator routes every event through 3-consciousness
 
 ## Amendment: PluresDB IS the Nervous System (2026-04-15)
 

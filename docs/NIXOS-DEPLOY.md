@@ -73,7 +73,7 @@ overlays = [
   services.pares-agens = {
     enable = true;
     copilot = true;                           # Use GitHub Copilot for LLM
-    model = "gpt-4.1";                        # Conscious model
+    model = "gpt-4.1";                        # Standard model
     deepModel = "claude-opus-4.6";            # Deep escalation model
     telegramTokenFile = "/run/secrets/telegram-token";
     braveApiKeyFile = "/run/secrets/brave-key";
@@ -108,7 +108,7 @@ Visit the URL, enter the code, and the OAuth token is cached permanently.
 |--------|------|---------|-------------|
 | `enable` | bool | `false` | Enable the service |
 | `copilot` | bool | `true` | Use GitHub Copilot OAuth for LLM access |
-| `model` | string | `"gpt-4.1"` | Conscious model (80% of requests) |
+| `model` | string | `"gpt-4.1"` | Standard model (80% of requests) |
 | `deepModel` | string | `"claude-opus-4.6"` | Deep model for low-confidence escalation |
 | `user` | string | `"pares-agens"` | Service user |
 | `group` | string | `"pares-agens"` | Service group |

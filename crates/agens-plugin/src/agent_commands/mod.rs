@@ -15,7 +15,7 @@
 //! are now inherent methods on [`AgensProvider`] that the agens host calls
 //! directly (Option B — agens is the sole host of a single provider).
 
-// BitNet-backed cerebellum classifier. Real implementation carved from the radix
+// BitNet-backed orchestrator classifier. Real implementation carved from the radix
 // host in Stage 4c (commit d823bbb) but not yet wired into the routing path, so
 // its items are currently dead. `#[allow(dead_code)]` here (consistent with the
 // crate's existing not-yet-wired allowances) keeps `clippy -D warnings` green
@@ -205,7 +205,7 @@ impl AgensProvider {
         #[cfg(feature = "bitnet-native")]
         let cmd = cmd.subcommand(
             Command::new("classify")
-                .about("Test the cerebellum classifier on a message (non-interactive).")
+                .about("Test the orchestrator classifier on a message (non-interactive).")
                 .arg(Arg::new("message").required(true).num_args(1))
                 .arg(opt("bitnet_model_path", None, None).required(true)),
         );

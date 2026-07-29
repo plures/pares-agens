@@ -309,7 +309,7 @@ epic must not claim "Teams support" complete without live proof against them
 
 **Negative / risk**
 - `Event::Message` gains an optional field, increasing match-arm surface
-  for every consumer (event spine, cerebellum, tests) — must be additive
+  for every consumer (event spine, orchestrator, tests) — must be additive
   only (`Option<ChannelIdentity>`) to avoid breaking Telegram call sites.
 - Teams' webhook-based transport requires new operational infrastructure
   (public HTTPS endpoint) pares-agens has not needed before; this is a real
