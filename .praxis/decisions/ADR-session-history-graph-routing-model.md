@@ -1,8 +1,8 @@
 # ADR: Session-History-as-Graph Routing Model (replaces brain-metaphor)
 
-Status: Proposed
-Date: 2026-07-29
-Supersedes: cerebellum/conscious/subconscious and primary-agent/subagent framing (already
+**Status:** Proposed
+**Date:** 2026-07-29
+**Supersedes:** cerebellum/conscious/subconscious and primary-agent/subagent framing (already
 being dismantled in `rename/brain-metaphor-cleanup`); DelegationBroker's role is
 re-scoped by this ADR (see Decision 4).
 
