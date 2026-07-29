@@ -123,11 +123,10 @@ constraint invocation_edge_has_target:
 
 # Entry point for session routing: decide which session (existing or new)
 # a request belongs to, purely from vector similarity over session embeddings.
-procedure route_request_to_session(message: string from "inbound", thread_key: string, request_id: string) -> session_route into "session_route":
+procedure route_request_to_session(message: InboundMessage from "session_routing_inbound", thread_key: string, request_id: string) -> session_route into "session_route":
   given: "Route an inbound request to a session using vector-similarity classification"
 
-  embed_text {text: $message} -> $query_embedding
-
+  embed_text {text: $message.content} -> $query_embedding
   find_candidate_sessions {
     thread_key: $thread_key,
     embedding: $query_embedding,
