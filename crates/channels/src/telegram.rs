@@ -1555,7 +1555,7 @@ impl ChannelAdapter for TelegramAdapter {
                                     .unwrap_or_else(|_| "unknown".into())
                                     .trim().to_string();
                                 let status = format!(
-                                    "🤖 <b>Pares Agens v{version}</b> (radix v{radix_version}, <code>{commit}</code>)\n\
+                                    "🤖 <b>Pares Agens v{version}</b> (radix v{radix_version}, agens <code>{commit}</code>)\n\",
                                      ⏱️ Uptime: {uptime} · PID: {} · RSS: {memory}\n\
                                      🧠 Model: <code>{model_line}</code>\n\
                                      {routing_block}\
