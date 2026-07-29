@@ -230,13 +230,6 @@ procedure record_session_invocation(session_id: string, invocation_kind: string,
 procedure dispatch_to_session(route: session_route from "session_route", message: string) -> dispatch into "model_request":
   given: "Dispatch a routed request to its session, or fan out to parallel sessions when warranted"
 
-  when route.route_reason == "model-decided-continuation" OR route.route_reason == "model-decided-new":
-    # Ambiguous routing already resolved by the model in route_request_to_session;
-    # single-session dispatch is sufficient here (parallel fan-out is reserved
-    # for explicit multi-session work requests, not routing ambiguity).
-    return {session_id: route.session_id, message: $message, mode: "single"}
-  end
-
   return {session_id: route.session_id, message: $message, mode: "single"}
 
 
