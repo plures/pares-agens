@@ -1,3 +1,8 @@
+## [1.64.2] — 2026-07-29
+
+- design(session-graph-routing): session-history-as-graph schema + DelegationBroker recommendation (#685) (ed62a5a)
+- refactor: replace brain-metaphor naming (cerebellum/conscious/subconscious -> orchestrator/standard/deep_reasoner) (#684) (1806251)
+
 ## [1.64.1] — 2026-07-29
 
 - fix(channels): distinguish agens app version from radix platform version in /status, /version (#683) (3b5a91f)
