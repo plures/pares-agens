@@ -1,0 +1,318 @@
+# session-routing.px — Session-history-as-graph routing (replaces brain-metaphor)
+#
+# Sessions ARE memory: there is no separate "memory" store. Every session node
+# carries an embedding computed from its rolling summary, and recall is a
+# vector search directly over session nodes. Continuation/new-topic/ambiguous
+# classification is a vector-similarity function, heuristic to start
+# (LLM-based classification exists as a utility fallback, not the hot path).
+#
+# Companion doc: .praxis/decisions/ADR-session-history-graph-routing-model.md
+#
+# Queue topology:
+#
+#   inbound ─→ [route_request_to_session] ─→ session_route
+#                    │
+#                    ├─ calls [find_candidate_sessions] (utility, vector search)
+#                    └─ calls [classify_session_with_llm] (utility, ambiguous fallback)
+#
+#   session_route ─→ [dispatch_to_session] ─→ model_request | parallel_session_dispatch
+#
+
+# ═══════════════════════════════════════════════════════════════════
+# Entities
+# ═══════════════════════════════════════════════════════════════════
+
+entity session:
+  prefix: "session:pares-agens:"
+  fields:
+    id: String
+    channel: String
+    thread_key: String
+    started_at: Int
+    last_active_at: Int
+    status: enum(open, idle, closed)
+    summary: String
+    embedding: Vector
+    turn_count: Int
+    parent_session_id: String
+
+entity edge_request_routed_to_session:
+  prefix: "edge:request-routed-to-session:"
+  fields:
+    request_id: String
+    session_id: String
+    route_reason: String
+    match_score: Float
+    decided_at: Int
+
+entity edge_autorecall_match_to_session:
+  prefix: "edge:autorecall-match-to-session:"
+  fields:
+    query_embedding_source: String
+    session_id: String
+    match_score: Float
+    rank: Int
+    recalled_at: Int
+
+entity edge_session_invokes_skill_or_tool:
+  prefix: "edge:session-invokes-skill-or-tool:"
+  fields:
+    session_id: String
+    invocation_kind: enum(skill, tool)
+    name: String
+    invoked_at: Int
+    outcome: enum(success, error, pending)
+
+# ═══════════════════════════════════════════════════════════════════
+# Constraints
+# ═══════════════════════════════════════════════════════════════════
+
+constraint session_requires_identity:
+  scope: session
+  phase: pre_write
+  when: session.write_requested == true
+  require: session.id != "" AND session.thread_key != ""
+  severity: error
+  message: "Sessions require an id and a channel-independent thread_key."
+
+constraint session_embedding_present_when_active:
+  scope: session
+  phase: pre_write
+  when: session.status != "closed"
+  require: session.embedding != []
+  severity: error
+  message: "Open/idle sessions must carry a computed embedding for recall matching."
+
+constraint routing_edge_requires_reason:
+  scope: edge_request_routed_to_session
+  phase: pre_write
+  when: edge.write_requested == true
+  require: edge.route_reason != "" AND edge.session_id != ""
+  severity: error
+  message: "Routing edges must record why a request was routed to a session."
+
+constraint recall_edge_is_ranked:
+  scope: edge_autorecall_match_to_session
+  phase: pre_write
+  when: edge.write_requested == true
+  require: edge.rank >= 0 AND edge.session_id != ""
+  severity: error
+  message: "Autorecall match edges must record a rank within the recall set."
+
+constraint invocation_edge_has_target:
+  scope: edge_session_invokes_skill_or_tool
+  phase: pre_write
+  when: edge.write_requested == true
+  require: edge.name != "" AND edge.session_id != ""
+  severity: error
+  message: "Skill/tool invocation edges must name the invoked skill or tool."
+
+# ═══════════════════════════════════════════════════════════════════
+# CONFIG
+# ═══════════════════════════════════════════════════════════════════
+
+# [parser-skip] config session_routing:
+# [parser-skip]   continuation_confidence_min: float = 0.75  # >= this = confident continuation
+# [parser-skip]   new_topic_confidence_max: float = 0.35      # <= this = confident new topic
+# [parser-skip]   candidate_limit: int = 5                    # top-k sessions considered per request
+# [parser-skip]   idle_session_ttl_seconds: int = 3600
+# [parser-skip] 
+# ═══════════════════════════════════════════════════════════════════
+# Dataflow Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# Entry point for session routing: decide which session (existing or new)
+# a request belongs to, purely from vector similarity over session embeddings.
+procedure route_request_to_session(message: InboundMessage from "session_routing_inbound", thread_key: string, request_id: string) -> session_route into "session_route":
+  given: "Route an inbound request to a session using vector-similarity classification"
+
+  embed_text {text: $message.content} -> $query_embedding
+  find_candidate_sessions {
+    thread_key: $thread_key,
+    embedding: $query_embedding,
+    limit: config.candidate_limit
+  } -> $candidates
+
+  # Always record what was considered, even if the top candidate is rejected below.
+  when $candidates != null AND length($candidates) > 0:
+    record_recall_edges {
+      candidates: $candidates,
+      query_embedding_source: $request_id
+    } -> $recorded
+  end
+
+  when $candidates == null OR length($candidates) == 0:
+    create_session {thread_key: $thread_key, embedding: $query_embedding} -> $new_session
+    record_routing_edge {
+      request_id: $request_id,
+      session_id: $new_session.id,
+      route_reason: "new-topic-no-candidates",
+      match_score: 0.0
+    } -> $edge
+    return {session_id: $new_session.id, is_new: true, route_reason: "new-topic-no-candidates"}
+  end
+
+  top_candidate {candidates: $candidates} -> $best
+
+  when $best.match_score >= config.continuation_confidence_min:
+    record_routing_edge {
+      request_id: $request_id,
+      session_id: $best.session_id,
+      route_reason: "continuation",
+      match_score: $best.match_score
+    } -> $edge
+    return {session_id: $best.session_id, is_new: false, route_reason: "continuation"}
+  end
+
+  when $best.match_score <= config.new_topic_confidence_max:
+    create_session {thread_key: $thread_key, embedding: $query_embedding} -> $new_session
+    record_routing_edge {
+      request_id: $request_id,
+      session_id: $new_session.id,
+      route_reason: "new-topic",
+      match_score: $best.match_score
+    } -> $edge
+    return {session_id: $new_session.id, is_new: true, route_reason: "new-topic"}
+  end
+
+  # Ambiguous zone: neither confidently a continuation nor confidently new.
+  # Do not default — let the model decide, per the resolved design input that
+  # "no-match" semantics belong to the model, not a hardcoded branch.
+  classify_session_with_llm {
+    message: $message,
+    candidates: $candidates
+  } -> $llm_decision
+
+  when $llm_decision.is_continuation:
+    record_routing_edge {
+      request_id: $request_id,
+      session_id: $llm_decision.session_id,
+      route_reason: "model-decided-continuation",
+      match_score: $best.match_score
+    } -> $edge
+    return {session_id: $llm_decision.session_id, is_new: false, route_reason: "model-decided-continuation"}
+  end
+
+  create_session {thread_key: $thread_key, embedding: $query_embedding} -> $new_session
+  record_routing_edge {
+    request_id: $request_id,
+    session_id: $new_session.id,
+    route_reason: "model-decided-new",
+    match_score: $best.match_score
+  } -> $edge
+  return {session_id: $new_session.id, is_new: true, route_reason: "model-decided-new"}
+
+
+# Record that a session invoked a skill or tool (called after any tool/skill
+# dispatch completes, success or failure).
+procedure record_session_invocation(session_id: string, invocation_kind: string, name: string, outcome: string) -> invocation_record into "session_invocation_recorded":
+  given: "Record a skill/tool invocation against its owning session"
+  timestamp_now {} -> $now
+  pluresdb_write {
+    key: "edge:session-invokes-skill-or-tool:{$session_id}:{$now}",
+    value: {
+      session_id: $session_id,
+      invocation_kind: $invocation_kind,
+      name: $name,
+      invoked_at: $now,
+      outcome: $outcome
+    }
+  }
+  return {recorded: true}
+
+
+# Dispatch a routed request either into the normal single-session model-request
+# path, or — when the routing decision calls for concurrent exploration of
+# more than one candidate session — into a parallel-session dispatch that
+# Rust executes via DelegationBroker (see ADR Decision 4). This procedure is
+# the .px-side decision owner; DelegationBroker remains the Rust IO-boundary
+# executor for the actual concurrent fan-out.
+procedure dispatch_to_session(route: session_route from "session_route", message: string) -> dispatch into "model_request":
+  given: "Dispatch a routed request to its session, or fan out to parallel sessions when warranted"
+
+  return {session_id: route.session_id, message: $message, mode: "single"}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Utility Procedures
+# ═══════════════════════════════════════════════════════════════════
+
+# utility: called by route_request_to_session (vector search over open/idle sessions)
+procedure find_candidate_sessions(thread_key: string, embedding: list, limit: int) -> candidates:
+  given: "Find the top-k open/idle sessions by embedding similarity within a thread"
+  db_get_prefix {prefix: "session:pares-agens:"} -> $all_sessions
+  filter_active_sessions {sessions: $all_sessions, thread_key: $thread_key} -> $scoped
+  rank_by_similarity {sessions: $scoped, embedding: $embedding, top_k: $limit} -> $ranked
+  return $ranked
+
+# utility: called by route_request_to_session (records what recall considered)
+procedure record_recall_edges(candidates: list, query_embedding_source: string) -> recorded:
+  given: "Persist an autorecall-match-to-session edge for each candidate considered"
+  timestamp_now {} -> $now
+  write_recall_edges_batch {
+    candidates: $candidates,
+    query_embedding_source: $query_embedding_source,
+    recalled_at: $now
+  } -> $result
+  return $result
+
+# utility: called by route_request_to_session (records the final routing decision)
+procedure record_routing_edge(request_id: string, session_id: string, route_reason: string, match_score: float) -> edge:
+  given: "Persist the request-routed-to-session edge for the routing decision made"
+  timestamp_now {} -> $now
+  pluresdb_write {
+    key: "edge:request-routed-to-session:{$request_id}",
+    value: {
+      request_id: $request_id,
+      session_id: $session_id,
+      route_reason: $route_reason,
+      match_score: $match_score,
+      decided_at: $now
+    }
+  }
+  return {recorded: true}
+
+# utility: called by route_request_to_session (creates a new session node)
+procedure create_session(thread_key: string, embedding: list) -> new_session:
+  given: "Create a new session node seeded with the routing request's embedding"
+  generate_id {} -> $id
+  timestamp_now {} -> $now
+  pluresdb_write {
+    key: "session:pares-agens:{$id}",
+    value: {
+      id: $id,
+      channel: "",
+      thread_key: $thread_key,
+      started_at: $now,
+      last_active_at: $now,
+      status: "open",
+      summary: "",
+      embedding: $embedding,
+      turn_count: 0,
+      parent_session_id: ""
+    }
+  }
+  return {id: $id}
+
+# utility: called by route_request_to_session (fallback classifier for the ambiguous zone only)
+procedure classify_session_with_llm(message: string, candidates: list) -> llm_decision:
+  given: "Use the model to decide continuation-vs-new when vector similarity is ambiguous"
+  format_string {
+    template: "Message:\n{message}\n\nCandidates:\n{candidates}",
+    vars: {message: $message, candidates: $candidates}
+  } -> $prompt
+  model_complete {
+    messages: [{role: "user", content: $prompt}],
+    system_prompt: "Given this message and a list of candidate prior sessions with summaries, decide whether this message continues one of them or starts a new one.",
+    tier: "fast"
+  } -> $result
+  parse_session_decision {raw: $result, candidates: $candidates} -> $llm_decision
+  return $llm_decision
+
+# utility: called when the graph model needs to spawn concurrent session work
+# (e.g. a request that explicitly asks for parallel exploration of multiple
+# candidate sessions/agents). Rust-side action delegates to DelegationBroker.
+procedure dispatch_parallel_sessions(session_ids: list, message: string) -> parallel_results:
+  given: "Fan out a request across multiple sessions concurrently via DelegationBroker (Rust IO boundary)"
+  delegate_parallel_sessions {session_ids: $session_ids, message: $message} -> $results
+  return $results
