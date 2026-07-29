@@ -1,4 +1,4 @@
-# preprocess.px — Cerebellum preprocessing as v3 dataflow procedures
+# preprocess.px — Orchestrator preprocessing as v3 dataflow procedures
 #
 # Orchestrates the full preprocessing pipeline: classify, enrich, route.
 # IO actions (embedding, memory recall, store reads) are Rust-backed;
@@ -36,9 +36,9 @@
 # Dataflow Procedures
 # ═══════════════════════════════════════════════════════════════════
 
-# Orchestrate full cerebellum preprocessing pipeline for inbound messages
+# Orchestrate full orchestrator preprocessing pipeline for inbound messages
 procedure preprocess(event: string from "inbound") -> preprocessed into "preprocessed":
-  given: "Orchestrate full cerebellum preprocessing pipeline for inbound messages"
+  given: "Orchestrate full orchestrator preprocessing pipeline for inbound messages"
   classify_message {message: $event, plugins: $plugins, last_topic: $last_topic} -> $classification
   pluresdb_write {key: "session:classification", value: $classification}
   extract_entities {message: $event} -> $entities

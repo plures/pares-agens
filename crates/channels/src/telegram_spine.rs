@@ -4,7 +4,7 @@
 //! 1. Receive Telegram updates → emit SpineEvent::Inbound
 //! 2. Subscribe to DeliveryRequest events → send via Telegram Bot API
 //!
-//! All logic (model calls, slash commands, cerebellum, history, tools)
+//! All logic (model calls, slash commands, orchestrator, history, tools)
 //! lives in spine procedures. This adapter is interchangeable.
 
 use async_trait::async_trait;

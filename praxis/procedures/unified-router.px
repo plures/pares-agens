@@ -1,6 +1,6 @@
 # unified-router.px — Single entry point for ALL inbound messages (v3 dataflow)
 #
-# THIS REPLACES the Cerebellum's imperative Rust orchestration.
+# THIS REPLACES the Orchestrator's imperative Rust orchestration.
 # Every message enters PluresDB → router fires → queues populate → procedures fire.
 # Rust only exists at IO boundaries (model API, tool execution, channel delivery).
 #
@@ -140,7 +140,7 @@
 # ═══════════════════════════════════════════════════════════════════
 
 # This is the ONLY entry point. Every message enters here.
-# It replaces: cerebellum.preprocess(), router::decide(), task-steering classify_continuation
+# It replaces: orchestrator.preprocess(), router::decide(), task-steering classify_continuation
 procedure classify_and_route(message: InboundMessage from "inbound") -> decision into "route_decision":
   given: "Unified entry point: classify intent and route to appropriate queue"
 

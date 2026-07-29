@@ -40,7 +40,7 @@
 # `detect_topic_shift` step here: its Rust implementation
 # (`actions.rs::detect_topic_shift_action`) was dead-code deleted per
 # ADR-0015. The live topic-shift detector is
-# `Cerebellum::detect_topic_shift` in `crates/core/src/cerebellum/mod.rs`.
+# `Orchestrator::detect_topic_shift` in `crates/core/src/orchestrator/mod.rs`.
 # Wiring classify_message onto a live dataflow path (if ever needed) should
 # derive topic_shift from that implementation, not resurrect this stub.
 #

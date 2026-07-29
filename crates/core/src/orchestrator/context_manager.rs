@@ -1,11 +1,11 @@
-//! Context Manager — the cerebellum's core responsibility.
+//! Context Manager — the orchestrator's core responsibility.
 //!
 //! Instead of classifying messages, the context manager decides:
 //! - What context to KEEP (still relevant)
 //! - What context to ADD (newly relevant from memory)
 //! - What context to REMOVE (stale, irrelevant, crowding the window)
 //!
-//! This is trained from outcomes: when the conscious model succeeds,
+//! This is trained from outcomes: when the standard model succeeds,
 //! the context was right. When it fails, it was wrong. Over time,
 //! the relevance weights improve.
 
@@ -204,7 +204,7 @@ impl RelevanceScorer {
         score.clamp(0.0, 1.0)
     }
 
-    /// Update weights based on outcome (called after conscious model responds).
+    /// Update weights based on outcome (called after standard model responds).
     pub fn record_outcome(&mut self, context_items: &[ContextItem], success: bool) {
         for item in context_items {
             let weight = self.weights.entry(item.id.clone()).or_insert(1.0);

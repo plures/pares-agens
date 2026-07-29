@@ -133,7 +133,7 @@ constraint validate_inputs_at_boundaries:
   message: "Validate inputs at system boundaries (CLI args, API requests, config loading), not deep in business logic. Once data crosses the boundary, it should be trusted."
 
 # ═══════════════════════════════════════════════════════════════════════
-# CORTEX-TO-CEREBELLUM LEARNING LOOP
+# CORTEX-TO-ORCHESTRATOR LEARNING LOOP
 # ═══════════════════════════════════════════════════════════════════════
 
 constraint new_violation_class_requires_adr:

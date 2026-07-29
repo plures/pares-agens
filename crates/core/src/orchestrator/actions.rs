@@ -1,7 +1,7 @@
-//! Cerebellum action handler — IO boundaries for `.px` procedures.
+//! Orchestrator action handler — IO boundaries for `.px` procedures.
 //!
 //! This module implements [`AsyncActionHandler`] to provide the side-effect
-//! boundary between declarative `.px` procedures (which express cerebellum
+//! boundary between declarative `.px` procedures (which express orchestrator
 //! logic like classification, routing, and context management) and the
 //! underlying Rust infrastructure (embedding models, state stores, event bus).
 //!
@@ -18,7 +18,7 @@
 //!
 //! # Design
 //!
-//! This is the ONLY Rust code the cerebellum needs for IO — everything else
+//! This is the ONLY Rust code the orchestrator needs for IO — everything else
 //! (classification rules, routing decisions, complexity scoring) lives in `.px`.
 
 use std::collections::HashMap;
@@ -46,7 +46,7 @@ struct MemoryEntry {
 
 // ── CerebellumActionHandler ──────────────────────────────────────────────────
 
-/// Action handler providing IO boundaries for cerebellum `.px` procedures.
+/// Action handler providing IO boundaries for orchestrator `.px` procedures.
 ///
 /// Each method maps a named action to an async Rust implementation that
 /// performs the actual IO (embedding computation, state access, event emission).
@@ -128,7 +128,7 @@ impl CerebellumActionHandler {
     }
 
     /// Set the model client after construction (for late binding when
-    /// the model client isn't available at cerebellum init time).
+    /// the model client isn't available at orchestrator init time).
     pub fn set_model_client(&self, client: Arc<dyn pares_radix_core::model::ModelClient>) {
         *self.model_client.write().unwrap() = Some(client);
     }
@@ -355,18 +355,18 @@ impl CerebellumActionHandler {
             })?;
 
         // Construct a SpineEvent based on the requested type.
-        // For now, all cerebellum-emitted events are modelled as ModelRequest
+        // For now, all orchestrator-emitted events are modelled as ModelRequest
         // (the primary use case is requesting model invocation from .px logic).
         let spine_event = match event_type {
             "model_request" => SpineEvent::ModelRequest {
                 id: SpineEvent::new_id(),
-                source: "cerebellum".to_string(),
+                source: "orchestrator".to_string(),
                 chat_id: payload
                     .get("chat_id")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("cerebellum")
+                    .unwrap_or("orchestrator")
                     .to_string(),
-                sender: "cerebellum".to_string(),
+                sender: "orchestrator".to_string(),
                 content: payload
                     .get("content")
                     .and_then(|v| v.as_str())
@@ -380,13 +380,13 @@ impl CerebellumActionHandler {
             },
             _ => SpineEvent::Inbound {
                 id: SpineEvent::new_id(),
-                source: "cerebellum".to_string(),
+                source: "orchestrator".to_string(),
                 chat_id: payload
                     .get("chat_id")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("cerebellum")
+                    .unwrap_or("orchestrator")
                     .to_string(),
-                sender: "cerebellum".to_string(),
+                sender: "orchestrator".to_string(),
                 content: json!({ "type": event_type, "payload": payload }).to_string(),
                 metadata: json!({ "emitted_by": "cerebellum_action_handler" }),
             },
@@ -530,7 +530,7 @@ impl CerebellumActionHandler {
     // constant-`false` placeholder reachable only via the unwired
     // classify.px `classify_message` procedure, which has no production
     // caller. The real topic-shift implementation is
-    // `Cerebellum::detect_topic_shift` in `cerebellum/mod.rs`.
+    // `Orchestrator::detect_topic_shift` in `orchestrator/mod.rs`.
 
     /// Determine model tier based on complexity score.
     fn determine_model_tier(params: &Value) -> Result<Value, ExecutionError> {
@@ -1326,7 +1326,7 @@ mod tests {
                 content,
                 ..
             } => {
-                assert_eq!(source, "cerebellum");
+                assert_eq!(source, "orchestrator");
                 assert_eq!(chat_id, "test-chat");
                 assert_eq!(content, "hello");
             }

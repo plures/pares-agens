@@ -1,10 +1,10 @@
 //! Model selection chain — tries cheap first, escalates on need.
 //!
 //! The [`ModelChain`] holds optional references to three model tiers (BitNet
-//! local, cloud conscious, cloud deep) and selects the best available model
-//! based on the cerebellum's [`MessageClassification`].
+//! local, cloud standard, cloud deep) and selects the best available model
+//! based on the orchestrator's [`MessageClassification`].
 
-use crate::cerebellum::classifier::MessageClassification;
+use crate::orchestrator::classifier::MessageClassification;
 use pares_radix_core::model::ModelClient;
 use std::sync::Arc;
 
@@ -12,8 +12,8 @@ use std::sync::Arc;
 pub struct ModelChain {
     /// Local BitNet (classifier + light generation).
     pub bitnet: Option<Arc<dyn ModelClient>>,
-    /// Cloud conscious model (GPT-4.1, Sonnet).
-    pub conscious: Option<Arc<dyn ModelClient>>,
+    /// Cloud standard model (GPT-4.1, Sonnet).
+    pub standard: Option<Arc<dyn ModelClient>>,
     /// Cloud deep model (GPT-5.2, Opus).
     pub deep: Option<Arc<dyn ModelClient>>,
 }
@@ -22,12 +22,12 @@ impl ModelChain {
     /// Create a new model chain with the given tiers.
     pub fn new(
         bitnet: Option<Arc<dyn ModelClient>>,
-        conscious: Option<Arc<dyn ModelClient>>,
+        standard: Option<Arc<dyn ModelClient>>,
         deep: Option<Arc<dyn ModelClient>>,
     ) -> Self {
         Self {
             bitnet,
-            conscious,
+            standard,
             deep,
         }
     }
@@ -39,12 +39,12 @@ impl ModelChain {
             if let Some(deep) = &self.deep {
                 return ModelSelection::Deep(deep.clone());
             }
-            // Fall through to conscious or bitnet
+            // Fall through to standard or bitnet
         }
 
-        // If cloud conscious available → use it
-        if let Some(conscious) = &self.conscious {
-            return ModelSelection::Conscious(conscious.clone());
+        // If cloud standard available → use it
+        if let Some(standard) = &self.standard {
+            return ModelSelection::Standard(standard.clone());
         }
 
         // If only BitNet available (offline/airgapped) → use it for everything
@@ -57,16 +57,16 @@ impl ModelChain {
 
     /// Is this an airgapped/offline deployment?
     pub fn is_offline(&self) -> bool {
-        self.conscious.is_none() && self.deep.is_none()
+        self.standard.is_none() && self.deep.is_none()
     }
 
     /// What models are available?
     pub fn status(&self) -> ModelChainStatus {
         ModelChainStatus {
             bitnet: self.bitnet.is_some(),
-            conscious: self.conscious.is_some(),
+            standard: self.standard.is_some(),
             deep: self.deep.is_some(),
-            mode: if self.conscious.is_some() {
+            mode: if self.standard.is_some() {
                 "connected".to_string()
             } else if self.bitnet.is_some() {
                 "offline (BitNet)".to_string()
@@ -81,8 +81,8 @@ impl ModelChain {
 pub enum ModelSelection {
     /// Deep reasoning model (GPT-5.2, Opus).
     Deep(Arc<dyn ModelClient>),
-    /// Cloud conscious model (GPT-4.1, Sonnet).
-    Conscious(Arc<dyn ModelClient>),
+    /// Cloud standard model (GPT-4.1, Sonnet).
+    Standard(Arc<dyn ModelClient>),
     /// BitNet handling all roles (offline mode).
     BitNetFull(Arc<dyn ModelClient>),
     /// No models available.
@@ -99,7 +99,7 @@ impl ModelSelection {
     pub fn client(&self) -> Option<&Arc<dyn ModelClient>> {
         match self {
             ModelSelection::Deep(c)
-            | ModelSelection::Conscious(c)
+            | ModelSelection::Standard(c)
             | ModelSelection::BitNetFull(c) => Some(c),
             ModelSelection::None => None,
         }
@@ -109,7 +109,7 @@ impl ModelSelection {
     pub fn tier_label(&self) -> &'static str {
         match self {
             ModelSelection::Deep(_) => "deep",
-            ModelSelection::Conscious(_) => "conscious",
+            ModelSelection::Standard(_) => "standard",
             ModelSelection::BitNetFull(_) => "bitnet",
             ModelSelection::None => "none",
         }
@@ -120,7 +120,7 @@ impl ModelSelection {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ModelChainStatus {
     pub bitnet: bool,
-    pub conscious: bool,
+    pub standard: bool,
     pub deep: bool,
     pub mode: String,
 }
@@ -128,7 +128,7 @@ pub struct ModelChainStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cerebellum::classifier::{MessageClassification, MessageIntent};
+    use crate::orchestrator::classifier::{MessageClassification, MessageIntent};
     use pares_radix_core::model::{ChatMessage, ChatOptions, ModelCompletion, ToolDefinition};
     use async_trait::async_trait;
 
@@ -169,7 +169,7 @@ mod tests {
     fn selects_deep_when_needed_and_available() {
         let chain = ModelChain::new(
             None,
-            Some(Arc::new(MockClient("conscious"))),
+            Some(Arc::new(MockClient("standard"))),
             Some(Arc::new(MockClient("deep"))),
         );
         let sel = chain.select(&classification(true));
@@ -178,20 +178,20 @@ mod tests {
 
     #[test]
     fn falls_through_to_conscious_when_deep_unavailable() {
-        let chain = ModelChain::new(None, Some(Arc::new(MockClient("conscious"))), None);
+        let chain = ModelChain::new(None, Some(Arc::new(MockClient("standard"))), None);
         let sel = chain.select(&classification(true));
-        assert_eq!(sel.tier_label(), "conscious");
+        assert_eq!(sel.tier_label(), "standard");
     }
 
     #[test]
     fn selects_conscious_for_simple_tasks() {
         let chain = ModelChain::new(
             Some(Arc::new(MockClient("bitnet"))),
-            Some(Arc::new(MockClient("conscious"))),
+            Some(Arc::new(MockClient("standard"))),
             None,
         );
         let sel = chain.select(&classification(false));
-        assert_eq!(sel.tier_label(), "conscious");
+        assert_eq!(sel.tier_label(), "standard");
     }
 
     #[test]

@@ -25,7 +25,7 @@
 | Capability | pares-agens | OpenClaw |
 |---|---|---|
 | **Memory** | PluresDB embedded, auto-embed on every write, HNSW vector search, P2P sync | Markdown files + MCP HTTP plugin |
-| **Architecture** | 3-consciousness (conscious/subconscious/cerebellum) with complexity routing | Single-threaded event loop |
+| **Architecture** | 3-consciousness (standard/deep_reasoner/orchestrator) with complexity routing | Single-threaded event loop |
 | **Logic engine** | Praxis native Rust (facts, rules, constraints, decision ledger) | None — prompts only |
 | **Privacy** | crates/privacy (PII filter) + crates/arca (encrypted vault) | Trust-based |
 | **Performance** | 43MB Rust binary, <500ms cold start | 1.3GB Node.js, 3-5s cold start |

@@ -195,7 +195,7 @@ detect or repair a stuck `in_progress` task).
 async fn tick(&self) {
     if !self.config.enabled { return; }
     if self.config.is_quiet_hour() { return; }
-    // ── Cerebellum gate (zero tokens) ──
+    // ── Orchestrator gate (zero tokens) ──
     let mut work_items: Vec<String> = Vec::new();
     ...
 ```

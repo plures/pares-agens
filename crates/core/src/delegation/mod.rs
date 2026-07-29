@@ -1,6 +1,6 @@
 //! Local multi-agent delegation.
 //!
-//! The delegation system lets the cerebellum spawn and coordinate multiple
+//! The delegation system lets the orchestrator spawn and coordinate multiple
 //! specialised sub-agents within a single pares-radix instance.  Each
 //! sub-agent has:
 //!

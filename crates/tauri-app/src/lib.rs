@@ -8,7 +8,7 @@ use tracing::{info, instrument};
 use pares_agens_channels::adapter::ChannelAdapter;
 use pares_agens_channels::tauri_ipc::tauri_ipc_channel;
 use pares_agens_core::agent::{Agent, InMemory};
-use pares_agens_core::cerebellum::{Cerebellum, CerebellumConfig};
+use pares_agens_core::orchestrator::{Orchestrator, CerebellumConfig};
 use pares_agens_core::memory::embed::MockEmbedder;
 use pares_agens_core::memory::store::PluresDbStore;
 use pares_agens_core::memory::store::{InMemoryStore, MemoryStore};
@@ -588,12 +588,12 @@ pub fn run() {
                 telemetry_service: Arc::clone(&telemetry_service),
             });
 
-            // Build the Agent with a Cerebellum wired in so every message
+            // Build the Agent with a Orchestrator wired in so every message
             // flows through autorecall and routing before being handled.
             let agent = Arc::new(
                 Agent::with_cerebellum(
                     Arc::new(InMemory::new()),
-                    Cerebellum::new(CerebellumConfig::default()),
+                    Orchestrator::new(CerebellumConfig::default()),
                     plures_lm,
                 )
                 .with_model(model_client, tool_dispatcher, system_prompt),
@@ -603,7 +603,7 @@ pub fn run() {
             let frontend_handle = app.handle().clone();
             let notification_settings = Arc::clone(&settings);
             tauri::async_runtime::spawn(async move {
-                info!("Tauri IPC adapter starting (cerebellum + model client enabled)");
+                info!("Tauri IPC adapter starting (orchestrator + model client enabled)");
                 adapter
                     .run(move |event: Event| {
                         let agent = Arc::clone(&agent);

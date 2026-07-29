@@ -1546,9 +1546,9 @@ impl ChannelAdapter for TelegramAdapter {
                                     "Tools: unknown".to_string()
                                 };
                                 let cerebellum_line = if std::path::Path::new(&format!("{home}/.pares-radix/models/bitnet")).exists() {
-                                    "Cerebellum: BitNet (local)"
+                                    "Orchestrator: BitNet (local)"
                                 } else {
-                                    "Cerebellum: heuristic"
+                                    "Orchestrator: heuristic"
                                 };
                                 let hostname = std::fs::read_to_string("/etc/hostname")
                                     .unwrap_or_else(|_| "unknown".into())

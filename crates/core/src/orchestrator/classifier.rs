@@ -1,4 +1,4 @@
-//! Message classifier for the cerebellum preprocessing stage.
+//! Message classifier for the orchestrator preprocessing stage.
 //!
 //! Provides both heuristic (zero-cost, no model) and model-backed
 //! classification of inbound messages. The [`ClassifierBackend`] trait

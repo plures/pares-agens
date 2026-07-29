@@ -21,7 +21,7 @@
 This is precisely the failure mode `PLURESDB-SERVICE-BOUNDARIES.md` documents
 from the prior OpenClaw/PluresLM plugin incident: a host process (here,
 `pares-agens core`, potentially spawned per-channel-adapter, per-CLI-invocation,
-or per-cerebellum-runtime) opens the live PluresDB store and holds its native
+or per-orchestrator-runtime) opens the live PluresDB store and holds its native
 exclusive file lock. `ADR-0014` already commits pares-agens to "PluresDB
 embedded, not HTTP sidecar" for performance — that decision is not being
 reversed here. What this ADR adds is the missing middle layer the boundary doc
@@ -39,8 +39,8 @@ motivated the original boundary doc:
 - `crates/mcp-client` + the "PluresLM MCP server" (referenced in `PARES-AGENS.md`
   M4 milestone) is a second, external-facing access path into the same memory
   store — for tools like Docker MCP Toolkit clients.
-- Cerebellum's 3-consciousness routing (`crates/core/src/cerebellum/*`) implies
-  conscious/subconscious paths may run as separate tasks or processes recalling
+- Orchestrator's 3-consciousness routing (`crates/core/src/orchestrator/*`) implies
+  standard/deep_reasoner paths may run as separate tasks or processes recalling
   memory concurrently.
 - `crates/core/src/delegation/*` (agent broker/aggregator) can spawn sub-agents
   that each want `recall`/`capture` — another N clients against one store.
@@ -76,7 +76,7 @@ fails or silently degrades (the exact bug class the boundary doc names:
 Introduce a **PluresLM Memory Service** as the single store-owning process for
 pares-agens, and refactor `core::memory::PluresLm` from "a struct that opens
 the DB" into "a struct that is a thin client of the service." Capability
-registration into the rest of pares-agens (cerebellum recall hook, MCP tool
+registration into the rest of pares-agens (orchestrator recall hook, MCP tool
 surface, delegation broker context assembly) becomes **lazy**: capabilities are
 advertised/registered only once the client has a live, health-checked
 connection to the service — never speculatively bound to a not-yet-verified
@@ -88,7 +88,7 @@ live store handle.
 ┌──────────────────────────────────────────────────────────────┐
 │ Adapters (thin clients — never open the live store)          │
 │  - core::memory::PluresLm         (in-process client facade) │
-│  - cerebellum recall/capture hook (calls PluresLm client)     │
+│  - orchestrator recall/capture hook (calls PluresLm client)     │
 │  - crates/mcp-client / PluresLM MCP server (external clients) │
 │  - crates/tui, crates/cli, crates/tauri-app                   │
 │  - delegation broker/aggregator sub-agent contexts            │
@@ -137,7 +137,7 @@ registration was **eager and unconditional** — the adapter announced
 reach a healthy, lock-holding store. A restricted/embedded runtime then saw a
 registered-but-nonfunctional capability.
 
-**Rule:** No component may register a memory capability (cerebellum recall
+**Rule:** No component may register a memory capability (orchestrator recall
 hook, MCP tool listing, delegation broker's `allowed_tools` inclusion of
 memory-backed tools) until it has:
 
@@ -170,7 +170,7 @@ pub enum CapabilityRegistration {
   a CLI one-shot invocation that never touches memory never pays the
   connection cost).
 - `Pending → Registered`: only after `health()` succeeds. Only in `Registered`
-  state does the capability appear in cerebellum's tool set, the MCP
+  state does the capability appear in orchestrator's tool set, the MCP
   `list_tools()` response, or a delegation sub-agent's `allowed_tools`.
 - `Registered → Degraded`: any service call failure (timeout, IPC broken pipe,
   service-reported lock loss) demotes immediately. A degraded capability is
@@ -188,7 +188,7 @@ tool, unreachable store).
 
 | Scenario | Client-visible behavior | Service-visible behavior |
 |---|---|---|
-| Service not yet started, client requests recall | Capability is `Unregistered`/`Pending`; caller gets an explicit `ServiceUnavailable` error, never an empty-success recall. Cerebellum treats this as "memory unavailable this turn," not "no memories found." | N/A — service process not running |
+| Service not yet started, client requests recall | Capability is `Unregistered`/`Pending`; caller gets an explicit `ServiceUnavailable` error, never an empty-success recall. Orchestrator treats this as "memory unavailable this turn," not "no memories found." | N/A — service process not running |
 | Service holds lock, second process also tries `CrdtStore::open` directly (should be structurally impossible post-refactor, but must fail loud if it happens) | N/A | Second open attempt errors immediately (native lock contention); this is a **regression signal**, not a supported path — CI/lint should catch any new direct `pluresdb::CrdtStore::open` outside the service crate |
 | Service crashes mid-session | All connected clients demote to `Degraded` on next failed call (not proactively — no polling loop, consistent with "don't poll" guidance elsewhere in this workspace) | Service process exits; lock is released cleanly (or, if unclean, PluresDB's own lock-recovery — verified in Verification Gate step 5 below) |
 | Service restarts | Clients in `Degraded` retry with backoff (jittered, capped) and re-register on first successful `health()` | Service reopens store; must detect and clear any stale lock file from an unclean prior exit before accepting connections |
@@ -234,7 +234,7 @@ scoped to this seam:
 1. Start the PluresLM Memory Service against a real (test) PluresDB store.
 2. Run ≥2 independent clients concurrently (e.g., two `core::memory::PluresLm`
    client instances in separate tokio tasks/processes, simulating
-   cerebellum + a CLI invocation) issuing `recall`/`capture` concurrently.
+   orchestrator + a CLI invocation) issuing `recall`/`capture` concurrently.
    Assert both succeed with no lock errors.
 3. Exercise `recall`, `get`, `capture`, `ingest_documents_path`/sync, `status`,
    `health` through the client API only — no Telegram/Tauri/Discord involved.
@@ -260,7 +260,7 @@ scoped to this seam:
   `PLURESDB-SERVICE-BOUNDARIES.md` before pares-agens reaches multi-adapter
   production use (it currently has fewer adapters live than OpenClaw did when
   the bug was found, so this is a preventive fix, not a reactive one).
-- Capability lists (cerebellum tools, MCP `list_tools`, delegation
+- Capability lists (orchestrator tools, MCP `list_tools`, delegation
   `allowed_tools`) become trustworthy — "listed" implies "verified reachable,"
   removing a class of confusing agent-visible failures.
 - Reuses the existing `proc.event:*` observability contract instead of

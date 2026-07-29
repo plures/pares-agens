@@ -453,7 +453,7 @@ impl PluresLm {
 
     /// Return all stored memory entries (unordered).
     ///
-    /// Used by maintenance procedures such as `cerebellum-sweep` that need to
+    /// Used by maintenance procedures such as `orchestrator-sweep` that need to
     /// inspect the full memory store without a specific query.
     ///
     /// # Errors

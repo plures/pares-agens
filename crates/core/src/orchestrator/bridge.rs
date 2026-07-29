@@ -14,13 +14,13 @@
 //!
 //! [`PluresDbBridge`] and [`BridgeError`] are re-exported from
 //! [`pares_radix_core::pluresdb_bridge`] so existing cognition callers continue to use
-//! `crate::cerebellum::bridge::{PluresDbBridge, BridgeError}` unchanged.
+//! `crate::orchestrator::bridge::{PluresDbBridge, BridgeError}` unchanged.
 //!
 //! # Example
 //!
 //! ```rust,no_run
 //! # use std::sync::Arc;
-//! # use pares_agens_core::cerebellum::bridge::{PluresDbBridge, PluresDbBridgeExt, BridgeError};
+//! # use pares_agens_core::orchestrator::bridge::{PluresDbBridge, PluresDbBridgeExt, BridgeError};
 //! # use pares_agens_core::memory::store::InMemoryStore;
 //! # #[tokio::main] async fn main() -> Result<(), BridgeError> {
 //! let store = Arc::new(InMemoryStore::new());
@@ -43,7 +43,7 @@ use pluresdb::CrdtStore;
 use crate::memory::store::MemoryStore;
 
 // Re-export the platform bridge types so existing cognition callers that use
-// `crate::cerebellum::bridge::{PluresDbBridge, BridgeError}` keep working.
+// `crate::orchestrator::bridge::{PluresDbBridge, BridgeError}` keep working.
 pub use pares_radix_core::pluresdb_bridge::{BridgeError, PluresDbBridge};
 
 // ---------------------------------------------------------------------------

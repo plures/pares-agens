@@ -14,7 +14,7 @@
 PluresDB procedures define behavior and PluresLM provides memory. Pares Agens
 already embeds a native `mcp-client` crate (`crates/mcp-client`) capable of
 speaking MCP over stdio or HTTP, and a native `crates/core` with its own
-`auth`, `delegation`, `cerebellum`, and `channel_contract` modules.
+`auth`, `delegation`, `orchestrator`, and `channel_contract` modules.
 
 Separately, `pluresLM-mcp` (Node/TypeScript) is a standalone MCP server that
 exposes `pluresLM_store` / `pluresLM_search` / `pluresLM_forget` /
