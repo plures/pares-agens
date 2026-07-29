@@ -50,6 +50,9 @@ use pares_radix_core::task_manager::TaskManager;
 const PARES_MODULUS_INDEX_URL: &str =
     "https://raw.githubusercontent.com/plures/pares-modulus/main/index.json";
 const DEFAULT_MARKETPLACE_INSTALL_DIR: &str = "/skills";
+/// Version of the bundled pares-radix-core platform layer.
+/// Keep this in sync with the `pares-radix-core` tag in `crates/channels/Cargo.toml`.
+const RADIX_CORE_VERSION: &str = "1.55.45";
 const MAX_INDEX_LISTING_ITEMS: usize = 10;
 const DEFAULT_NIX_FLAKE_DIR: &str = "nixos-config";
 const DEFAULT_NIX_HOST: &str = "praxisbot";
@@ -1519,7 +1522,7 @@ impl ChannelAdapter for TelegramAdapter {
                                     None
                                 };
                                 let version = env!("CARGO_PKG_VERSION");
-                                let radix_version = pares_radix_core::RADIX_CORE_VERSION;
+                                let radix_version = RADIX_CORE_VERSION;
                                 let commit = option_env!("GIT_COMMIT_HASH").unwrap_or("unknown");
                                 let event_spine_status = if event_spine.is_some() { "active" } else { "disabled" };
                                 let uptime = {
@@ -1620,7 +1623,7 @@ impl ChannelAdapter for TelegramAdapter {
                             }
                             "version" => {
                                 let version = env!("CARGO_PKG_VERSION");
-                                let radix_version = pares_radix_core::RADIX_CORE_VERSION;
+                                let radix_version = RADIX_CORE_VERSION;
                                 let commit = option_env!("GIT_COMMIT_HASH").unwrap_or("unknown");
                                 let text = format!("pares-agens v{version} (radix v{radix_version}, {commit})");
                                 Self::send_reply_with_fallback(&bot, &msg, &text, None, event_spine.as_ref()).await;
