@@ -588,7 +588,7 @@ pub fn run() {
                 telemetry_service: Arc::clone(&telemetry_service),
             });
 
-            // Build the Agent with a Orchestrator wired in so every message
+            // Build the Agent with an Orchestrator wired in so every message
             // flows through autorecall and routing before being handled.
             let agent = Arc::new(
                 Agent::with_cerebellum(
