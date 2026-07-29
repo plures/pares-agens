@@ -46,6 +46,13 @@ chrono.workspace = true
 hostname = "0.4"
 thiserror.workspace = true
 reqwest.workspace = true
+# Force `openssl-sys` (pulled transitively via fastembed -> hf-hub -> native-tls
+# on the `embeddings` feature path) to vendor/compile OpenSSL from source
+# instead of linking a system libssl. Cargo's resolver="2" feature unification
+# means adding this direct dependency with the `vendored` feature enables it
+# for every instance of openssl-sys in the workspace build, so CI runners
+# (self-hosted or GitHub-hosted) don't need libssl-dev/pkg-config installed.
+openssl-sys = { version = "0.9", features = ["vendored"] }
 semver = "1"
 toml = "1.1"
 base64 = "0.23"
