@@ -29,11 +29,21 @@ jobs:
       # this self-hosted runner; they are still compiled separately via
       # `cargo check` in the Tauri/Desktop steps below. Excluding them keeps the
       # link-collision guard for every real bin without failing on missing GTK.
+      #
+      # `openssl-sys` (pulled transitively via fastembed -> hf-hub -> native-tls
+      # on the `embeddings` feature path) needs a system OpenSSL + pkg-config +
+      # perl to build (either linked or vendored-from-source). None of those are
+      # guaranteed present on the bare self-hosted runner shell, but the repo's
+      # `nix develop` shell already provisions `openssl`/`pkg-config` (see
+      # flake.nix devShells.default) for exactly this reason (the Tauri check
+      # below already relies on it for GTK/WebKit). Run the build inside
+      # `nix develop` so openssl-sys can link the system OpenSSL instead of
+      # requiring libssl-dev/perl on the bare runner.
       - name: Build workspace (ADR-0015 collision guard)
-        run: cargo build --workspace --exclude pares-agens-tauri --exclude pares-agens-desktop
+        run: nix develop --command bash -c 'cargo build --workspace --exclude pares-agens-tauri --exclude pares-agens-desktop'
 
       - name: Build CLI (release)
-        run: cargo build --release -p pares-agens-cli
+        run: nix develop --command bash -c 'cargo build --release -p pares-agens-cli'
 
       - name: Install and restart
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -43,7 +53,7 @@ jobs:
           sudo systemctl restart pares-agens || echo 'Service restart failed (may not be configured)'
 
       - name: Check TUI
-        run: cargo check -p pares-agens-tui
+        run: nix develop --command bash -c 'cargo check -p pares-agens-tui'
 
       - name: Check Tauri app
         run: cargo check -p pares-agens-tauri || echo 'Tauri check skipped (missing GTK/Webkit deps on self-hosted)'
@@ -56,7 +66,7 @@ jobs:
       - name: Run tests
         run: |
           # Exclude tauri (needs GTK/Webkit which isn't available on this runner)
-          cargo test \
+          nix develop --command bash -c 'cargo test \
             -p pares-agens-core \
             -p pares-agens-channels \
             -p pares-agens-models \
@@ -68,6 +78,6 @@ jobs:
             -p pares-agens-sync \
             -p pares-agens-audit \
             -p pares-agens-tui \
-            -- --skip network
+            -- --skip network'
         env:
           RUST_LOG: info

@@ -20,6 +20,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+      # openssl-sys (pulled transitively via fastembed -> hf-hub -> native-tls
+      # on pares-agens-core's `embeddings` feature) needs a system OpenSSL +
+      # pkg-config to build on this bare ubuntu-latest runner (no Nix here).
+      - name: Install OpenSSL dev headers
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
       - name: Check
         run: cargo check --workspace --exclude pares-agens-tauri --exclude pares-agens-desktop 2>&1
         continue-on-error: true
