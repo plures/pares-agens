@@ -304,8 +304,12 @@ procedure create_session(thread_key: string, embedding: list) -> new_session:
 # utility: called by route_request_to_session (fallback classifier for the ambiguous zone only)
 procedure classify_session_with_llm(message: string, candidates: list) -> llm_decision:
   given: "Use the model to decide continuation-vs-new when vector similarity is ambiguous"
+  format_string {
+    template: "Message:\n{message}\n\nCandidates:\n{candidates}",
+    vars: {message: $message, candidates: $candidates}
+  } -> $prompt
   model_complete {
-    messages: [{role: "user", content: $message}],
+    messages: [{role: "user", content: $prompt}],
     system_prompt: "Given this message and a list of candidate prior sessions with summaries, decide whether this message continues one of them or starts a new one.",
     tier: "fast"
   } -> $result
