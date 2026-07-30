@@ -48,6 +48,11 @@ jobs:
   ci:
     uses: plures/.github/.github/workflows/ci-reusable.yml@main
     with:
+      # `ci / rust` runs clippy/test in the reusable workflow's bare runner
+      # environment (outside `nix develop`). Install OpenSSL + pkg-config there
+      # so `openssl-sys` (via fastembed -> hf-hub native-tls path) can resolve
+      # `openssl.pc` and compile successfully.
+      extra_apt_packages: "libssl-dev pkg-config perl"
       # ADR-0015: the GUI crates (tauri/desktop) pull gdk-sys, which needs GTK
       # system libs (gdk-3.0 -> zlib) that require the Nix devShell. The reusable
       # clippy/check steps run in the bare runner env, so exclude the GUI crates
