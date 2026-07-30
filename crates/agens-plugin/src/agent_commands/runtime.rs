@@ -1281,6 +1281,20 @@ struct CronToggleProcedure {
     scheduler: Arc<pares_agens_agenda::scheduler::Scheduler>,
 }
 
+/// Exposes the status of loaded umbra-evolved shadow candidates via the
+/// procedure registry (`shadow_status` tool). This replaces the former inert
+/// load-and-discard pattern, retaining the loaded `ShadowProcedures` in shared
+/// state so that operators can inspect loaded candidates and their readiness
+/// for eventual arena evaluation.
+///
+/// Phase A of the pares-umbra integration (issue #677): the shadow holder is
+/// now retained and queryable. Full arena wiring (fitness scoring, promotion)
+/// requires adding the `umbra-shadow` crate as a dependency once license
+/// compatibility is confirmed.
+struct ShadowStatusProcedure {
+    shadow: Arc<pares_radix_core::spine::shadow::ShadowProcedures>,
+}
+
 struct ParesManusToolProcedure {
     tool_name: &'static str,
     manus_ws_url: Arc<String>,
@@ -2211,6 +2225,61 @@ impl Procedure for CronToggleProcedure {
                     tool_name: "cron_toggle".into(),
                     content: result.clone().unwrap_or_else(|e| e),
                     is_error: result.is_err(),
+                }]
+            }
+            _ => vec![],
+        }
+    }
+}
+
+#[async_trait]
+impl Procedure for ShadowStatusProcedure {
+    fn name(&self) -> &str {
+        "shadow_status"
+    }
+
+    fn handles(&self) -> &str {
+        "shadow_status"
+    }
+
+    async fn execute(&self, event: &Event) -> Vec<Event> {
+        match event {
+            Event::Message { id, .. } => {
+                let candidates = self.shadow.candidates();
+                let output = if candidates.is_empty() {
+                    serde_json::json!({
+                        "status": "no_candidates",
+                        "message": "No umbra-evolved shadow candidates loaded. Place .px files with `trigger: manual` in praxis/shadow/ to enroll candidates for evaluation.",
+                        "candidates": [],
+                        "arena_active": false,
+                    })
+                } else {
+                    let items: Vec<serde_json::Value> = candidates
+                        .iter()
+                        .map(|c| {
+                            serde_json::json!({
+                                "name": c.name,
+                                "trigger_kind": c.trigger_kind,
+                                "arena_status": "pending_arena_wiring",
+                            })
+                        })
+                        .collect();
+                    serde_json::json!({
+                        "status": "candidates_loaded",
+                        "message": format!(
+                            "{} shadow candidate(s) loaded. Arena evaluation pending umbra-shadow integration (Phase A, issue #677).",
+                            candidates.len()
+                        ),
+                        "candidates": items,
+                        "arena_active": false,
+                    })
+                };
+                vec![Event::ToolResult {
+                    tool_call_id: id.clone(),
+                    tool_name: "shadow_status".into(),
+                    content: serde_json::to_string_pretty(&output)
+                        .unwrap_or_else(|_| "{}".into()),
+                    is_error: false,
                 }]
             }
             _ => vec![],
@@ -4420,13 +4489,19 @@ pub(crate) async fn run_serve(
             }
 
             // Load umbra-evolved SHADOW candidates from praxis/shadow/ into the
-            // inert shadow holder. CWD is the daemon WorkingDirectory (/home/kbristol
+            // shadow holder. CWD is the daemon WorkingDirectory (/home/kbristol
             // on praxisbot), so this resolves to ~/praxis/shadow — the same tree the
             // nixos service syncs from the package. These declare `trigger: manual`
             // and are loaded OUT-OF-BAND (never into procedure_registry above), so they
             // ship to praxisbot and accumulate fitness for promotion, but never serve
             // live output. See crates/core/src/spine/shadow.rs + praxis/shadow/README.md.
-            let _shadow_procedures = {
+            //
+            // Phase A (issue #677): the shadow holder is now RETAINED in shared state
+            // (Arc) and exposed via the `shadow_status` procedure, replacing the former
+            // load-and-discard dead-end. Full arena wiring (fitness scoring via
+            // `umbra_shadow::ShadowArena`, promotion protocol) will land once the
+            // `umbra-shadow` dependency's license compatibility is confirmed.
+            let shadow_procedures = {
                 use pares_radix_core::spine::shadow::ShadowProcedures;
                 let shadow_dir = std::path::Path::new("praxis/shadow");
                 let mut shadow = ShadowProcedures::new();
@@ -4438,10 +4513,10 @@ pub(crate) async fn run_serve(
                 if loaded > 0 {
                     tracing::info!(
                         shadow_candidates = loaded,
-                        "loaded umbra-evolved shadow candidates from praxis/shadow/ (inert; not live)"
+                        "loaded umbra-evolved shadow candidates from praxis/shadow/ (retained for arena evaluation)"
                     );
                 }
-                shadow
+                Arc::new(shadow)
             };
 
             // Create scheduler (shared via Arc for cron tools)
@@ -4483,6 +4558,11 @@ pub(crate) async fn run_serve(
             }));
             procedure_registry.register(Box::new(CronToggleProcedure {
                 scheduler: Arc::clone(&scheduler),
+            }));
+
+            // Register shadow-status tool (Phase A, issue #677)
+            procedure_registry.register(Box::new(ShadowStatusProcedure {
+                shadow: Arc::clone(&shadow_procedures),
             }));
 
             let procedure_registry = Arc::new(procedure_registry);
