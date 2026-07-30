@@ -1,3 +1,7 @@
+## [1.65.0] — 2026-07-30
+
+- feat(orchestrator): pause live context during Chronos debug (#686) (401ebc6)
+
 ## [1.64.2] — 2026-07-29
 
 - design(session-graph-routing): session-history-as-graph schema + DelegationBroker recommendation (#685) (ed62a5a)
