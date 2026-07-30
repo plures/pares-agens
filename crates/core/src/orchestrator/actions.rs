@@ -219,7 +219,7 @@ impl CerebellumActionHandler {
     fn live_context_session_id(params: &Value) -> Result<String, ExecutionError> {
         params.get("session_id").and_then(Value::as_str).filter(|id| !id.is_empty())
             .map(str::to_owned).ok_or_else(|| ExecutionError::ActionFailed {
-                action: "live_context_subscription".to_string(),
+                action: "live_context_session_id".to_string(),
                 message: "missing required param: session_id".to_string(),
             })
     }
