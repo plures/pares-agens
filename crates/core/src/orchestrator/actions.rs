@@ -191,6 +191,23 @@ impl CerebellumActionHandler {
         self.live_context_tx.subscribe()
     }
 
+    /// Publish an observed agent lifecycle event to attached Chronos viewers.
+    /// The caller supplies facts only; viewer policy remains in `.px`.
+    pub async fn publish_live_context(&self, session_id: &str, event: Value) -> Result<Value, ExecutionError> {
+        self.publish_live_context_event(&json!({"session_id": session_id, "event": event})).await
+    }
+
+    /// Pause live context for an active debug session. The `.px` procedure owns
+    /// authorization; this is the IO boundary used by the desktop command.
+    pub async fn pause_live_context(&self, session_id: &str) -> Result<Value, ExecutionError> {
+        self.pause_live_context_subscription(&json!({"session_id": session_id})).await
+    }
+
+    /// Resume live context for a debug session.
+    pub async fn resume_live_context(&self, session_id: &str) -> Result<Value, ExecutionError> {
+        self.resume_live_context_subscription(&json!({"session_id": session_id})).await
+    }
+
     async fn pause_live_context_subscription(&self, params: &Value) -> Result<Value, ExecutionError> {
         let session_id = Self::live_context_session_id(params)?;
         let changed = self.paused_live_context_sessions.write().await.insert(session_id);

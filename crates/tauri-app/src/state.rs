@@ -7,6 +7,7 @@ use tokio::sync::{Mutex, RwLock};
 use pares_agens_channels::tauri_ipc::TauriIpcHandle;
 use pares_radix_core::license::License;
 use pares_agens_core::memory::store::MemoryStore;
+use pares_agens_core::orchestrator::actions::CerebellumActionHandler;
 use pares_radix_core::optimization::OptimizationSafetyGate;
 use pares_radix_core::praxis::GuidanceService;
 use pares_radix_core::secrets::{provider_api_key, SecretStore};
@@ -317,6 +318,8 @@ pub struct TelemetrySettings {
 pub struct AppState {
     /// Handle to send user messages to the agent's IPC adapter.
     pub ipc_handle: TauriIpcHandle,
+    /// IO boundary shared by the agent's .px bridge and the Chronos debug viewer.
+    pub live_context_handler: Arc<CerebellumActionHandler>,
     /// In-process memory store — populated by the agent run-loop procedures.
     ///
     /// Shared with the [`pares_agens_core::memory::PluresLm`] instance inside
@@ -582,6 +585,7 @@ mod tests {
 
         let state = AppState {
             ipc_handle: test_ipc_handle(),
+            live_context_handler: Arc::new(CerebellumActionHandler::new_minimal()),
             memory_store: Arc::new(pares_agens_core::memory::store::InMemoryStore::new()),
             secret_store: secret_store as Arc<dyn SecretStore>,
             settings: Arc::new(Mutex::new(settings)),
