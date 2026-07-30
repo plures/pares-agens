@@ -20,8 +20,11 @@ vault = ["dep:vault-core"]
 
 ## Enable native fastembed embeddings via PluresDB.
 ## When active, `PluresDbStore::open_with_embeddings()` is available.
-## Requires the `embeddings` feature on the `pluresdb` dependency.
-embeddings = []
+## Activates the `embeddings` feature on the `pluresdb` dependency, which
+## transitively pulls in `fastembed` → `hf-hub` → `native-tls` → `openssl-sys`.
+## Crates that do not need embeddings must NOT request this feature so that
+## bare `cargo check/clippy` can run without a system OpenSSL installation.
+embeddings = ["pluresdb/embeddings"]
 
 ## Enable OpenTelemetry OTLP trace export.
 ## Adds gRPC span exporter that integrates with the tracing subscriber.
@@ -65,7 +68,7 @@ pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", tag = 
 # Privacy and audit are local crates in this (pares-agens) workspace.
 pares-agens-privacy = { path = "../privacy" }
 pares-agens-audit = { path = "../audit" }
-pluresdb = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1", features = ["embeddings"] }
+pluresdb = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1" }
 pluresdb-procedures = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1" }
 pluresdb-sync = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1" }
 pluresdb-sea = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1" }
