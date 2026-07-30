@@ -1359,7 +1359,7 @@ mod tests {
 
         assert_eq!(handler.call("pause_live_context_subscription", &json!({"session_id": session_id})).await.unwrap()["paused"], true);
         assert_eq!(handler.call("publish_live_context_event", &json!({"session_id": session_id, "event": {"sequence": 2}})).await.unwrap()["delivered"], false);
-        assert!(tokio::time::timeout(Duration::from_millis(25), subscriber.recv()).await.is_err());
+        assert!(tokio::time::timeout(Duration::from_millis(200), subscriber.recv()).await.is_err());
 
         assert_eq!(handler.call("resume_live_context_subscription", &json!({"session_id": session_id})).await.unwrap()["paused"], false);
         assert_eq!(handler.call("publish_live_context_event", &json!({"session_id": session_id, "event": {"sequence": 3}})).await.unwrap()["delivered"], true);
