@@ -186,7 +186,7 @@ impl CerebellumActionHandler {
     }
 
 
-    /// Subscribe to session-scoped live context delivered to a Chronos viewer.
+    /// Subscribe to live context events (payload includes `session_id` for client-side filtering).
     pub fn subscribe_live_context(&self) -> broadcast::Receiver<Value> {
         self.live_context_tx.subscribe()
     }
