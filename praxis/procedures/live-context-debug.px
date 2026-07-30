@@ -1,0 +1,17 @@
+# Chronos debug-viewer live-context control.
+# Decision logic lives here; Rust action handlers are subscription IO only.
+
+procedure control_live_context_subscription(command: string, debug_session_active: bool, session_id: string) -> subscription_state:
+  given: "Only an active Chronos debug session may pause its own live-context subscription"
+  when command == "pause":
+    when debug_session_active:
+      pause_live_context_subscription {session_id: $session_id} -> $state
+      return $state
+    end
+    return {paused: false, changed: false, reason: "no_active_debug_session"}
+  end
+  when command == "resume":
+    resume_live_context_subscription {session_id: $session_id} -> $state
+    return $state
+  end
+  return {paused: false, changed: false, reason: "unsupported_command"}

@@ -21,7 +21,7 @@
 //! This is the ONLY Rust code the orchestrator needs for IO — everything else
 //! (classification rules, routing decisions, complexity scoring) lives in `.px`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -71,6 +71,10 @@ pub struct CerebellumActionHandler {
     /// Channel handlers subscribe BEFORE triggering the dataflow pipeline.
     /// The model_complete action sends StreamDelta tokens here as they arrive.
     stream_tx: broadcast::Sender<StreamDelta>,
+    /// Live-context feed for Chronos debug viewers.
+    live_context_tx: broadcast::Sender<Value>,
+    /// Session ids whose live feed is suspended while Chronos is inspected.
+    paused_live_context_sessions: Arc<RwLock<HashSet<String>>>,
 }
 
 impl CerebellumActionHandler {
@@ -80,6 +84,7 @@ impl CerebellumActionHandler {
         event_tx: Option<mpsc::Sender<SpineEvent>>,
     ) -> Self {
         let (stream_tx, _) = broadcast::channel(256);
+        let (live_context_tx, _) = broadcast::channel(256);
         Self {
             embedder,
             state: Arc::new(RwLock::new(HashMap::new())),
@@ -88,6 +93,8 @@ impl CerebellumActionHandler {
             tool_dispatcher: Arc::new(StdRwLock::new(None)),
             memory_entries: Arc::new(RwLock::new(Vec::new())),
             stream_tx,
+            live_context_tx,
+            paused_live_context_sessions: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 
@@ -95,6 +102,7 @@ impl CerebellumActionHandler {
     #[cfg(test)]
     pub fn for_testing() -> Self {
         let (stream_tx, _) = broadcast::channel(256);
+        let (live_context_tx, _) = broadcast::channel(256);
         Self {
             embedder: None,
             state: Arc::new(RwLock::new(HashMap::new())),
@@ -103,12 +111,15 @@ impl CerebellumActionHandler {
             tool_dispatcher: Arc::new(StdRwLock::new(None)),
             memory_entries: Arc::new(RwLock::new(Vec::new())),
             stream_tx,
+            live_context_tx,
+            paused_live_context_sessions: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 
     /// Create a minimal handler with no embedder or event channel.
     pub fn new_minimal() -> Self {
         let (stream_tx, _) = broadcast::channel(256);
+        let (live_context_tx, _) = broadcast::channel(256);
         Self {
             embedder: None,
             state: Arc::new(RwLock::new(HashMap::new())),
@@ -117,6 +128,8 @@ impl CerebellumActionHandler {
             tool_dispatcher: Arc::new(StdRwLock::new(None)),
             memory_entries: Arc::new(RwLock::new(Vec::new())),
             stream_tx,
+            live_context_tx,
+            paused_live_context_sessions: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 
@@ -158,6 +171,7 @@ impl CerebellumActionHandler {
     #[cfg(test)]
     pub fn with_state(state: HashMap<String, Value>) -> Self {
         let (stream_tx, _) = broadcast::channel(256);
+        let (live_context_tx, _) = broadcast::channel(256);
         Self {
             embedder: None,
             state: Arc::new(RwLock::new(state)),
@@ -166,7 +180,48 @@ impl CerebellumActionHandler {
             tool_dispatcher: Arc::new(StdRwLock::new(None)),
             memory_entries: Arc::new(RwLock::new(Vec::new())),
             stream_tx,
+            live_context_tx,
+            paused_live_context_sessions: Arc::new(RwLock::new(HashSet::new())),
         }
+    }
+
+
+    /// Subscribe to session-scoped live context delivered to a Chronos viewer.
+    pub fn subscribe_live_context(&self) -> broadcast::Receiver<Value> {
+        self.live_context_tx.subscribe()
+    }
+
+    async fn pause_live_context_subscription(&self, params: &Value) -> Result<Value, ExecutionError> {
+        let session_id = Self::live_context_session_id(params)?;
+        let changed = self.paused_live_context_sessions.write().await.insert(session_id);
+        Ok(json!({"paused": true, "changed": changed}))
+    }
+
+    async fn resume_live_context_subscription(&self, params: &Value) -> Result<Value, ExecutionError> {
+        let session_id = Self::live_context_session_id(params)?;
+        let changed = self.paused_live_context_sessions.write().await.remove(&session_id);
+        Ok(json!({"paused": false, "changed": changed}))
+    }
+
+    async fn publish_live_context_event(&self, params: &Value) -> Result<Value, ExecutionError> {
+        let session_id = Self::live_context_session_id(params)?;
+        let event = params.get("event").cloned().ok_or_else(|| ExecutionError::ActionFailed {
+            action: "publish_live_context_event".to_string(),
+            message: "missing required param: event".to_string(),
+        })?;
+        if self.paused_live_context_sessions.read().await.contains(&session_id) {
+            return Ok(json!({"delivered": false, "paused": true}));
+        }
+        let _ = self.live_context_tx.send(json!({"session_id": session_id, "event": event}));
+        Ok(json!({"delivered": true, "paused": false}))
+    }
+
+    fn live_context_session_id(params: &Value) -> Result<String, ExecutionError> {
+        params.get("session_id").and_then(Value::as_str).filter(|id| !id.is_empty())
+            .map(str::to_owned).ok_or_else(|| ExecutionError::ActionFailed {
+                action: "live_context_subscription".to_string(),
+                message: "missing required param: session_id".to_string(),
+            })
     }
 
     /// Subscribe to model streaming deltas.
@@ -992,6 +1047,9 @@ impl AsyncActionHandler for CerebellumActionHandler {
             "write_state" => self.write_state(params).await,
             "get_current_time" => Self::get_current_time(),
             "emit_event" => self.emit_event(params).await,
+            "pause_live_context_subscription" => self.pause_live_context_subscription(params).await,
+            "resume_live_context_subscription" => self.resume_live_context_subscription(params).await,
+            "publish_live_context_event" => self.publish_live_context_event(params).await,
             // Dataflow classification actions
             "normalize_text" => Self::normalize_text(params),
             "detect_intent" => Self::detect_intent(params),
@@ -1285,6 +1343,27 @@ mod tests {
             ts < 1_893_456_000_000,
             "timestamp should not be in the far future, got {ts}"
         );
+    }
+
+
+    #[tokio::test]
+    async fn live_context_pause_suppresses_events_and_resume_reenables_them() {
+        use std::time::Duration;
+
+        let handler = CerebellumActionHandler::for_testing();
+        let mut subscriber = handler.subscribe_live_context();
+        let session_id = "chronos-debug-session";
+
+        assert_eq!(handler.call("publish_live_context_event", &json!({"session_id": session_id, "event": {"sequence": 1}})).await.unwrap()["delivered"], true);
+        assert_eq!(subscriber.recv().await.unwrap()["event"]["sequence"], 1);
+
+        assert_eq!(handler.call("pause_live_context_subscription", &json!({"session_id": session_id})).await.unwrap()["paused"], true);
+        assert_eq!(handler.call("publish_live_context_event", &json!({"session_id": session_id, "event": {"sequence": 2}})).await.unwrap()["delivered"], false);
+        assert!(tokio::time::timeout(Duration::from_millis(25), subscriber.recv()).await.is_err());
+
+        assert_eq!(handler.call("resume_live_context_subscription", &json!({"session_id": session_id})).await.unwrap()["paused"], false);
+        assert_eq!(handler.call("publish_live_context_event", &json!({"session_id": session_id, "event": {"sequence": 3}})).await.unwrap()["delivered"], true);
+        assert_eq!(subscriber.recv().await.unwrap()["event"]["sequence"], 3);
     }
 
     #[tokio::test]
