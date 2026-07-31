@@ -1,3 +1,7 @@
+## [1.66.0] — 2026-07-31
+
+- feat(tauri): debug-mode live-context window wiring (design-dojo 0.19.0) (#688) (4dbbff5)
+
 ## [1.65.0] — 2026-07-30
 
 - feat(orchestrator): pause live context during Chronos debug (#686) (401ebc6)
