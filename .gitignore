@@ -10,7 +10,6 @@ dist/
 .env
 coverage/
 target/
-target-nix-extra/
 
 # fastembed model cache (downloaded at runtime by the embeddings feature)
 .fastembed_cache/

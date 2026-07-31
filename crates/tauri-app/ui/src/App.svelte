@@ -4,6 +4,7 @@
   import Settings from './lib/Settings.svelte';
   import Procedures from './lib/Procedures.svelte';
   import Wizard from './lib/Wizard.svelte';
+  import LiveContextDebug from './lib/LiveContextDebug.svelte';
 
   const tauriCore = typeof window !== 'undefined' ? window.__TAURI__?.core : undefined;
   const tauriEvent = typeof window !== 'undefined' ? window.__TAURI__?.event : undefined;
@@ -87,3 +88,4 @@
 <Chat bind:settingsOpen bind:proceduresOpen {agentName} />
 <Settings bind:open={settingsOpen} />
 <Procedures bind:open={proceduresOpen} />
+<LiveContextDebug />

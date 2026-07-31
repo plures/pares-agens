@@ -32,6 +32,7 @@ use crate::state::{
 use crate::telemetry::TelemetryService;
 
 mod commands;
+mod debug;
 mod mcp;
 mod migration;
 mod notifications;
@@ -77,6 +78,15 @@ fn emit_with_warn<T: Serialize>(app_handle: &tauri::AppHandle, event: &str, payl
     if let Err(err) = app_handle.emit(event, payload) {
         tracing::warn!(event, error = %err, "failed to emit tauri event");
     }
+}
+
+fn now_timestamp_millis() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or_default()
 }
 
 #[cfg(desktop)]
@@ -576,32 +586,59 @@ pub fn run() {
                 128_000,
             ));
 
-            let model_client = Arc::new(AppModelClient {
+            let model_client: Arc<dyn ModelClient> = Arc::new(AppModelClient {
                 router: Arc::clone(&model_router),
                 settings: Arc::clone(&settings),
                 telemetry_service: Arc::clone(&telemetry_service),
             });
-            let tool_dispatcher = Arc::new(McpToolDispatcher {
+            let tool_dispatcher: Arc<dyn ToolDispatcher> = Arc::new(McpToolDispatcher {
                 mcp_tools: Arc::clone(&mcp_tools),
                 mcp_clients: Arc::clone(&mcp_clients),
                 settings: Arc::clone(&settings),
                 telemetry_service: Arc::clone(&telemetry_service),
             });
 
+            // Share the action handler between the .px bridge and the desktop
+            // debug surface so the viewer receives the same live context that
+            // the agent produces, rather than a second synthetic stream.
+            let live_context_handler = Arc::new(
+                pares_agens_core::orchestrator::actions::CerebellumActionHandler::new_minimal(),
+            );
+            live_context_handler.set_model_client(Arc::clone(&model_client));
+            live_context_handler.set_tool_dispatcher(Arc::clone(&tool_dispatcher));
+            let action_handler: Arc<dyn pares_radix_core::px_adapter::AsyncActionHandler> =
+                live_context_handler.clone();
+            let px_bridge = Arc::new(
+                pares_agens_core::orchestrator::px_bridge::PxBridge::new(action_handler),
+            );
+
             // Build the Agent with an Orchestrator wired in so every message
             // flows through autorecall and routing before being handled.
             let agent = Arc::new(
                 Agent::with_cerebellum(
                     Arc::new(InMemory::new()),
-                    Orchestrator::new(CerebellumConfig::default()),
+                    Orchestrator::new(CerebellumConfig::default()).with_px_bridge(px_bridge),
                     plures_lm,
                 )
                 .with_model(model_client, tool_dispatcher, system_prompt),
             );
 
+            let mut live_context_rx = live_context_handler.subscribe_live_context();
+            let live_context_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    match live_context_rx.recv().await {
+                        Ok(payload) => emit_with_warn(&live_context_app, "chronos-live-context", &payload),
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            });
+
             // Spawn the adapter run-loop, routing all events through the agent
             let frontend_handle = app.handle().clone();
             let notification_settings = Arc::clone(&settings);
+            let live_context_for_events = Arc::clone(&live_context_handler);
             tauri::async_runtime::spawn(async move {
                 info!("Tauri IPC adapter starting (orchestrator + model client enabled)");
                 adapter
@@ -609,11 +646,26 @@ pub fn run() {
                         let agent = Arc::clone(&agent);
                         let app_handle = frontend_handle.clone();
                         let notification_settings = Arc::clone(&notification_settings);
+                        let live_context_handler = Arc::clone(&live_context_for_events);
                         Box::pin(async move {
                             let request_id = match &event {
                                 Event::Message { id, .. } => Some(id.clone()),
                                 _ => None,
                             };
+
+                            // Record the real adapter boundary before handling the event. These
+                            // facts feed the Chronos viewer; no debug data is fabricated.
+                            if let Some(ref req_id) = request_id {
+                                let _ = live_context_handler.publish_live_context(req_id, serde_json::json!({
+                                    "id": format!("{req_id}:received"),
+                                    "timestamp": now_timestamp_millis(),
+                                    "path": "agent/request",
+                                    "cause": "tauri-ipc",
+                                    "summary": "Message received by the agent adapter",
+                                    "after": { "event_kind": event.kind() },
+                                    "operations": [{ "id": "dispatch", "label": "Dispatch message", "status": "running" }]
+                                })).await;
+                            }
 
                             // Use streaming path for messages (real-time token emission).
                             let response = if let Some(ref req_id) = request_id {
@@ -650,6 +702,18 @@ pub fn run() {
                             } else {
                                 agent.handle_event(event).await
                             };
+
+                            if let Some(ref req_id) = request_id {
+                                let _ = live_context_handler.publish_live_context(req_id, serde_json::json!({
+                                    "id": format!("{req_id}:completed"),
+                                    "timestamp": now_timestamp_millis(),
+                                    "path": "agent/response",
+                                    "cause": "agent",
+                                    "summary": "Agent response completed",
+                                    "after": { "event_kind": response.as_ref().map(Event::kind) },
+                                    "operations": [{ "id": "dispatch", "label": "Dispatch message", "status": "completed" }]
+                                })).await;
+                            }
 
                             if let Some(content) =
                                 response.as_ref().and_then(notifications::response_content)
@@ -770,6 +834,7 @@ pub fn run() {
             let plugin_runtime = Arc::new(PluginRuntime::new());
             app.manage(AppState {
                 ipc_handle: handle,
+                live_context_handler,
                 memory_store,
                 secret_store,
                 settings,
@@ -806,6 +871,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::send_message,
+            debug::set_live_context_paused,
             commands::get_memories,
             commands::get_settings,
             commands::set_settings,
