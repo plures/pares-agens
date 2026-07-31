@@ -48,16 +48,13 @@ jobs:
   ci:
     uses: plures/.github/.github/workflows/ci-reusable.yml@main
     with:
-      # `ci / rust` runs clippy/test in the reusable workflow's bare runner
-      # environment (outside `nix develop`). Install OpenSSL + pkg-config there
-      # so `openssl-sys` (via fastembed -> hf-hub native-tls path) can resolve
-      # `openssl.pc` and compile successfully.
-      extra_apt_packages: "libssl-dev pkg-config perl"
-      # ADR-0015: the GUI crates (tauri/desktop) pull gdk-sys, which needs GTK
-      # system libs (gdk-3.0 -> zlib) that require the Nix devShell. The reusable
-      # clippy/check steps run in the bare runner env, so exclude the GUI crates
-      # here and lint/check them separately under `nix develop` (cargo_extra_check).
-      cargo_clippy_flags: "--workspace --all-targets --exclude pares-agens-tauri -- -D warnings"
-      cargo_check_flags: "--workspace --exclude pares-agens-tauri"
+      # praxisbot's job shell is Nix-based and deliberately has no host apt
+      # database. The reusable workflow's bare cargo steps therefore cannot
+      # discover OpenSSL/pkg-config (or GTK for Tauri). Run the full Rust gates
+      # inside this repo's flake devShell, which declares those dependencies.
+      # These are equivalent required clippy and test gates, not skipped checks.
+      skip_lint: true
+      skip_test: true
       cargo_extra_check: |-
-        nix develop --command bash -c 'cargo check --manifest-path crates/tauri-app/Cargo.toml' || nix develop --command bash -c 'unset RUSTC_WRAPPER && cargo check --manifest-path crates/tauri-app/Cargo.toml'
+        nix develop --command bash -c 'unset RUSTC_WRAPPER SCCACHE_GHA_ENABLED; cargo clippy --workspace --all-targets -- -D warnings'
+        nix develop --command bash -c 'unset RUSTC_WRAPPER SCCACHE_GHA_ENABLED; cargo test --workspace'
