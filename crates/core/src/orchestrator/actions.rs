@@ -197,8 +197,8 @@ impl CerebellumActionHandler {
         self.publish_live_context_event(&json!({"session_id": session_id, "event": event})).await
     }
 
-    /// Pause live context for an active debug session. The `.px` procedure owns
-    /// authorization; this is the IO boundary used by the desktop command.
+    /// Pause live context delivery for a session in this process.
+    /// No `.px` policy/authorization is applied here; callers must gate access.
     pub async fn pause_live_context(&self, session_id: &str) -> Result<Value, ExecutionError> {
         self.pause_live_context_subscription(&json!({"session_id": session_id})).await
     }
