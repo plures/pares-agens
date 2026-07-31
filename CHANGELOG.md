@@ -1,3 +1,7 @@
+## [1.67.0] — 2026-07-31
+
+- feat: retain shadow candidates and expose shadow_status procedure (#687) (8d0c867)
+
 ## [1.66.0] — 2026-07-31
 
 - feat(tauri): debug-mode live-context window wiring (design-dojo 0.19.0) (#688) (4dbbff5)
