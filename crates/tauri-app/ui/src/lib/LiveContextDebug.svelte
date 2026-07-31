@@ -8,6 +8,7 @@
   let nodes = $state([]);
   let pausedSessions = $state(new Set());
   let selected = $state(null);
+  let nextLocalId = 0;
 
   function selectedSessionId() {
     if (!selected?.context) return null;
@@ -23,7 +24,7 @@
     const event = payload?.event;
     if (!payload?.session_id || !event) return;
 
-    const id = event.id ?? `${payload.session_id}:${event.timestamp ?? Date.now()}:${nodes.length}`;
+    const id = event.id ?? `${payload.session_id}:${event.timestamp ?? Date.now()}:${nextLocalId++}`;
     if (nodes.some((node) => node.id === id)) return;
 
     nodes = [...nodes, {
