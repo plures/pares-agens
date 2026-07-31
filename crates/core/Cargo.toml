@@ -83,12 +83,6 @@ opentelemetry-semantic-conventions = { version = "0.32", optional = true }
 tracing-opentelemetry = { version = "0.33", optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 
-# fastembed -> hf-hub uses native-tls on Linux. Enable openssl's vendored build
-# for that transitive graph so CI remains reproducible on Nix self-hosted runners
-# where host apt packages are deliberately unavailable.
-[target.'cfg(target_os = "linux")'.dependencies]
-openssl = { version = "0.10", features = ["vendored"] }
-
 [dev-dependencies]
 wiremock = "0.6"
 tempfile = "3"
