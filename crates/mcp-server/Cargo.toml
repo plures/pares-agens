@@ -52,4 +52,4 @@ pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "d08f88b541038
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
-pluresdb = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1", features = ["embeddings"] }
+pluresdb = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1" }
