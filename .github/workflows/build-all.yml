@@ -20,6 +20,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - name: Clean stale cargo artifacts
+        run: rm -rf target
 
       # ADR-0015: build the FULL workspace so a duplicate `[[bin]] name` (link
       # collision, e.g. two `pares-agens` bins) fails CI. Building only
