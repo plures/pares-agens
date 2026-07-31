@@ -62,5 +62,5 @@ jobs:
       cargo_clippy_flags: "--workspace --all-targets --exclude pares-agens-tauri --exclude agens-plugin --exclude pares-agens-cli --exclude pares-agens-tui --exclude pares-agens-hostkit -- -D warnings"
       cargo_check_flags: "--workspace --exclude pares-agens-tauri --exclude agens-plugin --exclude pares-agens-cli --exclude pares-agens-tui --exclude pares-agens-hostkit"
       cargo_extra_check: |-
-        nix develop --command bash -c 'cargo check -p agens-plugin -p pares-agens-cli -p pares-agens-tui -p pares-agens-hostkit' || nix develop --command bash -c 'unset RUSTC_WRAPPER && cargo check -p agens-plugin -p pares-agens-cli -p pares-agens-tui -p pares-agens-hostkit'
-        nix develop --command bash -c 'cargo check --manifest-path crates/tauri-app/Cargo.toml' || nix develop --command bash -c 'unset RUSTC_WRAPPER && cargo check --manifest-path crates/tauri-app/Cargo.toml'
+        nix develop --command bash -c 'cargo check --target-dir target-nix-extra -p agens-plugin -p pares-agens-cli -p pares-agens-tui -p pares-agens-hostkit' || nix develop --command bash -c 'unset RUSTC_WRAPPER && cargo check --target-dir target-nix-extra -p agens-plugin -p pares-agens-cli -p pares-agens-tui -p pares-agens-hostkit'
+        nix develop --command bash -c 'cargo check --target-dir target-nix-extra --manifest-path crates/tauri-app/Cargo.toml' || nix develop --command bash -c 'unset RUSTC_WRAPPER && cargo check --target-dir target-nix-extra --manifest-path crates/tauri-app/Cargo.toml'
