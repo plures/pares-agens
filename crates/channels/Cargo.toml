@@ -23,7 +23,7 @@ pares-agens-core = { path = "../core" }
 pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.45" }
 pares-agens-marketplace = { path = "../marketplace" }
 pares-agens-agenda = { path = "../agenda" }
-pares-rector = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.45", package = "pares-rector" }
+pares-rector = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.46", package = "pares-rector" }
 
 [features]
 default = []
