@@ -157,13 +157,23 @@ impl PxBridge {
         Some(match result {
             Ok(exec_result) => {
                 if exec_result.success {
-                    // Return the procedure's output (last assigned variable or explicit return)
-                    if let Some(ret) = exec_result.variables.get("__return__") {
-                        Ok(ret.clone())
+                    // `pluresdb_px` records an explicit `return` as the last
+                    // StepResult's output; it does not bind a synthetic
+                    // `__return__` variable. Prefer that real procedure output
+                    // before considering named output bindings.
+                    if let Some(ret) = exec_result
+                        .step_results
+                        .iter()
+                        .rev()
+                        .find(|step| step.kind == "return")
+                        .and_then(|step| step.output.clone())
+                    {
+                        Ok(ret)
                     } else if let Some(ret) = exec_result.variables.get("result") {
                         Ok(ret.clone())
                     } else {
-                        // Return all variables as a JSON object
+                        // Procedures without an explicit return expose their
+                        // output bindings as the full variables object.
                         Ok(json!(exec_result.variables))
                     }
                 } else {
@@ -196,37 +206,24 @@ impl PxBridge {
         self.call("classify_message", vars).await
     }
 
-    /// Execute the route_event procedure via .px.
+    /// Execute the route_dispatch procedure via .px.
     ///
     /// Returns the routing decision as a Value, or None to fall back.
-    pub async fn route_event(
+    pub async fn route_dispatch(
         &self,
+        classification: Value,
+        context: &str,
         event_type: &str,
-        content: &str,
-        learned_context: &str,
-        enable_subconscious: bool,
-        complexity_threshold: f64,
     ) -> Option<Result<Value, String>> {
         let mut vars = HashMap::new();
+        vars.insert("classification".to_string(), classification);
+        vars.insert("context".to_string(), Value::String(context.to_string()));
         vars.insert(
             "event_type".to_string(),
             Value::String(event_type.to_string()),
         );
-        vars.insert("content".to_string(), Value::String(content.to_string()));
-        vars.insert(
-            "learned_context".to_string(),
-            Value::String(learned_context.to_string()),
-        );
-        vars.insert(
-            "enable_subconscious".to_string(),
-            Value::Bool(enable_subconscious),
-        );
-        vars.insert(
-            "complexity_threshold".to_string(),
-            json!(complexity_threshold),
-        );
 
-        self.call("route_event", vars).await
+        self.call("route_dispatch", vars).await
     }
 }
 
@@ -282,5 +279,129 @@ procedure test_proc:
         // May or may not parse depending on grammar support for simple return
         // The point is it doesn't crash
         assert!(count == 0 || count == 1);
+    }
+
+    /// Load the real routing.px procedure and exercise route_dispatch end-to-end
+    /// through the loaded .px procedure (not a mocked handler) to prove the
+    /// destination-mapping logic actually works via the .px executor.
+    async fn load_routing_bridge() -> PxBridge {
+        let handler: Arc<dyn AsyncActionHandler> = Arc::new(NoOpHandler);
+        let bridge = PxBridge::new(handler);
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../praxis/procedures/routing.px"),
+        )
+        .expect("routing.px must exist");
+        let count = bridge
+            .load_from_source(&source)
+            .await
+            .expect("routing.px must load");
+        assert!(count > 0, "expected route_dispatch (and siblings) to parse");
+        {
+            let procs = bridge.procedures.read().await;
+            eprintln!("loaded procedures: {:?}", procs.keys().collect::<Vec<_>>());
+        }
+        bridge
+    }
+
+    fn classification(intent: &str, complexity: i64, needs_tools: bool, needs_deep_model: bool) -> Value {
+        json!({
+            "intent": intent,
+            "complexity": complexity,
+            "topic": "",
+            "topic_shift": false,
+            "needs_tools": needs_tools,
+            "needs_deep_model": needs_deep_model,
+            "plugin_match": "",
+            "completion_hint": "",
+        })
+    }
+
+    fn dispatch_vars(cls: Value) -> HashMap<String, Value> {
+        let mut vars = HashMap::new();
+        vars.insert("classification".to_string(), cls);
+        vars.insert("context".to_string(), Value::String(String::new()));
+        vars.insert("event_type".to_string(), Value::String("message".to_string()));
+        vars
+    }
+
+    #[tokio::test]
+    async fn route_dispatch_greeting_is_fast() {
+        let bridge = load_routing_bridge().await;
+        let result = bridge
+            .call("route_dispatch", dispatch_vars(classification("greeting", 1, false, false)))
+            .await;
+        eprintln!("result: {:?}", result);
+        let result = result
+            .expect("route_dispatch must be registered")
+            .expect("route_dispatch must succeed");
+        assert_eq!(result.get("route").and_then(|v| v.as_str()), Some("fast"));
+        assert!(parse_px_route_for_test(&result).is_some());
+    }
+
+    #[tokio::test]
+    async fn route_dispatch_status_query_is_procedural() {
+        let bridge = load_routing_bridge().await;
+        let result = bridge
+            .call(
+                "route_dispatch",
+                dispatch_vars(classification("status_query", 1, false, false)),
+            )
+            .await
+            .expect("route_dispatch must be registered")
+            .expect("route_dispatch must succeed");
+        assert_eq!(
+            result.get("route").and_then(|v| v.as_str()),
+            Some("procedural")
+        );
+    }
+
+    #[tokio::test]
+    async fn route_dispatch_deep_complexity_is_deep() {
+        let bridge = load_routing_bridge().await;
+        let result = bridge
+            .call(
+                "route_dispatch",
+                dispatch_vars(classification("question", 5, false, true)),
+            )
+            .await
+            .expect("route_dispatch must be registered")
+            .expect("route_dispatch must succeed");
+        assert_eq!(result.get("route").and_then(|v| v.as_str()), Some("deep"));
+        assert!(result.get("reason").and_then(|v| v.as_str()).is_some());
+    }
+
+    #[tokio::test]
+    async fn route_dispatch_simple_message_is_standard() {
+        let bridge = load_routing_bridge().await;
+        let result = bridge
+            .call(
+                "route_dispatch",
+                dispatch_vars(classification("question", 1, false, false)),
+            )
+            .await
+            .expect("route_dispatch must be registered")
+            .expect("route_dispatch must succeed");
+        assert_eq!(
+            result.get("route").and_then(|v| v.as_str()),
+            Some("standard")
+        );
+    }
+
+    /// Local mirror of orchestrator::mod::parse_px_route, kept in sync manually
+    /// since px_bridge doesn't depend on the orchestrator crate module directly.
+    /// Exercises the same match arms (including the "fast" arm) to prove the
+    /// JSON shape route_dispatch emits is parseable end-to-end.
+    fn parse_px_route_for_test(val: &Value) -> Option<&'static str> {
+        let route_str = val.get("route")?.as_str()?;
+        match route_str {
+            "standard" => Some("standard"),
+            "fast" => Some("fast"),
+            "procedural" => Some("procedural"),
+            "drop" => Some("drop"),
+            "deep" => Some("deep"),
+            "delegate" => Some("delegate"),
+            _ => None,
+        }
     }
 }
