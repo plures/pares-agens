@@ -2,7 +2,11 @@
 #
 # Determines how to route a message based on classification.
 # route_message is queue-driven; route_with_context_gate is a utility
-# for overflow scenarios.
+# for overflow scenarios. route_dispatch is a destination-style router
+# invoked directly by the orchestrator (px_bridge) — it answers "where
+# does this event go" (Route enum: fast/standard/deep/delegate/procedural/drop),
+# which is a DIFFERENT question than route_message's "which model tier"
+# (Route.tier: fast/standard/premium). Do not conflate the two shapes.
 #
 # Queue topology:
 #
@@ -11,6 +15,9 @@
 #   context ─────────────────┘
 #                            └─ calls [route_with_context_gate] (utility)
 #
+#   classification ─→ [route_dispatch] ─→ (direct call, not queue-driven)
+#        │
+#   context ─────────┘
 
 # [parser-skip] fact Route:
 # [parser-skip]   tier: enum(fast, standard, premium)
@@ -49,6 +56,68 @@ procedure route_message(classification: Classification from "classification", co
     return {tier: "fast", reason: "farewell", streaming: false}
   end
   return {tier: "fast", reason: "simple message", streaming: true}
+
+# Determine the orchestrator's routing DESTINATION for this event.
+#
+# This is the procedure the Rust px_bridge calls ("route_dispatch") and its
+# output is parsed by `parse_px_route` in crates/core/src/orchestrator/mod.rs
+# into the Route enum. Unlike route_message (which answers "what model tier"),
+# this answers "where does the event go": standard / deep / delegate /
+# procedural / drop / fast.
+#
+# Design decision (Route::Fast): checked agent.rs before deciding whether to
+# emit "fast" here. Route::Fast IS a live, consumed destination today
+# (agent.rs matches `Route::Fast | Route::Standard | Route::Deep { .. }` and
+# sends all three straight to the same model-message handler, i.e. Fast
+# currently behaves identically to Standard at the dispatch level, but it is
+# NOT vestigial — it is a real enum variant with real match arms, and
+# parse_px_route was simply missing the "fast" arm, which is a bug being
+# fixed alongside this procedure). Given that, greeting/farewell here map to
+# "fast" (mirroring route_message's own greeting/farewell -> tier:"fast"
+# handling) rather than being folded into "procedural", since a greeting
+# still typically wants a quick model reply, not a canned no-model response.
+# status_query is procedural in unified-router.px's classify_and_route, and
+# we follow that precedent since it's a real precedent for "intent needing
+# no model call at all".
+procedure route_dispatch(classification: Classification from "classification", context: string from "context", event_type: string) -> route into "route":
+  given: "Determine which routing destination (Route enum) handles this event"
+  when event_type == "timer":
+    return {route: "procedural", reason: "timer events are handled by procedures"}
+  end
+  when event_type == "state_change":
+    return {route: "procedural", reason: "state changes are handled by procedures"}
+  end
+  when event_type == "model_response":
+    return {route: "drop", reason: "model responses must not be re-routed"}
+  end
+  when event_type == "pre_action_constraint":
+    return {route: "drop", reason: "constraint events must not enter model routing"}
+  end
+  when event_type == "constraint_violation":
+    return {route: "drop", reason: "constraint violations must not enter model routing"}
+  end
+  when event_type == "task_decomposition_required":
+    return {route: "drop", reason: "task decomposition events must not be re-routed"}
+  end
+  when classification.needs_deep_model:
+    return {route: "deep", reason: "high complexity — deep reasoning needed"}
+  end
+  when classification.intent == "status_query":
+    return {route: "procedural", reason: "status_query — no model needed"}
+  end
+  when classification.intent == "greeting":
+    return {route: "fast", reason: "greeting"}
+  end
+  when classification.intent == "farewell":
+    return {route: "fast", reason: "farewell"}
+  end
+  when classification.needs_tools:
+    return {route: "standard", reason: "tool use required"}
+  end
+  when classification.complexity > 3:
+    return {route: "standard", reason: "moderate complexity"}
+  end
+  return {route: "standard", reason: "simple message"}
 
 # ═══════════════════════════════════════════════════════════════════
 # Utility Procedures
