@@ -28,13 +28,13 @@ uuid = { version = "1", features = ["v4"] }
 # source imports it as `pares_radix_mcp_client::`. Rename the dependency so the
 # extern crate name resolves without touching the 6 source import sites.
 pares-radix-mcp-client = { path = "../mcp-client", package = "mcp-client" }
-opentelemetry = "0.28"
+opentelemetry = "=0.32.0"
 # COGNITION layer (delegation, memory, Agent) — local path crate in this workspace.
 pares-agens-core = { path = "../core" }
 # PLATFORM layer (chronos, event, plugins, shell_executor, spine, StateStore) —
 # referenced via git+[patch] redirect to the local pares-radix checkout (same
 # pattern as crates/core; Stage S-C/S-D scaffolding).
-pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.45" }
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.57" }
 pares-agens-agenda = { path = "../agenda" }
 # Marketplace crate — provides the skill-workshop authoring lifecycle
 # (ProposalStore / SkillProposal) exposed via the `skill_workshop` MCP tool.

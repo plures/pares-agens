@@ -30,14 +30,14 @@ reqwest.workspace = true
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 pares-agens-core = { path = "../core", features = ["embeddings"] }
-pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.45" }
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.57" }
 pares-agens-channels = { path = "../channels" }
 pares-agens-hostkit = { path = "../agens-hostkit" }
 pares-agens-models = { path = "../models" }
 pares-agens-agenda = { path = "../agenda" }
 pares-agens-tui = { path = "../tui" }
 crossterm.workspace = true
-ratatui = "0.29"
+ratatui = "0.30"
 
 [build-dependencies]
 pares-agens-buildinfo = { path = "../agens-buildinfo" }

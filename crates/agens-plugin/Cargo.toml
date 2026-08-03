@@ -29,7 +29,7 @@ pares-radix-praxis      = { git = "https://github.com/plures/pares-radix.git", t
 # (Cluster -> pares_rector, McpServe -> pares_radix_core + local mcp-server).
 # Keep pares-radix-* tags aligned where possible to avoid duplicate-crate type/trait mismatches.
 
-pares-radix-core        = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.45" }
+pares-radix-core        = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.57" }
 pares-agens-mcp-server  = { path = "../mcp-server" }
 pares-rector            = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.46", package = "pares-rector" }
 
@@ -73,7 +73,7 @@ futures-util = "0.3"
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 html2text = "0.17"
 crossterm.workspace = true
-ratatui = "0.29"
+ratatui = "0.30"
 toml = "1.1"
 
 [build-dependencies]

@@ -585,40 +585,69 @@ impl Orchestrator {
         }
     }
 
+    /// Build the factual classification input consumed by `route_dispatch`.
+    /// Classification is an input/model boundary; the destination decision is
+    /// made by the .px procedure.
+    fn route_dispatch_classification(&self, event: &Event) -> serde_json::Value {
+        match event {
+            Event::Message { content, .. } => {
+                let classification = self
+                    .classifier
+                    .as_ref()
+                    .map(|classifier| classifier.classify(content))
+                    .unwrap_or_else(|| {
+                        classifier::CerebellumClassifier::heuristic_only(Vec::new()).classify(content)
+                    });
+                serde_json::to_value(classification).unwrap_or_else(|error| {
+                    warn!(%error, "could not serialize message classification for .px routing");
+                    serde_json::json!({
+                        "intent": "chat",
+                        "complexity": 1,
+                        "needs_tools": false,
+                        "needs_deep_model": false,
+                    })
+                })
+            }
+            _ => serde_json::json!({
+                "intent": "system",
+                "complexity": 0,
+                "needs_tools": false,
+                "needs_deep_model": false,
+            }),
+        }
+    }
+
     /// Try routing via the px_bridge (trigger-based .px procedures).
-    /// Falls back to Rust-native router if px_bridge is inactive, missing, or errors.
+    ///
+    /// route_dispatch is the primary decision source once the bridge is
+    /// loaded and active. The legacy Rust `router::decide()` remains the
+    /// fallback until route_dispatch is proven equivalent via tests in
+    /// production (bridge missing/inactive, call errors, or an unparseable
+    /// result all fall back to the Rust router rather than silently
+    /// defaulting to `Route::Standard`).
     async fn try_px_bridge_route(&self, event: &Event, learned_context: &str) -> Route {
-        if let Some(ref bridge) = self.px_bridge {
-            if bridge.is_active() {
-                let event_type = event.kind().to_string();
-                let content = extract_query(event).unwrap_or_default();
-                match bridge
-                    .route_event(
-                        &event_type,
-                        &content,
-                        learned_context,
-                        self.config.enable_subconscious,
-                        f64::from(self.config.complexity_threshold),
-                    )
-                    .await
-                {
-                    Some(Ok(val)) => {
-                        parse_px_route(&val).unwrap_or_else(|| {
-                            debug!(raw = %val, "px route returned unparseable result, falling back to Rust");
-                            router::decide(event, learned_context, &self.config)
-                        })
-                    }
-                    Some(Err(e)) => {
-                        warn!(error = %e, "px route_event failed, falling back to Rust");
-                        router::decide(event, learned_context, &self.config)
-                    }
-                    None => router::decide(event, learned_context, &self.config),
-                }
-            } else {
+        let Some(bridge) = &self.px_bridge else {
+            return router::decide(event, learned_context, &self.config);
+        };
+        if !bridge.is_active() {
+            return router::decide(event, learned_context, &self.config);
+        }
+
+        let event_type = event.kind().to_string();
+        let classification = self.route_dispatch_classification(event);
+        match bridge
+            .route_dispatch(classification, learned_context, &event_type)
+            .await
+        {
+            Some(Ok(val)) => parse_px_route(&val).unwrap_or_else(|| {
+                debug!(raw = %val, "px route returned unparseable result, falling back to Rust");
+                router::decide(event, learned_context, &self.config)
+            }),
+            Some(Err(e)) => {
+                warn!(error = %e, "px route_dispatch failed, falling back to Rust");
                 router::decide(event, learned_context, &self.config)
             }
-        } else {
-            router::decide(event, learned_context, &self.config)
+            None => router::decide(event, learned_context, &self.config),
         }
     }
 
@@ -946,6 +975,7 @@ fn build_authorization_context(event: &Event) -> RuleContext {
 ///
 /// Expected .px output format:
 /// ```json
+/// {"route": "fast"}
 /// {"route": "standard"}
 /// {"route": "deep", "reason": "..."}
 /// {"route": "delegate", "reason": "...", "tasks": [...]}
@@ -956,6 +986,7 @@ fn parse_px_route(val: &serde_json::Value) -> Option<Route> {
     let route_str = val.get("route")?.as_str()?;
     match route_str {
         "standard" => Some(Route::Standard),
+        "fast" => Some(Route::Fast),
         "procedural" => Some(Route::Procedural),
         "drop" => Some(Route::Drop),
         "deep" => {
@@ -1045,6 +1076,33 @@ mod tests {
             recurring: true,
         };
         assert_eq!(extract_query(&event), None);
+    }
+
+    #[test]
+    fn parse_px_route_accepts_all_destination_shapes() {
+        assert_eq!(parse_px_route(&serde_json::json!({"route": "fast"})), Some(Route::Fast));
+        assert_eq!(
+            parse_px_route(&serde_json::json!({"route": "standard"})),
+            Some(Route::Standard)
+        );
+        assert_eq!(
+            parse_px_route(&serde_json::json!({"route": "procedural"})),
+            Some(Route::Procedural)
+        );
+        assert_eq!(parse_px_route(&serde_json::json!({"route": "drop"})), Some(Route::Drop));
+        assert!(matches!(
+            parse_px_route(&serde_json::json!({"route": "deep", "reason": "complex"})),
+            Some(Route::Deep { reason }) if reason == "complex"
+        ));
+        assert!(matches!(
+            parse_px_route(&serde_json::json!({
+                "route": "delegate",
+                "reason": "parallel work",
+                "tasks": [{"agent_name": "worker", "input": "do work"}]
+            })),
+            Some(Route::Delegate { reason, tasks })
+                if reason == "parallel work" && tasks.len() == 1 && tasks[0].agent_name == "worker"
+        ));
     }
 
     #[test]
