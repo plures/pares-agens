@@ -33,7 +33,7 @@ use pares_agens_core::headroom_bridge::{count_message_tokens, HeadroomHook};
 use pares_agens_core::{Agent, InMemory};
 use pares_radix_core::event::Event;
 use pares_radix_core::model::{
-    ChatMessage, ChatOptions, ModelClient, ModelCompletion, ToolDefinition, ToolDispatcher,
+    ChatMessage, ChatOptions, ModelClient, ModelClientError, ModelCompletion, ToolDefinition, ToolDispatcher,
 };
 use pares_radix_core::state::{PluresDbStateStore, StateStore};
 use serde_json::Value;
@@ -65,7 +65,7 @@ impl ModelClient for CapturingModelClient {
         messages: &[ChatMessage],
         _tools: &[ToolDefinition],
         _options: &ChatOptions,
-    ) -> Result<ModelCompletion, String> {
+    ) -> Result<ModelCompletion, ModelClientError> {
         self.seen.lock().unwrap().push(messages.to_vec());
         Ok(ModelCompletion {
             // Direct text reply, no tool calls → loop ends after one turn.

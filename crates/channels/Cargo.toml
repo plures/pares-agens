@@ -23,7 +23,7 @@ pares-agens-core = { path = "../core" }
 pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.57" }
 pares-agens-marketplace = { path = "../marketplace" }
 pares-agens-agenda = { path = "../agenda" }
-pares-rector = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.46", package = "pares-rector" }
+pares-rector = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.57", package = "pares-rector" }
 
 [features]
 default = []
@@ -31,4 +31,4 @@ default = []
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 serde_json = { workspace = true }
-pluresdb = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1" }
+pluresdb = { git = "https://github.com/plures/pluresdb", rev = "2af92b1923e11e41c9103ad8f14900b179d839f6" }

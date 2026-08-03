@@ -406,7 +406,7 @@ mod tests {
     use super::*;
     use crate::delegation::registry::{AgentDefinition, AgentRegistry};
     use pares_radix_core::model::{
-        ChatMessage, ChatOptions, ModelClient, ModelCompletion, ToolDefinition, ToolDispatcher,
+        ChatMessage, ChatOptions, ModelClient, ModelClientError, ModelCompletion, ToolDefinition, ToolDispatcher,
     };
     use async_trait::async_trait;
     use serde_json::Value;
@@ -423,7 +423,7 @@ mod tests {
             messages: &[ChatMessage],
             _tools: &[ToolDefinition],
             _options: &ChatOptions,
-        ) -> Result<ModelCompletion, String> {
+        ) -> Result<ModelCompletion, ModelClientError> {
             let last_user = messages
                 .iter()
                 .rev()
@@ -450,7 +450,7 @@ mod tests {
             messages: &[ChatMessage],
             _tools: &[ToolDefinition],
             _options: &ChatOptions,
-        ) -> Result<ModelCompletion, String> {
+        ) -> Result<ModelCompletion, ModelClientError> {
             tokio::time::sleep(self.delay).await;
             let last_user = messages
                 .iter()
@@ -764,8 +764,8 @@ mod tests {
                 _messages: &[ChatMessage],
                 _tools: &[ToolDefinition],
                 _options: &ChatOptions,
-            ) -> Result<ModelCompletion, String> {
-                Err("connection refused".into())
+            ) -> Result<ModelCompletion, ModelClientError> {
+                Err(ModelClientError::Transport("connection refused".into()))
             }
         }
 

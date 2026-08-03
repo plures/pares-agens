@@ -819,8 +819,8 @@ mod tests {
         use async_trait::async_trait;
         use pares_agens_core::agent::Memory;
         use pares_radix_core::model::{
-            ChatMessage as CoreChatMessage, ChatOptions, ModelClient, ModelCompletion,
-            ToolDefinition, ToolDispatcher,
+            ChatMessage as CoreChatMessage, ChatOptions, ModelClient, ModelClientError,
+            ModelCompletion, ToolDefinition, ToolDispatcher,
         };
         use serde_json::Value;
 
@@ -843,7 +843,7 @@ mod tests {
                 _messages: &[CoreChatMessage],
                 _tools: &[ToolDefinition],
                 _options: &ChatOptions,
-            ) -> Result<ModelCompletion, String> {
+            ) -> Result<ModelCompletion, ModelClientError> {
                 Ok(ModelCompletion {
                     content: Some("hi".into()),
                     tool_calls: vec![],
