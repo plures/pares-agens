@@ -97,8 +97,8 @@ dependencies = [
  "pares-agens-mcp-server",
  "pares-agens-models",
  "pares-agens-tui",
- "pares-radix-core 1.55.57",
- "pares-radix-praxis 1.55.57",
+ "pares-radix-core",
+ "pares-radix-praxis",
  "pares-rector",
  "pluresdb 3.10.3",
  "pluresdb-px",
@@ -4281,7 +4281,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "pares-agens-core",
- "pares-radix-core 1.55.59",
+ "pares-radix-core",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -5242,7 +5242,7 @@ version = "1.47.2"
 dependencies = [
  "async-trait",
  "pares-agens-bitnet-sys",
- "pares-radix-core 1.55.59",
+ "pares-radix-core",
  "thiserror 2.0.19",
  "tokio",
  "tracing",
@@ -5268,7 +5268,7 @@ dependencies = [
  "pares-agens-agenda",
  "pares-agens-core",
  "pares-agens-marketplace",
- "pares-radix-core 1.55.57",
+ "pares-radix-core",
  "pares-rector",
  "pluresdb 3.10.3",
  "reqwest 0.12.28",
@@ -5299,8 +5299,8 @@ dependencies = [
  "pares-agens-hostkit",
  "pares-agens-models",
  "pares-agens-tui",
- "pares-radix-core 1.55.59",
- "ratatui 0.29.0",
+ "pares-radix-core",
+ "ratatui 0.30.2",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",
@@ -5329,8 +5329,8 @@ dependencies = [
  "opentelemetry_sdk",
  "pares-agens-audit",
  "pares-agens-privacy",
- "pares-radix-core 1.55.57",
- "pares-radix-praxis 1.55.57",
+ "pares-radix-core",
+ "pares-radix-praxis",
  "pluresdb 3.10.3",
  "pluresdb-procedures",
  "pluresdb-px",
@@ -5397,8 +5397,8 @@ dependencies = [
  "pares-agens-agenda",
  "pares-agens-core",
  "pares-agens-marketplace",
- "pares-radix-core 1.55.57",
- "pares-radix-praxis 1.55.57",
+ "pares-radix-core",
+ "pares-radix-praxis",
  "pluresdb 3.10.3",
  "pluresdb-px",
  "reqwest 0.12.28",
@@ -5419,7 +5419,7 @@ dependencies = [
  "async-trait",
  "futures-util",
  "pares-agens-core",
- "pares-radix-core 1.55.59",
+ "pares-radix-core",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -5462,7 +5462,7 @@ dependencies = [
  "pares-agens-cli",
  "pares-agens-core",
  "pares-agens-models",
- "pares-radix-core 1.55.59",
+ "pares-radix-core",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -5486,8 +5486,8 @@ dependencies = [
  "chrono",
  "crossterm 0.29.0",
  "pares-agens-core",
- "pares-radix-core 1.55.59",
- "ratatui 0.29.0",
+ "pares-radix-core",
+ "ratatui 0.30.2",
  "serde",
  "serde_json",
  "tokio",
@@ -5497,24 +5497,8 @@ dependencies = [
 
 [[package]]
 name = "pares-radix-audit"
-version = "1.55.57"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.57#715e94e37ddb58cc3b8aa5c0a5971b9fd738937f"
-dependencies = [
- "async-trait",
- "chrono",
- "pluresdb 3.10.3",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "pares-radix-audit"
-version = "1.55.59"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.59#6434a5327643b36da09b1c49f692d6e321ce7abb"
+version = "1.55.60"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.60#1d6b71fd461b03777d36c3c763940459154f5d45"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5529,8 +5513,8 @@ dependencies = [
 
 [[package]]
 name = "pares-radix-core"
-version = "1.55.57"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.57#715e94e37ddb58cc3b8aa5c0a5971b9fd738937f"
+version = "1.55.60"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.60#1d6b71fd461b03777d36c3c763940459154f5d45"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -5538,45 +5522,9 @@ dependencies = [
  "chrono",
  "futures-util",
  "hostname",
- "pares-radix-audit 1.55.57",
- "pares-radix-praxis 1.55.57",
- "pares-radix-privacy 1.55.57",
- "pluresdb 3.10.3",
- "pluresdb-procedures",
- "pluresdb-sea",
- "pluresdb-sync 3.10.3",
- "regex",
- "regex-lite",
- "reqwest 0.12.28",
- "semver",
- "serde",
- "serde_json",
- "sha1 0.10.7",
- "sha2 0.10.9",
- "sled",
- "subtle",
- "thiserror 2.0.19",
- "tokio",
- "toml 0.8.2",
- "tracing",
- "uuid",
- "walkdir",
-]
-
-[[package]]
-name = "pares-radix-core"
-version = "1.55.59"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.59#6434a5327643b36da09b1c49f692d6e321ce7abb"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "blake3",
- "chrono",
- "futures-util",
- "hostname",
- "pares-radix-audit 1.55.59",
- "pares-radix-praxis 1.55.59",
- "pares-radix-privacy 1.55.59",
+ "pares-radix-audit",
+ "pares-radix-praxis",
+ "pares-radix-privacy",
  "pluresdb 3.10.3",
  "pluresdb-procedures",
  "pluresdb-sea",
@@ -5601,24 +5549,8 @@ dependencies = [
 
 [[package]]
 name = "pares-radix-praxis"
-version = "1.55.57"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.57#715e94e37ddb58cc3b8aa5c0a5971b9fd738937f"
-dependencies = [
- "async-trait",
- "chrono",
- "pluresdb-px",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "pares-radix-praxis"
-version = "1.55.59"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.59#6434a5327643b36da09b1c49f692d6e321ce7abb"
+version = "1.55.60"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.60#1d6b71fd461b03777d36c3c763940459154f5d45"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5633,19 +5565,8 @@ dependencies = [
 
 [[package]]
 name = "pares-radix-privacy"
-version = "1.55.57"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.57#715e94e37ddb58cc3b8aa5c0a5971b9fd738937f"
-dependencies = [
- "regex",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "pares-radix-privacy"
-version = "1.55.59"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.59#6434a5327643b36da09b1c49f692d6e321ce7abb"
+version = "1.55.60"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.60#1d6b71fd461b03777d36c3c763940459154f5d45"
 dependencies = [
  "regex",
  "serde",
@@ -5655,8 +5576,8 @@ dependencies = [
 
 [[package]]
 name = "pares-rector"
-version = "1.55.57"
-source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.57#715e94e37ddb58cc3b8aa5c0a5971b9fd738937f"
+version = "1.55.60"
+source = "git+https://github.com/plures/pares-radix.git?tag=v1.55.60#1d6b71fd461b03777d36c3c763940459154f5d45"
 dependencies = [
  "hostname",
  "num_cpus",
