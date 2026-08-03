@@ -14,7 +14,7 @@ use pares_agens_core::memory::store::PluresDbStore;
 use pares_agens_core::memory::store::{InMemoryStore, MemoryStore};
 use pares_agens_core::memory::PluresLm;
 use pares_radix_core::model::{
-    ChatMessage, ChatOptions, ModelClient, ModelCompletion, StreamDelta, StreamSender,
+    ChatMessage, ChatOptions, ModelClient, ModelClientError, ModelCompletion, StreamDelta, StreamSender,
     ToolDefinition, ToolDispatcher,
 };
 use pares_radix_core::optimization::OptimizationSafetyGate;
@@ -143,7 +143,7 @@ impl ModelClient for AppModelClient {
         messages: &[ChatMessage],
         tools: &[ToolDefinition],
         options: &ChatOptions,
-    ) -> Result<ModelCompletion, String> {
+    ) -> Result<ModelCompletion, ModelClientError> {
         let model = {
             let settings = self.settings.lock().await;
             settings
@@ -215,7 +215,7 @@ impl ModelClient for AppModelClient {
         let response = router_guard
             .chat(&request)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| ModelClientError::Transport(e.to_string()))?;
         drop(router_guard);
         let latency_ms = start.elapsed().as_millis();
         info!(latency_ms, model = %model, "model call completed");
@@ -226,7 +226,7 @@ impl ModelClient for AppModelClient {
         let choice = response
             .choices
             .first()
-            .ok_or_else(|| "model returned no choices".to_string())?;
+            .ok_or_else(|| ModelClientError::Transport("model returned no choices".to_string()))?;
 
         let tool_calls = choice
             .message
@@ -267,7 +267,7 @@ impl ModelClient for AppModelClient {
         tools: &[ToolDefinition],
         options: &ChatOptions,
         tx: StreamSender,
-    ) -> Result<ModelCompletion, String> {
+    ) -> Result<ModelCompletion, ModelClientError> {
         use futures_util::StreamExt;
 
         let model = {
@@ -343,7 +343,7 @@ impl ModelClient for AppModelClient {
             Err(e) => {
                 // Fall back to non-streaming on stream error.
                 let _ = tx.send(StreamDelta::Done);
-                return Err(e.to_string());
+                return Err(ModelClientError::Transport(e.to_string()));
             }
         };
 

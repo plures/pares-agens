@@ -1498,11 +1498,13 @@ impl Agent {
             let completion = if let (Some(tx), 0) = (stream_tx, turn) {
                 model_client
                     .complete_stream(&messages_for_model, &tools, options, tx.clone())
-                    .await?
+                    .await
+                    .map_err(|e| e.to_string())?
             } else {
                 model_client
                     .complete(&messages_for_model, &tools, options)
-                    .await?
+                    .await
+                    .map_err(|e| e.to_string())?
             };
             let latency_ms = model_start.elapsed().as_millis();
             info!(
@@ -2603,7 +2605,7 @@ impl Agent {
 mod tests {
     use super::*;
     use crate::memory::store::InMemoryStore as InMemoryTurnStore;
-    use pares_radix_core::model::{ChatOptions, ModelCompletion, ToolDefinition};
+    use pares_radix_core::model::{ChatOptions, ModelClientError, ModelCompletion, ToolDefinition};
     use serde_json::json;
 
     fn msg(content: &str) -> Event {
@@ -2624,7 +2626,7 @@ mod tests {
             messages: &[ChatMessage],
             _tools: &[ToolDefinition],
             _options: &ChatOptions,
-        ) -> Result<ModelCompletion, String> {
+        ) -> Result<ModelCompletion, ModelClientError> {
             let last_user = messages
                 .iter()
                 .rev()

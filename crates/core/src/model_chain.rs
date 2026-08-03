@@ -129,7 +129,9 @@ pub struct ModelChainStatus {
 mod tests {
     use super::*;
     use crate::orchestrator::classifier::{MessageClassification, MessageIntent};
-    use pares_radix_core::model::{ChatMessage, ChatOptions, ModelCompletion, ToolDefinition};
+    use pares_radix_core::model::{
+        ChatMessage, ChatOptions, ModelClientError, ModelCompletion, ToolDefinition,
+    };
     use async_trait::async_trait;
 
     struct MockClient(&'static str);
@@ -141,7 +143,7 @@ mod tests {
             _messages: &[ChatMessage],
             _tools: &[ToolDefinition],
             _options: &ChatOptions,
-        ) -> Result<ModelCompletion, String> {
+        ) -> Result<ModelCompletion, ModelClientError> {
             Ok(ModelCompletion {
                 content: Some(self.0.to_string()),
                 tool_calls: vec![],

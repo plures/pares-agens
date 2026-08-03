@@ -2,7 +2,7 @@ use pares_agens_channels::adapter::ChannelAdapter;
 use pares_agens_channels::stdin::StdinAdapter;
 use pares_agens_channels::telegram::{TelegramAdapter, TelegramConfig};
 use pares_agens_core::agent::Memory;
-use pares_radix_core::model::{ChatMessage, ChatOptions, ModelClient, ModelCompletion, ToolDefinition, ToolDispatcher};
+use pares_radix_core::model::{ChatMessage, ChatOptions, ModelClient, ModelClientError, ModelCompletion, ToolDefinition, ToolDispatcher};
 use pares_agens_core::{Agent, InMemory};
 use pares_radix_core::Event;
 use std::sync::Arc;
@@ -17,7 +17,7 @@ impl ModelClient for MockModel {
         messages: &[ChatMessage],
         _tools: &[ToolDefinition],
         _options: &ChatOptions,
-    ) -> Result<ModelCompletion, String> {
+    ) -> Result<ModelCompletion, ModelClientError> {
         let last_user = messages
             .iter()
             .rev()

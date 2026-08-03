@@ -56,7 +56,8 @@ use pares_agens_core::memory::{
     PluresLm,
 };
 use pares_radix_core::model::{
-    ChatMessage as CoreChatMessage, ChatOptions, ModelClient, ToolDefinition, ToolDispatcher,
+    ChatMessage as CoreChatMessage, ChatOptions, ModelClient, ModelClientError, ToolDefinition,
+    ToolDispatcher,
 };
 use pares_radix_core::plugins::{PluginCrudExecutor, PluginRuntime};
 use pares_radix_core::procedure::{Procedure, ProcedureRegistry};
@@ -772,7 +773,7 @@ impl ModelClient for RouterModelClient {
         messages: &[CoreChatMessage],
         tools: &[ToolDefinition],
         options: &ChatOptions,
-    ) -> Result<pares_radix_core::model::ModelCompletion, String> {
+    ) -> Result<pares_radix_core::model::ModelCompletion, ModelClientError> {
         let converted_messages = messages
             .iter()
             .map(|m| {
@@ -830,12 +831,15 @@ impl ModelClient for RouterModelClient {
         }
 
         let router = self.router.read().await.clone();
-        let response = router.chat(&request).await.map_err(|e| e.to_string())?;
+        let response = router
+            .chat(&request)
+            .await
+            .map_err(|e| ModelClientError::Transport(e.to_string()))?;
 
         let choice = response
             .choices
             .first()
-            .ok_or_else(|| "model returned no choices".to_string())?;
+            .ok_or_else(|| ModelClientError::Transport("model returned no choices".to_string()))?;
 
         let tool_calls = choice
             .message
@@ -872,7 +876,7 @@ impl ModelClient for RouterModelClient {
         tools: &[ToolDefinition],
         options: &ChatOptions,
         tx: pares_radix_core::model::StreamSender,
-    ) -> Result<pares_radix_core::model::ModelCompletion, String> {
+    ) -> Result<pares_radix_core::model::ModelCompletion, ModelClientError> {
         use futures_util::StreamExt as _;
         use pares_radix_core::model::StreamDelta;
 
@@ -934,7 +938,7 @@ impl ModelClient for RouterModelClient {
         let mut stream = router
             .chat_stream(&request)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| ModelClientError::Transport(e.to_string()))?;
 
         let mut full_content = String::new();
         let mut tool_calls_map: std::collections::HashMap<usize, (String, String, String)> =
@@ -1030,9 +1034,11 @@ impl ModelClient for ToggleableModelClient {
         messages: &[CoreChatMessage],
         tools: &[ToolDefinition],
         options: &ChatOptions,
-    ) -> Result<pares_radix_core::model::ModelCompletion, String> {
+    ) -> Result<pares_radix_core::model::ModelCompletion, ModelClientError> {
         if !*self.enabled.read().await {
-            return Err("deep model escalation is disabled".to_string());
+            return Err(ModelClientError::Transport(
+                "deep model escalation is disabled".to_string(),
+            ));
         }
         self.inner.complete(messages, tools, options).await
     }
@@ -3135,11 +3141,7 @@ pub(crate) async fn run_serve_spine(
 
                 let auth = CopilotAuth::new(oauth_token);
                 let model_name_arc = Arc::new(RwLock::new(model.clone()));
-                Arc::new(
-                    CopilotModelClient::new_with_model_handle(auth, model_name_arc).with_fallbacks(
-                        vec!["claude-sonnet-4.5".to_string(), "gpt-4o".to_string()],
-                    ),
-                )
+                Arc::new(CopilotModelClient::new_with_model_handle(auth, model_name_arc))
             } else {
                 let provider_config = ProviderConfig::new(&model_url, None);
                 let router_config = RouterConfig::single("spine", provider_config);
@@ -4023,7 +4025,6 @@ pub(crate) async fn run_serve(
 
                     // Smart model discovery: if model or deep_model is "auto",
                     // probe the Copilot API for available models and select the best.
-                    let mut discovered_fallbacks: Option<pares_radix_core::auth::copilot::ModelFallbacks> = None;
                     if model == "auto" || deep_model == "auto" || fast_model == "auto" {
                         tracing::info!("auto-detecting available models...");
                         match auth.list_models().await {
@@ -4052,7 +4053,6 @@ pub(crate) async fn run_serve(
                                     }
                                     *fast_model_name.write().await = fast_model.clone();
                                 }
-                                discovered_fallbacks = Some(selection.fallbacks);
                                 tracing::info!(
                                     available_count = available.len(),
                                     models = %available.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(", "),
@@ -4092,68 +4092,18 @@ pub(crate) async fn run_serve(
                         }
                     }
 
-                    // Build fallback chains: prefer discovery-based chains,
-                    // then cross-tier degradation (Premium→Standard→Fast).
-                    let conscious_fallbacks = if !radix_config.model.fallbacks.is_empty() {
-                        radix_config.model.fallbacks.clone()
-                    } else if let Some(ref fb) = discovered_fallbacks {
-                        // Standard tier chain, excluding the primary, then fast tier as last resort
-                        let mut chain: Vec<String> = fb.standard.iter()
-                            .filter(|m| *m != &model)
-                            .cloned()
-                            .collect();
-                        chain.extend(fb.fast.iter().cloned());
-                        if chain.is_empty() {
-                            vec!["claude-sonnet-4.5".into(), "gpt-4o".into(), "gpt-4o-mini".into()]
-                        } else {
-                            chain
-                        }
-                    } else {
-                        vec!["claude-sonnet-4.5".into(), "gpt-4o".into(), "gpt-4o-mini".into()]
-                    };
-
-                    let deep_fallbacks = if let Some(ref fb) = discovered_fallbacks {
-                        // Premium tier chain excluding the deep pick, then standard as fallback
-                        let mut chain: Vec<String> = fb.premium.iter()
-                            .filter(|m| *m != &deep_model)
-                            .cloned()
-                            .collect();
-                        chain.extend(fb.standard.iter().cloned());
-                        if chain.is_empty() {
-                            vec!["claude-sonnet-4.5".into(), "gpt-4o".into()]
-                        } else {
-                            chain
-                        }
-                    } else {
-                        vec!["claude-sonnet-4.5".into(), "gpt-4o".into()]
-                    };
-
-                    let fast_fallbacks = if let Some(ref fb) = discovered_fallbacks {
-                        // Fast tier chain excluding the pick, then standard as fallback
-                        let mut chain: Vec<String> = fb.fast.iter()
-                            .filter(|m| *m != &fast_model)
-                            .cloned()
-                            .collect();
-                        chain.extend(fb.standard.iter().cloned());
-                        chain
-                    } else {
-                        vec!["gpt-4o-mini".into(), "gpt-4o".into()]
-                    };
-
                     (
                         Arc::new(
                             CopilotModelClient::new_with_model_handle(
                                 auth,
                                 Arc::clone(&model_name),
-                            )
-                            .with_fallbacks(conscious_fallbacks),
+                            ),
                         ),
                         Arc::new(
                             CopilotModelClient::new_with_model_handle(
                                 deep_auth,
                                 Arc::clone(&deep_model_name),
-                            )
-                            .with_fallbacks(deep_fallbacks),
+                            ),
                         ),
                         // Fast model client: only created if a fast model was selected
                         if !fast_model.is_empty() {
@@ -4162,8 +4112,7 @@ pub(crate) async fn run_serve(
                                 CopilotModelClient::new_with_model_handle(
                                     fast_auth,
                                     Arc::clone(&fast_model_name),
-                                )
-                                .with_fallbacks(fast_fallbacks),
+                                ),
                             ) as Arc<dyn ModelClient>)
                         } else {
                             None
@@ -5128,11 +5077,6 @@ pub(crate) async fn run_tui(
                 let auth = CopilotAuth::new(oauth_token);
                 Arc::new(
                     CopilotModelClient::new_with_model_handle(auth, Arc::clone(&model_name_handle))
-                        .with_fallbacks(if radix_config.model.fallbacks.is_empty() {
-                            vec!["claude-sonnet-4.5".into(), "gpt-4o".into()]
-                        } else {
-                            radix_config.model.fallbacks.clone()
-                        }),
                 )
             } else {
                 let provider_config = ProviderConfig::new(&model_url, api_key.clone());
@@ -5885,7 +5829,7 @@ pub(crate) async fn run_classify(message: String, bitnet_model_path: std::path::
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pares_radix_core::model::{ModelCompletion, ToolCall, ToolDefinition};
+    use pares_radix_core::model::{ModelClientError, ModelCompletion, ToolCall, ToolDefinition};
 
     struct TestModelClient;
 
@@ -5896,7 +5840,7 @@ mod tests {
             _messages: &[CoreChatMessage],
             _tools: &[ToolDefinition],
             _options: &ChatOptions,
-        ) -> Result<ModelCompletion, String> {
+        ) -> Result<ModelCompletion, ModelClientError> {
             Ok(ModelCompletion {
                 content: Some("ok".to_string()),
                 tool_calls: Vec::<ToolCall>::new(),
