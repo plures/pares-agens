@@ -57,8 +57,11 @@ jobs:
       skip_test: true
       cargo_extra_check: |-
         # The self-hosted runner persists workspaces between jobs; discard stale
-        # bare-runner artifacts before the Nix build to avoid exhausting its disk.
+        # bare-runner artifacts before the Nix build and release them again on
+        # exit (even on failure) to avoid exhausting its disk, which otherwise
+        # makes a later job fail during `Set up job`.
         rm -rf target
+        trap 'rm -rf target' EXIT
         nix develop --command bash -c 'unset RUSTC_WRAPPER SCCACHE_GHA_ENABLED; cargo clippy --workspace --all-targets --exclude pares-agens-tauri -- -D warnings'
         nix develop --command bash -c 'unset RUSTC_WRAPPER SCCACHE_GHA_ENABLED; cargo check --manifest-path crates/tauri-app/Cargo.toml'
         nix develop --command bash -c 'unset RUSTC_WRAPPER SCCACHE_GHA_ENABLED; cargo test --workspace --exclude pares-agens-tauri'

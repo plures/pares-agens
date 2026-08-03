@@ -1,12 +1,32 @@
 name: Build All
 
 on:
+  # The self-hosted runner has a small, shared disk. Only run the full
+  # workspace build when something that can actually affect it changes, so
+  # unrelated PRs (docs, other workflows, dependabot action bumps) don't churn
+  # gigabytes of cargo artifacts on it.
   push:
     branches: [main]
-    paths-ignore: ['**/*.md', 'docs/**', '.github/ISSUE_TEMPLATE/**', 'LICENSE', '.gitignore']
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'devenv.nix'
+      - '.github/workflows/build-all.yml'
   pull_request:
     branches: [main]
-    paths-ignore: ['**/*.md', 'docs/**', '.github/ISSUE_TEMPLATE/**', 'LICENSE', '.gitignore']
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'devenv.nix'
+      - '.github/workflows/build-all.yml'
 
 concurrency:
   group: build-all-${{ github.ref }}
@@ -20,6 +40,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - name: Clean stale cargo artifacts
+        run: rm -rf target
 
       # ADR-0015: build the FULL workspace so a duplicate `[[bin]] name` (link
       # collision, e.g. two `pares-agens` bins) fails CI. Building only
@@ -100,3 +122,11 @@ jobs:
             -- --skip network'
         env:
           RUST_LOG: info
+
+      # The runner's disk is shared and persists between jobs. A leftover
+      # `target/` directory filled it up and made a later job fail during
+      # `Set up job` (before any step could clean it), so release the space
+      # here regardless of the outcome of the steps above.
+      - name: Free cargo artifacts
+        if: always()
+        run: rm -rf target
