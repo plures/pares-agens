@@ -15,7 +15,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"
 pares-agens-core = { path = "../core" }
-pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.57" }
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.59" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "test-util"] }

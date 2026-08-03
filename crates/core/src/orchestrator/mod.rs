@@ -187,6 +187,9 @@ pub struct Orchestrator {
     /// Optional dataflow bridge for queue-driven procedures.
     /// When loaded, takes precedence over px_bridge (trigger-based).
     dataflow_bridge: Option<Arc<dataflow_bridge::DataflowBridge>>,
+    /// Optional Chronos timeline for emitting structured `recall_query`
+    /// operations (ADR-0019 4.3) when autorecall runs.
+    chronos: Option<Arc<pares_radix_core::chronos::ChronosTimeline>>,
 }
 
 impl Orchestrator {
@@ -202,6 +205,7 @@ impl Orchestrator {
             conversation_store: None,
             px_bridge: None,
             dataflow_bridge: None,
+            chronos: None,
         }
     }
 
@@ -217,6 +221,7 @@ impl Orchestrator {
             conversation_store: None,
             px_bridge: None,
             dataflow_bridge: None,
+            chronos: None,
         }
     }
 
@@ -242,6 +247,13 @@ impl Orchestrator {
     /// When set, takes precedence over px_bridge (trigger-based).
     pub fn with_dataflow_bridge(mut self, bridge: Arc<dataflow_bridge::DataflowBridge>) -> Self {
         self.dataflow_bridge = Some(bridge);
+        self
+    }
+
+    /// Attach a Chronos timeline so autorecall emits a structured
+    /// `recall_query` operation (ADR-0019 4.3) on every recall call.
+    pub fn with_chronos(mut self, chronos: Arc<pares_radix_core::chronos::ChronosTimeline>) -> Self {
+        self.chronos = Some(chronos);
         self
     }
 
@@ -323,6 +335,41 @@ impl Orchestrator {
                 .map_err(|e| CerebellumError::Memory(e.to_string()))?;
             let recall_elapsed = recall_start.elapsed();
             tracing::info!(recall_ms = recall_elapsed.as_millis(), memories_found = memories.len(), "memory recall complete");
+
+            if let Some(chronos) = &self.chronos {
+                let session_id = event.chat_id().unwrap_or("unknown").to_string();
+                let turn_id = uuid::Uuid::new_v4().to_string();
+                let inputs = serde_json::json!({
+                    "query": q,
+                    "limit": self.config.recall_limit,
+                    "exclude_categories": exclude_categories,
+                })
+                .to_string();
+                let outputs = serde_json::json!({
+                    "hit_count": memories.len(),
+                    "ids": memories.iter().map(|m| m.id.clone()).collect::<Vec<_>>(),
+                })
+                .to_string();
+                let operation = pares_radix_core::chronos::ChronosOperation {
+                    kind: "recall_query".to_string(),
+                    session_id: session_id.clone(),
+                    turn_id,
+                    inputs,
+                    outputs,
+                    duration_ms: recall_elapsed.as_millis() as u64,
+                };
+                let entry = chronos.build_entry_with_operation(
+                    &format!("recall:{session_id}"),
+                    "pares-agens",
+                    pares_radix_core::chronos::ChronosAction::ToolInvoked,
+                    pares_radix_core::chronos::ChronosLevel::Info,
+                    &serde_json::json!({ "query": q }),
+                    vec![],
+                    Some("autorecall query".into()),
+                    operation,
+                );
+                chronos.record(&entry);
+            }
 
             // Convert recalled memories to ContextItems
             memories

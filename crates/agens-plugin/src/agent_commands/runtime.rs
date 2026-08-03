@@ -443,6 +443,15 @@ impl RuntimeAgentFactory {
         );
         let turn_store: Arc<dyn pares_agens_core::memory::store::MemoryStore> = self.store.clone();
 
+        // Shared Chronos timeline: attached to BOTH the Orchestrator (so
+        // autorecall emits real `recall_query` operations, ADR-0019 4.3)
+        // and the Agent (tool execution auditing), so recall + tool events
+        // land on the same timeline instance.
+        let chronos = Arc::new(pares_radix_core::chronos::ChronosTimeline::with_jsonl_from_env(
+            self.store.crdt_store_arc(),
+        ));
+        let orchestrator = orchestrator.with_chronos(Arc::clone(&chronos));
+
         let agent = Agent::with_cerebellum(memory, orchestrator, plures_lm)
                 .with_model(
                     Arc::clone(&self.model_client),
@@ -453,12 +462,7 @@ impl RuntimeAgentFactory {
                 .with_delegation(delegation_broker)
                 .with_turn_store(turn_store)
                 .with_personality(personality)
-                .with_chronos({
-                    let chronos = pares_radix_core::chronos::ChronosTimeline::with_jsonl_from_env(
-                        self.store.crdt_store_arc(),
-                    );
-                    Arc::new(chronos)
-                });
+                .with_chronos(chronos);
         // Attach fast model if available
         let agent = if let Some(ref fast_client) = self.fast_model_client {
             agent.with_fast_model(Arc::clone(fast_client))
@@ -5434,6 +5438,14 @@ pub(crate) async fn run_tui(
                 }
             };
 
+            // Shared Chronos timeline: attached to BOTH the Orchestrator (so
+            // autorecall emits real `recall_query` operations, ADR-0019 4.3)
+            // and the Agent (tool execution auditing).
+            let chronos = Arc::new(pares_radix_core::chronos::ChronosTimeline::with_jsonl_from_env(
+                store.crdt_store_arc(),
+            ));
+            let orchestrator = orchestrator.with_chronos(Arc::clone(&chronos));
+
             let system_prompt_text = build_system_prompt(system_prompt).unwrap_or_else(|e| {
                 eprintln!("Warning: {e}");
                 "You are Pares Radix, an AI assistant. Be direct and helpful.".to_string()
@@ -5452,13 +5464,7 @@ pub(crate) async fn run_tui(
                     .with_turn_store(
                         Arc::clone(&store) as Arc<dyn pares_agens_core::memory::store::MemoryStore>
                     )
-                    .with_chronos({
-                        let chronos =
-                            pares_radix_core::chronos::ChronosTimeline::with_jsonl_from_env(
-                                store.crdt_store_arc(),
-                            );
-                        Arc::new(chronos)
-                    }),
+                    .with_chronos(chronos),
             );
 
             let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<AppEvent>();
