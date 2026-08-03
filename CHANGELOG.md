@@ -1,3 +1,17 @@
+## [1.68.0] — 2026-08-03
+
+- feat(chronos): emit real recall_query ChronosOperation entries (#700) (bf138d6)
+- build(deps): bump pares-rector from v1.55.45 to v1.55.46 (#698) (63b4299)
+- build(deps): bump opentelemetry from 0.28.0 to 0.32.0 (#694) (e3b21a0)
+- build(deps): bump pares-radix-core from v1.55.45 to v1.55.57 (#693) (047d243)
+- build(deps): bump actions/checkout from 4 to 7 (#692) (776e43c)
+- build(deps-dev): bump playwright from 1.61.1 to 1.62.0 (#691) (6f57aed)
+- build(deps): bump ratatui from 0.29.0 to 0.30.2 (#696) (0ceb995)
+- build(deps): bump actions/create-github-app-token from 1 to 3 (#689) (2a783f4)
+- build(deps): bump rusqlite from 0.32.1 to 0.40.1 (#695) (2d57fb8)
+- px-stage2: wire route_dispatch as destination router, replace route_event (#699) (920d71c)
+- build(deps): bump actions/setup-node from 4 to 7 (#690) (f3a8216)
+
 ## [1.67.0] — 2026-07-31
 
 - feat: retain shadow candidates and expose shadow_status procedure (#687) (8d0c867)
