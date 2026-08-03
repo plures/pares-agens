@@ -42,7 +42,7 @@ jobs:
     name: Praxis ADR enforcement
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: ADR-0010 duplication check
         run: bash scripts/praxis-duplication-check.sh .
   disk-cleanup:
