@@ -1,3 +1,7 @@
+## [1.68.1] — 2026-08-03
+
+- fix(deps): pin takecell to 0.1.1 to unblock nixpkgs rustc 1.95.0 build (#701) (3c827b7)
+
 ## [1.68.0] — 2026-08-03
 
 - feat(chronos): emit real recall_query ChronosOperation entries (#700) (bf138d6)
