@@ -28,7 +28,7 @@ uuid = { version = "1", features = ["v4"] }
 # source imports it as `pares_radix_mcp_client::`. Rename the dependency so the
 # extern crate name resolves without touching the 6 source import sites.
 pares-radix-mcp-client = { path = "../mcp-client", package = "mcp-client" }
-opentelemetry = "0.32"
+opentelemetry = "=0.32.0"
 # COGNITION layer (delegation, memory, Agent) — local path crate in this workspace.
 pares-agens-core = { path = "../core" }
 # PLATFORM layer (chronos, event, plugins, shell_executor, spine, StateStore) —
