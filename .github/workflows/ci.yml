@@ -45,7 +45,31 @@ jobs:
       - uses: actions/checkout@v4
       - name: ADR-0010 duplication check
         run: bash scripts/praxis-duplication-check.sh .
+  disk-cleanup:
+    name: Reclaim self-hosted runner disk space
+    # The reusable CI workflow's rust job runs on the persistent, shared
+    # praxisbot self-hosted runner. GitHub Actions downloads/extracts every
+    # action used by that job (checkout, rust-toolchain, sccache-action,
+    # rust-cache) before any workflow step executes, and that extraction
+    # itself fails with "No space left on device" when stale artifacts from
+    # prior jobs/repos have filled the disk. Proactively reclaim space here,
+    # on the same runner, before the reusable workflow's job is scheduled.
+    runs-on: self-hosted
+    steps:
+      - name: Free disk space
+        shell: bash
+        run: |
+          # Only reclaim space that is provably unused (Nix GC roots and Docker's
+          # own reference counting both skip anything still in use), so this is
+          # safe even if another job is building concurrently on this runner.
+          echo "Disk usage before cleanup:"
+          df -h || true
+          command -v nix >/dev/null 2>&1 && nix store gc 2>/dev/null || true
+          command -v docker >/dev/null 2>&1 && docker system prune -f 2>/dev/null || true
+          echo "Disk usage after cleanup:"
+          df -h || true
   ci:
+    needs: disk-cleanup
     uses: plures/.github/.github/workflows/ci-reusable.yml@main
     with:
       # praxisbot's job shell is Nix-based and deliberately has no host apt
