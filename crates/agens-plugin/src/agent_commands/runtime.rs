@@ -3874,6 +3874,11 @@ pub(crate) async fn run_serve(
             });
             let mut runtime_config_control: Option<Arc<dyn TelegramConfigControl>> = None;
 
+            // Ordered fallback chains per tier, captured from whichever branch below
+            // resolves models, so a single `providers:active` write can happen after
+            // model resolution regardless of copilot vs. router vs. bitnet path.
+            let mut providers_active_fallbacks: Option<(Vec<String>, Vec<String>, Vec<String>)> = None;
+
             #[allow(clippy::type_complexity)]
             let (model_client, deep_model_client, fast_model_client_opt): (Arc<dyn ModelClient>, Arc<dyn ModelClient>, Option<Arc<dyn ModelClient>>) =
                 if let Some(ref bitnet_path) = bitnet_model_path {
@@ -4071,6 +4076,12 @@ pub(crate) async fn run_serve(
                         vec!["gpt-4o-mini".into(), "gpt-4o".into()]
                     };
 
+                    providers_active_fallbacks = Some((
+                        conscious_fallbacks.clone(),
+                        deep_fallbacks.clone(),
+                        fast_fallbacks.clone(),
+                    ));
+
                     (
                         Arc::new(
                             CopilotModelClient::new_with_model_handle(
@@ -4143,6 +4154,39 @@ pub(crate) async fn run_serve(
                 deep_model_client,
                 Arc::clone(&deep_escalation_enabled_state),
             ));
+
+            // Persist the resolved fallback-priority model chain per tier as
+            // `providers:active` state, so consumers (e.g. pares-radix's
+            // ModelSelectionActionHandler) can read live model availability
+            // instead of relying on a hardcoded catalog. Tiers with no
+            // meaningful chain (e.g. fast disabled, or router-mode which
+            // doesn't compute discovery-based fallbacks) are genuinely
+            // omitted rather than filled with placeholders.
+            {
+                let mut tiers = serde_json::Map::new();
+                let mut standard_chain: Vec<String> = vec![model.clone()];
+                let mut deep_chain: Vec<String> = vec![deep_model.clone()];
+                let mut fast_chain: Vec<String> = Vec::new();
+                if !fast_model.is_empty() {
+                    fast_chain.push(fast_model.clone());
+                }
+                if let Some((ref std_fb, ref deep_fb, ref fast_fb)) = providers_active_fallbacks {
+                    standard_chain.extend(std_fb.iter().cloned());
+                    deep_chain.extend(deep_fb.iter().cloned());
+                    if !fast_model.is_empty() {
+                        fast_chain.extend(fast_fb.iter().cloned());
+                    }
+                }
+                tiers.insert("standard".to_string(), json!(standard_chain));
+                tiers.insert("deep".to_string(), json!(deep_chain));
+                if !fast_chain.is_empty() {
+                    tiers.insert("fast".to_string(), json!(fast_chain));
+                }
+                runtime_state_store
+                    .set("providers:active", serde_json::Value::Object(tiers))
+                    .await;
+                tracing::info!("persisted providers:active fallback chains to PluresDB state");
+            }
 
             // Set up PluresDB memory store + PluresLM (native)
             let memory_path = PathBuf::from(home).join(".pares-radix/memory");
