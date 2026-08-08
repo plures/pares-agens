@@ -1910,64 +1910,15 @@ impl Agent {
         // Decision logic lives in commitment-detection.px (via PxBridge).
         // This Rust function is the IO boundary: it stores results to state + TaskManager + Chronos.
         //
-        // TODO: Route through PxBridge.call("detect_commitments", {response: agent_reply})
-        // and PxBridge.call("create_tasks_from_commitments", {commitments: ...})
-        //
-        // Until PxBridge is wired here, use a minimal Rust fallback
-        // that mirrors the .px logic (commitment-detection.px).
+        // Route through PxBridge.call("detect_commitments", {response: agent_reply}).
+        // If PxBridge is unavailable or the procedure isn't loaded, fall back to
+        // a Rust heuristic that mirrors the .px logic.
 
-        // Minimal fallback: detect numbered action items + "I will" statements
-        let commitment_patterns = [
-            "i'll ",
-            "i will ",
-            "let me ",
-            "going to ",
-        ];
-
-        let action_verbs = [
-            "diagnose", "fix", "implement", "write", "create", "update",
-            "check", "verify", "build", "deploy", "configure", "refactor",
-            "optimize", "debug", "test", "add", "remove", "migrate",
-            "install", "resolve", "investigate", "wire", "connect",
-            "integrate", "port", "rewrite",
-        ];
-
-        let mut promises: Vec<String> = Vec::new();
-
-        for line in agent_reply.lines() {
-            let trimmed = line.trim();
-            if trimmed.len() < 15 || trimmed.len() > 200 {
-                continue;
-            }
-
-            // Numbered list items with action verbs
-            if trimmed.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-                if let Some(text) = trimmed.split_once('.').map(|(_, t)| t.trim()) {
-                    let lower = text.to_lowercase();
-                    if action_verbs.iter().any(|v| lower.starts_with(v)) {
-                        promises.push(text.to_string());
-                    }
-                }
-            }
-
-            // "I will..." / "I'll..." with action verbs
-            let lower = trimmed.to_lowercase();
-            for pattern in &commitment_patterns {
-                if lower.contains(pattern) {
-                    if let Some(after) = lower.split_once(pattern).map(|(_, a)| a) {
-                        if action_verbs.iter().any(|v| after.starts_with(v)) && after.len() >= 15 {
-                            let dedup = !promises.iter().any(|p| {
-                                p.to_lowercase().contains(&after[..after.len().min(25)])
-                            });
-                            if dedup {
-                                promises.push(trimmed.to_string());
-                            }
-                        }
-                    }
-                    break;
-                }
-            }
-        }
+        let promises: Vec<String> = if let Some(px_result) = self.try_px_detect_commitments(agent_reply).await {
+            px_result
+        } else {
+            Self::detect_commitments_fallback(agent_reply)
+        };
 
         if promises.is_empty() {
             return;
@@ -2052,6 +2003,112 @@ impl Agent {
                 "agent promises detected and logged to Chronos"
             );
         }
+    }
+
+    /// Attempt to detect commitments via PxBridge (commitment-detection.px).
+    /// Returns `Some(vec)` if the procedure ran successfully, `None` to fall back.
+    async fn try_px_detect_commitments(&self, agent_reply: &str) -> Option<Vec<String>> {
+        let orchestrator = self.orchestrator.as_ref()?;
+        let px_bridge = orchestrator.px_bridge()?;
+
+        let mut vars = std::collections::HashMap::new();
+        vars.insert("response".to_string(), serde_json::Value::String(agent_reply.to_string()));
+
+        match px_bridge.call("detect_commitments", vars).await {
+            Some(Ok(value)) => {
+                // The .px procedure returns a list of commitment objects with a "text" field.
+                let commitments: Vec<String> = if let Some(arr) = value.as_array() {
+                    arr.iter()
+                        .filter_map(|item| {
+                            item.get("text")
+                                .and_then(|t| t.as_str())
+                                .map(|s| s.to_string())
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                info!(
+                    count = commitments.len(),
+                    "commitment detection routed through PxBridge (commitment-detection.px)"
+                );
+                Some(commitments)
+            }
+            Some(Err(e)) => {
+                warn!(
+                    error = %e,
+                    "PxBridge commitment-detection.px failed, falling back to Rust heuristic"
+                );
+                None
+            }
+            None => {
+                debug!("detect_commitments procedure not loaded in PxBridge, using Rust fallback");
+                None
+            }
+        }
+    }
+
+    /// Rust-side fallback commitment detection mirroring commitment-detection.px logic.
+    /// Used when PxBridge is unavailable or the .px procedure isn't loaded.
+    fn detect_commitments_fallback(agent_reply: &str) -> Vec<String> {
+        let commitment_patterns = [
+            "i'll ",
+            "i will ",
+            "let me ",
+            "going to ",
+            "i'm going to ",
+            "i am going to ",
+            "i need to ",
+            "i'm going to need to ",
+            "i plan to ",
+        ];
+
+        let action_verbs = [
+            "diagnose", "fix", "implement", "write", "create", "update",
+            "check", "verify", "build", "deploy", "configure", "set up",
+            "refactor", "optimize", "debug", "test", "add", "remove",
+            "migrate", "install", "resolve", "investigate", "wire",
+            "connect", "integrate", "port", "rewrite", "redesign",
+        ];
+
+        let mut promises: Vec<String> = Vec::new();
+
+        for line in agent_reply.lines() {
+            let trimmed = line.trim();
+            if trimmed.len() < 15 || trimmed.len() > 200 {
+                continue;
+            }
+
+            // Numbered list items with action verbs
+            if trimmed.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                if let Some(text) = trimmed.split_once('.').map(|(_, t)| t.trim()) {
+                    let lower = text.to_lowercase();
+                    if action_verbs.iter().any(|v| lower.starts_with(v)) {
+                        promises.push(text.to_string());
+                    }
+                }
+            }
+
+            // Commitment pattern + action verb detection
+            let lower = trimmed.to_lowercase();
+            for pattern in &commitment_patterns {
+                if lower.contains(pattern) {
+                    if let Some(after) = lower.split_once(pattern).map(|(_, a)| a) {
+                        if action_verbs.iter().any(|v| after.starts_with(v)) && after.len() >= 15 {
+                            let dedup = !promises.iter().any(|p| {
+                                p.to_lowercase().contains(&after[..after.len().min(25)])
+                            });
+                            if dedup {
+                                promises.push(trimmed.to_string());
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        promises
     }
 
     fn extract_domain_tags(&self, question: &str) -> Vec<String> {
@@ -3056,6 +3113,61 @@ mod tests {
             kept_has_decision,
             "high-signal ORCA decision was dropped by compaction (should have survived over filler)"
         );
+    }
+}
+
+#[cfg(test)]
+mod commitment_detection_tests {
+    use super::*;
+
+    #[test]
+    fn fallback_detects_will_statements() {
+        let reply = "I will implement the new caching layer for the database module.";
+        let promises = Agent::detect_commitments_fallback(reply);
+        assert_eq!(promises.len(), 1);
+        assert!(promises[0].contains("implement"));
+    }
+
+    #[test]
+    fn fallback_detects_ill_statements() {
+        let reply = "I'll fix the broken authentication middleware and redeploy.";
+        let promises = Agent::detect_commitments_fallback(reply);
+        assert_eq!(promises.len(), 1);
+    }
+
+    #[test]
+    fn fallback_detects_im_going_to() {
+        let reply = "I'm going to investigate the root cause of the memory leak.";
+        let promises = Agent::detect_commitments_fallback(reply);
+        assert_eq!(promises.len(), 1);
+    }
+
+    #[test]
+    fn fallback_detects_numbered_list() {
+        let reply = "Here's the plan:\n1. Diagnose why the connection pool is exhausted\n2. Fix the timeout configuration in the worker";
+        let promises = Agent::detect_commitments_fallback(reply);
+        assert_eq!(promises.len(), 2);
+    }
+
+    #[test]
+    fn fallback_skips_short_lines() {
+        let reply = "I will do it.";
+        let promises = Agent::detect_commitments_fallback(reply);
+        assert!(promises.is_empty());
+    }
+
+    #[test]
+    fn fallback_detects_let_me() {
+        let reply = "Let me investigate the failing integration tests and find the root cause.";
+        let promises = Agent::detect_commitments_fallback(reply);
+        assert_eq!(promises.len(), 1);
+    }
+
+    #[test]
+    fn fallback_detects_i_need_to() {
+        let reply = "I need to refactor the routing module to support the new protocol.";
+        let promises = Agent::detect_commitments_fallback(reply);
+        assert_eq!(promises.len(), 1);
     }
 }
 
