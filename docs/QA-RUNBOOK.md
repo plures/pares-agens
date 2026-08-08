@@ -19,8 +19,8 @@ Telegram, Discord, or other chat-specific channels. The canonical surface is the
 MCP `runtime_status` tool:
 
 ```
-POST /mcp (tools/call)
-{ "name": "runtime_status", "arguments": {} }
+POST /mcp (JSON-RPC 2.0)
+{ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "runtime_status", "arguments": {} } }
 ```
 
 ### Required assertions
