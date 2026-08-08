@@ -74,7 +74,7 @@ const TELEGRAM_BLANK_RESPONSE_FALLBACK: &str =
 const TELEGRAM_NO_RESPONSE_FALLBACK: &str =
     "I’m sorry — I finished processing, but no visible response was produced. Please try again.";
 const TELEGRAM_TIMEOUT_FALLBACK: &str = "⚠️ System notice: the request timed out before the assistant produced a response. Please retry or narrow the request.";
-const TELEGRAM_HELP_COMMANDS: [(&str, &str); 33] = [
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 35] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
     ("/status", "status + health snapshot"),
@@ -133,6 +133,8 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 33] = [
         "/task <id>",
         "show task details, complete, or cancel (/task <id> complete|cancel)",
     ),
+    ("/approve [token]", "approve a pending tool execution (elevated)"),
+    ("/deny [token]", "deny a pending tool execution (elevated)"),
     ("/cluster status", "show cluster state"),
     ("/cluster nodes", "list discovered nodes with capabilities"),
     ("/cluster info", "show local node capabilities"),
@@ -339,6 +341,54 @@ fn parse_logs_tail_lines(args: Vec<&str>) -> Result<usize, &'static str> {
             Ok(value.min(MAX_LOG_TAIL_LINES))
         }
         _ => Err("Usage: /logs [n]"),
+    }
+}
+
+/// Outcome of resolving an elevated `/approve` or `/deny` command against the
+/// shared [`pares_radix_core::approval::ApprovalRegistry`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApprovalCommandOutcome {
+    /// A pending approval matched the supplied token and was resolved.
+    Resolved,
+    /// No pending approval matched the supplied token.
+    NotFound,
+    /// No token was supplied; report how many approvals are pending.
+    Pending(usize),
+    /// The approval registry was not wired into the adapter.
+    RegistryUnavailable,
+}
+
+/// Parse the optional approval token argument for `/approve` and `/deny`.
+fn parse_approval_token<'a>(args: &[&'a str]) -> Option<&'a str> {
+    args.first()
+        .map(|arg| arg.trim())
+        .filter(|arg| !arg.is_empty())
+}
+
+/// Render the reply for an elevated `/approve` or `/deny` command.
+fn format_approval_reply(
+    is_approve: bool,
+    token: Option<&str>,
+    outcome: ApprovalCommandOutcome,
+) -> String {
+    let cmd = if is_approve { "approve" } else { "deny" };
+    match outcome {
+        ApprovalCommandOutcome::Resolved => match token {
+            Some(tok) if is_approve => format!("✅ Approved: {tok}"),
+            Some(tok) => format!("❌ Denied: {tok}"),
+            None => "Approval registry not available.".to_string(),
+        },
+        ApprovalCommandOutcome::NotFound => match token {
+            Some(tok) => format!("No pending approval found for token: {tok}"),
+            None => "Approval registry not available.".to_string(),
+        },
+        ApprovalCommandOutcome::Pending(0) => "No pending approvals.".to_string(),
+        ApprovalCommandOutcome::Pending(count) => {
+            format!("{count} pending approval(s). Specify a token: /{cmd} <token>")
+        }
+        ApprovalCommandOutcome::RegistryUnavailable => {
+            "Approval registry not available.".to_string()
+        }
     }
 }
 
@@ -1436,6 +1486,7 @@ impl ChannelAdapter for TelegramAdapter {
         // Cloned into the callback closure so an Allow/Deny press can wake a
         // tool call blocked on the token carried in `callback_data`.
         let approval_registry_cb = self.approval_registry.clone();
+        let approval_registry_msg = self.approval_registry.clone();
         let pool_control_cb = pool_control.clone();
         let model_picker_cb = model_picker.clone();
         let handler = Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
@@ -1466,8 +1517,8 @@ impl ChannelAdapter for TelegramAdapter {
             let update_host =
                 std::env::var("PARES_NIX_HOST").unwrap_or_else(|_| DEFAULT_NIX_HOST.into());
             let update_command = build_nixos_update_command(&update_flake_dir, &update_host);
+            let approval_registry = approval_registry_msg.clone();
             async move {
-                // Check for slash commands before sending to agent
                 if let Some(text) = msg.text() {
                     if text.starts_with('/') {
                         let mut cmd_parts = text.split_whitespace();
@@ -2460,6 +2511,47 @@ impl ChannelAdapter for TelegramAdapter {
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
+                            "approve" | "deny" => {
+                                if !is_update_authorized(&msg) {
+                                    Self::send_reply_with_fallback(
+                                        &bot,
+                                        &msg,
+                                        "Denied. Configure PARES_TELEGRAM_UPDATE_ALLOWED_USERS with approved Telegram usernames or numeric IDs.",
+                                        None, event_spine.as_ref(),
+                                    ).await;
+                                    return respond(());
+                                }
+                                let args: Vec<&str> = cmd_parts.collect();
+                                let token = parse_approval_token(&args);
+                                let is_approve = cmd == "approve";
+                                let decision = if is_approve {
+                                    pares_radix_core::approval::ApprovalDecision::Allow
+                                } else {
+                                    pares_radix_core::approval::ApprovalDecision::Deny
+                                };
+                                let outcome = match (token, approval_registry.as_ref()) {
+                                    (_, None) => ApprovalCommandOutcome::RegistryUnavailable,
+                                    (Some(tok), Some(reg)) => {
+                                        if reg.resolve(tok, decision).await {
+                                            info!(
+                                                command = cmd,
+                                                token = tok,
+                                                "elevated approval command resolved pending tool approval"
+                                            );
+                                            ApprovalCommandOutcome::Resolved
+                                        } else {
+                                            ApprovalCommandOutcome::NotFound
+                                        }
+                                    }
+                                    (None, Some(reg)) => {
+                                        ApprovalCommandOutcome::Pending(reg.pending_count().await)
+                                    }
+                                };
+                                let reply = format_approval_reply(is_approve, token, outcome);
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
                             "cluster" => {
                                 let args: Vec<&str> = cmd_parts.collect();
                                 let reply = match args.first().copied() {
@@ -2525,6 +2617,51 @@ impl ChannelAdapter for TelegramAdapter {
                                     }
                                     _ => "Usage: /cluster [status | nodes | info | deploy <file> | workloads]".to_string(),
                                 };
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            "sessions" => {
+                                let chat_id_str = msg.chat.id.0.to_string();
+                                let mut sections: Vec<String> = Vec::new();
+
+                                // Main session
+                                sections.push("📍 Main session: active".to_string());
+
+                                // Delegated tasks
+                                if let Some(mgr) = &task_manager {
+                                    let tasks = mgr.tasks_for_chat(&chat_id_str, false);
+                                    let delegated: Vec<_> = tasks.iter().filter(|t| {
+                                        matches!(t.status, pares_radix_core::task::TaskStatus::Delegated)
+                                    }).collect();
+                                    if delegated.is_empty() {
+                                        sections.push("👥 Delegated: none".to_string());
+                                    } else {
+                                        let mut out = format!("👥 Delegated: {} active", delegated.len());
+                                        for t in &delegated {
+                                            let short_id = &t.id[..8.min(t.id.len())];
+                                            out.push_str(&format!("\n  • {short_id} — {}", t.description));
+                                        }
+                                        sections.push(out);
+                                    }
+                                }
+
+                                // Scheduled tasks
+                                if let Some(sched) = &scheduler {
+                                    let tasks = sched.list().await;
+                                    let enabled: Vec<_> = tasks.iter().filter(|t| t.enabled).collect();
+                                    if enabled.is_empty() {
+                                        sections.push("⏰ Scheduled: none".to_string());
+                                    } else {
+                                        let mut out = format!("⏰ Scheduled: {} active", enabled.len());
+                                        for t in &enabled {
+                                            out.push_str(&format!("\n  • {} — {}", t.id, t.name));
+                                        }
+                                        sections.push(out);
+                                    }
+                                }
+
+                                let reply = sections.join("\n\n");
                                 Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
@@ -3285,6 +3422,72 @@ mod tests {
         assert_eq!(
             parse_logs_tail_lines(vec!["10", "20"]).unwrap_err(),
             "Usage: /logs [n]"
+        );
+    }
+
+    // ── /approve and /deny ────────────────────────────────────────────────
+
+    #[test]
+    fn parse_approval_token_extracts_first_argument() {
+        assert_eq!(parse_approval_token(&["tok-1"]), Some("tok-1"));
+        assert_eq!(parse_approval_token(&["tok-1", "extra"]), Some("tok-1"));
+    }
+
+    #[test]
+    fn parse_approval_token_is_none_without_arguments() {
+        assert_eq!(parse_approval_token(&[]), None);
+        assert_eq!(parse_approval_token(&["  "]), None);
+    }
+
+    #[test]
+    fn approval_reply_reports_resolved_decision() {
+        assert_eq!(
+            format_approval_reply(true, Some("tok-1"), ApprovalCommandOutcome::Resolved),
+            "✅ Approved: tok-1"
+        );
+        assert_eq!(
+            format_approval_reply(false, Some("tok-1"), ApprovalCommandOutcome::Resolved),
+            "❌ Denied: tok-1"
+        );
+    }
+
+    #[test]
+    fn approval_reply_reports_unknown_token() {
+        assert_eq!(
+            format_approval_reply(true, Some("tok-x"), ApprovalCommandOutcome::NotFound),
+            "No pending approval found for token: tok-x"
+        );
+    }
+
+    #[test]
+    fn approval_reply_reports_pending_counts() {
+        assert_eq!(
+            format_approval_reply(true, None, ApprovalCommandOutcome::Pending(0)),
+            "No pending approvals."
+        );
+        assert_eq!(
+            format_approval_reply(true, None, ApprovalCommandOutcome::Pending(2)),
+            "2 pending approval(s). Specify a token: /approve <token>"
+        );
+        assert_eq!(
+            format_approval_reply(false, None, ApprovalCommandOutcome::Pending(1)),
+            "1 pending approval(s). Specify a token: /deny <token>"
+        );
+    }
+
+    #[test]
+    fn approval_reply_reports_missing_registry() {
+        assert_eq!(
+            format_approval_reply(
+                true,
+                Some("tok-1"),
+                ApprovalCommandOutcome::RegistryUnavailable
+            ),
+            "Approval registry not available."
+        );
+        assert_eq!(
+            format_approval_reply(false, None, ApprovalCommandOutcome::RegistryUnavailable),
+            "Approval registry not available."
         );
     }
 

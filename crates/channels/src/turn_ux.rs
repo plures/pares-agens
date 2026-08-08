@@ -275,4 +275,51 @@ mod tests {
             .await;
         assert!(!resolved, "unknown/non-token id must be a no-op resolve");
     }
+
+    // ── /approve and /deny slash-command resolve seam ─────────────────────
+    // Validates the elevated command path: a token passed to
+    // `ApprovalRegistry::resolve` with Allow/Deny wakes the pending waiter
+    // identically to the inline-keyboard callback path.
+
+    #[tokio::test]
+    async fn slash_approve_resolves_pending_approval() {
+        let registry = pares_radix_core::approval::ApprovalRegistry::new();
+        let (req, pending) = registry.register("deploy", "production").await;
+
+        // Simulate `/approve <token>` command issuing Allow decision.
+        let resolved = registry
+            .resolve(&req.token, pares_radix_core::approval::ApprovalDecision::Allow)
+            .await;
+        assert!(resolved, "/approve must resolve a live token");
+
+        let got = pending.wait().await;
+        assert_eq!(got, pares_radix_core::approval::ApprovalDecision::Allow);
+        assert_eq!(registry.pending_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn slash_deny_resolves_pending_approval() {
+        let registry = pares_radix_core::approval::ApprovalRegistry::new();
+        let (req, pending) = registry.register("rm_data", "/var/data").await;
+
+        // Simulate `/deny <token>` command issuing Deny decision.
+        let resolved = registry
+            .resolve(&req.token, pares_radix_core::approval::ApprovalDecision::Deny)
+            .await;
+        assert!(resolved, "/deny must resolve a live token");
+
+        let got = pending.wait().await;
+        assert_eq!(got, pares_radix_core::approval::ApprovalDecision::Deny);
+        assert!(!got.is_allowed());
+        assert_eq!(registry.pending_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn slash_approve_unknown_token_is_noop() {
+        let registry = pares_radix_core::approval::ApprovalRegistry::new();
+        let resolved = registry
+            .resolve("nonexistent-token", pares_radix_core::approval::ApprovalDecision::Allow)
+            .await;
+        assert!(!resolved, "unknown token must not resolve");
+    }
 }
