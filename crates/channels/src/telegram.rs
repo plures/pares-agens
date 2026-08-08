@@ -74,7 +74,7 @@ const TELEGRAM_BLANK_RESPONSE_FALLBACK: &str =
 const TELEGRAM_NO_RESPONSE_FALLBACK: &str =
     "I’m sorry — I finished processing, but no visible response was produced. Please try again.";
 const TELEGRAM_TIMEOUT_FALLBACK: &str = "⚠️ System notice: the request timed out before the assistant produced a response. Please retry or narrow the request.";
-const TELEGRAM_HELP_COMMANDS: [(&str, &str); 33] = [
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 34] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
     ("/status", "status + health snapshot"),
@@ -105,6 +105,7 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 33] = [
     ("/version", "show version and build info"),
     ("/logs [n]", "tail recent pares-radix service logs"),
     ("/tools", "show tool governance policies"),
+    ("/web <query>", "quick web search (top 3 Brave results)"),
     (
         "/update",
         "run NixOS self-update and rebuild if pares-radix changed",
@@ -1923,6 +1924,21 @@ impl ChannelAdapter for TelegramAdapter {
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
+                            "web" => {
+                                let query: String = cmd_parts.collect::<Vec<&str>>().join(" ");
+                                if query.is_empty() {
+                                    Self::send_reply_with_fallback(&bot, &msg, "Usage: /web <query>", None, event_spine.as_ref()).await;
+                                    Self::acknowledge_message(&bot, &msg).await;
+                                    return respond(());
+                                }
+                                let reply = match brave_web_search(&query).await {
+                                    Ok(results) => format_brave_results(&query, &results),
+                                    Err(e) => format!("Web search failed: {e}"),
+                                };
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
                             "logs" => {
                                 if !is_update_authorized(&msg) {
                                     Self::send_reply_with_fallback(
@@ -3028,6 +3044,74 @@ impl ChannelAdapter for TelegramAdapter {
     }
 }
 
+/// A single Brave web search result.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct BraveSearchResult {
+    title: String,
+    url: String,
+    description: Option<String>,
+}
+
+/// Perform a Brave web search and return up to 3 results.
+async fn brave_web_search(query: &str) -> Result<Vec<BraveSearchResult>, String> {
+    let api_key = std::env::var("BRAVE_API_KEY")
+        .map_err(|_| "BRAVE_API_KEY not set".to_string())?;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get("https://api.search.brave.com/res/v1/web/search")
+        .header("X-Subscription-Token", &api_key)
+        .query(&[("q", query), ("count", "3")])
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+
+    tracing::info!(
+        query,
+        status = %response.status(),
+        "brave web search response"
+    );
+
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("failed to parse response: {e}"))?;
+
+    let results = body
+        .get("web")
+        .and_then(|v| v.get("results"))
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .take(3)
+                .filter_map(|item| serde_json::from_value::<BraveSearchResult>(item.clone()).ok())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Ok(results)
+}
+
+/// Format Brave search results for inline Telegram display.
+fn format_brave_results(query: &str, results: &[BraveSearchResult]) -> String {
+    if results.is_empty() {
+        return format!("No results found for \"{query}\".");
+    }
+    let mut out = format!("🔍 Results for \"{query}\":\n");
+    for (i, r) in results.iter().enumerate() {
+        let desc = r.description.as_deref().unwrap_or("");
+        out.push_str(&format!(
+            "\n{}. {}\n   {}\n   {}\n",
+            i + 1,
+            r.title,
+            r.url,
+            desc
+        ));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3523,5 +3607,40 @@ mod tests {
         let adapter = TelegramAdapter::with_event_spine(config, handle);
         assert_eq!(adapter.name(), "telegram");
         assert!(adapter.event_spine.is_some());
+    }
+
+    #[test]
+    fn format_brave_results_empty() {
+        let results = vec![];
+        let out = format_brave_results("rust lang", &results);
+        assert!(out.contains("No results found"));
+    }
+
+    #[test]
+    fn format_brave_results_shows_top_3() {
+        let results = vec![
+            BraveSearchResult {
+                title: "Result One".into(),
+                url: "https://example.com/1".into(),
+                description: Some("First description".into()),
+            },
+            BraveSearchResult {
+                title: "Result Two".into(),
+                url: "https://example.com/2".into(),
+                description: None,
+            },
+            BraveSearchResult {
+                title: "Result Three".into(),
+                url: "https://example.com/3".into(),
+                description: Some("Third".into()),
+            },
+        ];
+        let out = format_brave_results("test query", &results);
+        assert!(out.contains("🔍 Results for \"test query\""));
+        assert!(out.contains("1. Result One"));
+        assert!(out.contains("https://example.com/1"));
+        assert!(out.contains("First description"));
+        assert!(out.contains("2. Result Two"));
+        assert!(out.contains("3. Result Three"));
     }
 }
