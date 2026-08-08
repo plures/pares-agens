@@ -1,3 +1,15 @@
+## [1.75.0] — 2026-08-08
+
+- feat: expose tool/plugin visibility in runtime_status, add regression tests and QA runbook (#709) (e7a9ae6)
+- feat(cli): wire ModelChain into `serve --offline` with BitNet fallback (#706) (86beb15)
+- fix: route commitment detection through PxBridge with improved fallback (#708) (f30626b)
+- feat: system-enforced approval-gate integration test for destructive tool calls (#707) (d906302)
+- feat(telegram): /web — quick inline web search (#705) (fffd409)
+- feat(telegram): /approve and /deny elevated slash commands (#703) (b1b9939)
+- feat(telegram): /sessions — list active sessions (#704) (e1fdcc7)
+- build(deps-dev): bump playwright from 1.62.0 to 1.62.1 (#702) (86b9651)
+- chore: add CODEOWNERS, SHA-pin third-party actions (df44024)
+
 ## [1.68.1] — 2026-08-03
 
 - fix(deps): pin takecell to 0.1.1 to unblock nixpkgs rustc 1.95.0 build (#701) (3c827b7)
