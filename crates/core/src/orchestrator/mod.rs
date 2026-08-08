@@ -243,6 +243,11 @@ impl Orchestrator {
         self
     }
 
+    /// Access the underlying PxBridge (if loaded) for direct procedure calls.
+    pub fn px_bridge(&self) -> Option<&Arc<PxBridge>> {
+        self.px_bridge.as_ref()
+    }
+
     /// Attach a dataflow bridge for queue-driven procedure execution.
     /// When set, takes precedence over px_bridge (trigger-based).
     pub fn with_dataflow_bridge(mut self, bridge: Arc<dataflow_bridge::DataflowBridge>) -> Self {
