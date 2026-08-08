@@ -74,7 +74,7 @@ const TELEGRAM_BLANK_RESPONSE_FALLBACK: &str =
 const TELEGRAM_NO_RESPONSE_FALLBACK: &str =
     "I’m sorry — I finished processing, but no visible response was produced. Please try again.";
 const TELEGRAM_TIMEOUT_FALLBACK: &str = "⚠️ System notice: the request timed out before the assistant produced a response. Please retry or narrow the request.";
-const TELEGRAM_HELP_COMMANDS: [(&str, &str); 33] = [
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 35] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
     ("/status", "status + health snapshot"),
@@ -133,6 +133,8 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 33] = [
         "/task <id>",
         "show task details, complete, or cancel (/task <id> complete|cancel)",
     ),
+    ("/approve [token]", "approve a pending tool execution (elevated)"),
+    ("/deny [token]", "deny a pending tool execution (elevated)"),
     ("/cluster status", "show cluster state"),
     ("/cluster nodes", "list discovered nodes with capabilities"),
     ("/cluster info", "show local node capabilities"),
@@ -1436,6 +1438,7 @@ impl ChannelAdapter for TelegramAdapter {
         // Cloned into the callback closure so an Allow/Deny press can wake a
         // tool call blocked on the token carried in `callback_data`.
         let approval_registry_cb = self.approval_registry.clone();
+        let approval_registry_msg = self.approval_registry.clone();
         let pool_control_cb = pool_control.clone();
         let model_picker_cb = model_picker.clone();
         let handler = Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
@@ -1466,8 +1469,8 @@ impl ChannelAdapter for TelegramAdapter {
             let update_host =
                 std::env::var("PARES_NIX_HOST").unwrap_or_else(|_| DEFAULT_NIX_HOST.into());
             let update_command = build_nixos_update_command(&update_flake_dir, &update_host);
+            let approval_registry = approval_registry_msg.clone();
             async move {
-                // Check for slash commands before sending to agent
                 if let Some(text) = msg.text() {
                     if text.starts_with('/') {
                         let mut cmd_parts = text.split_whitespace();
@@ -2455,6 +2458,62 @@ impl ChannelAdapter for TelegramAdapter {
                                         }
                                     }
                                     _ => "Usage: /praxis constraints | log [n] | violations [n]".to_string(),
+                                };
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
+                            "approve" | "deny" => {
+                                if !is_update_authorized(&msg) {
+                                    Self::send_reply_with_fallback(
+                                        &bot,
+                                        &msg,
+                                        "Denied. Configure PARES_TELEGRAM_UPDATE_ALLOWED_USERS with approved Telegram usernames or numeric IDs.",
+                                        None, event_spine.as_ref(),
+                                    ).await;
+                                    return respond(());
+                                }
+                                let token: Option<&str> = {
+                                    let args: Vec<&str> = cmd_parts.collect();
+                                    args.first().copied()
+                                };
+                                let is_approve = cmd == "approve";
+                                let decision = if is_approve {
+                                    pares_radix_core::approval::ApprovalDecision::Allow
+                                } else {
+                                    pares_radix_core::approval::ApprovalDecision::Deny
+                                };
+                                let reply = if let Some(tok) = token {
+                                    if let Some(reg) = approval_registry.as_ref() {
+                                        let resolved = reg.resolve(tok, decision).await;
+                                        if resolved {
+                                            info!(
+                                                command = cmd,
+                                                token = tok,
+                                                "elevated approval command resolved pending tool approval"
+                                            );
+                                            if is_approve {
+                                                format!("✅ Approved: {tok}")
+                                            } else {
+                                                format!("❌ Denied: {tok}")
+                                            }
+                                        } else {
+                                            format!("No pending approval found for token: {tok}")
+                                        }
+                                    } else {
+                                        "Approval registry not available.".to_string()
+                                    }
+                                } else if let Some(reg) = approval_registry.as_ref() {
+                                    let count = reg.pending_count().await;
+                                    if count == 0 {
+                                        "No pending approvals.".to_string()
+                                    } else {
+                                        format!(
+                                            "{count} pending approval(s). Specify a token: /{cmd} <token>"
+                                        )
+                                    }
+                                } else {
+                                    "Approval registry not available.".to_string()
                                 };
                                 Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
