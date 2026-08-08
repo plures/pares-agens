@@ -993,7 +993,7 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 /// | `known_failure` | always `false` (no failure log in orchestrator) |
 /// | `is_destructive` | `true` for `ToolResult` with destructive tool prefixes |
 /// | `is_external` | `true` for `ToolResult` whose name suggests an external call |
-fn build_authorization_context(event: &Event) -> RuleContext {
+pub fn build_authorization_context(event: &Event) -> RuleContext {
     let (is_destructive, is_external) = match event {
         Event::ToolResult { tool_name, .. } => {
             let destructive = tool_name.starts_with("delete_")
