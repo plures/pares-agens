@@ -2299,11 +2299,15 @@ async fn main() {
             let (model_client, deep_model_client): (Arc<dyn ModelClient>, Arc<dyn ModelClient>) =
                 if offline {
                     // Offline mode: construct a BitNet-backed model client.
+                    // Keep the runtime model controls consistent with the client.
+                    *model_name.write().await = "bitnet-local".to_string();
+                    *deep_model_name.write().await = "bitnet-local".to_string();
+
                     let bitnet_config = RouterConfig::local_bitnet(&bitnet_url);
                     let bitnet_router = Arc::new(ModelRouter::new(bitnet_config));
                     let bitnet_client: Arc<dyn ModelClient> = Arc::new(RouterModelClient {
                         router: Arc::new(RwLock::new(bitnet_router)),
-                        model: Arc::new(RwLock::new("bitnet-local".to_string())),
+                        model: Arc::clone(&model_name),
                         endpoint: Arc::new(RwLock::new(bitnet_url.clone())),
                         api_key: None,
                     });
