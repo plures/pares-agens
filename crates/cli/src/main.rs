@@ -57,6 +57,7 @@ use pares_radix_core::tool_governance::{GovernanceVerdict, ToolGovernor};
 use pares_radix_core::Event;
 use pares_radix_core::{PluresDbStateStore, StateStore};
 use pares_agens_migrate::{migrate, openclaw};
+use pares_agens_core::model_chain::ModelChain;
 use pares_agens_models::config::{ProviderConfig, RouterConfig};
 use pares_agens_models::router::ModelRouter;
 use pares_agens_models::types::{ChatCompletionRequest, ChatMessage, Role, Tool};
@@ -1965,6 +1966,16 @@ enum Commands {
         #[arg(long)]
         stdio: bool,
 
+        /// Run in offline mode using the local BitNet model as the sole
+        /// inference backend. No cloud connectivity required.
+        #[arg(long)]
+        offline: bool,
+
+        /// Local BitNet-compatible API endpoint (OpenAI-compatible).
+        /// Only used when `--offline` is set.
+        #[arg(long, env = "PARES_BITNET_URL", default_value = "http://127.0.0.1:12434")]
+        bitnet_url: String,
+
         /// OpenAI-compatible API URL (GitHub Models or OpenAI compatible endpoint).
         #[arg(
             long,
@@ -2123,6 +2134,8 @@ async fn main() {
         Commands::Serve {
             telegram_token,
             stdio,
+            offline,
+            bitnet_url,
             model_url,
             model,
             copilot,
@@ -2147,9 +2160,9 @@ async fn main() {
             // --stdio mode we still need a placeholder for host-adapter
             // bookkeeping below (never used to hit the real Telegram API in
             // that path since the Telegram adapter is never constructed).
-            if !stdio && telegram_token.is_none() {
+            if !stdio && !offline && telegram_token.is_none() {
                 eprintln!(
-                    "error: --telegram-token (or PARES_TELEGRAM_TOKEN) is required unless --stdio is set"
+                    "error: --telegram-token (or PARES_TELEGRAM_TOKEN) is required unless --stdio or --offline is set"
                 );
                 std::process::exit(1);
             }
@@ -2284,7 +2297,31 @@ async fn main() {
             let mut runtime_config_control: Option<Arc<dyn TelegramConfigControl>> = None;
 
             let (model_client, deep_model_client): (Arc<dyn ModelClient>, Arc<dyn ModelClient>) =
-                if copilot {
+                if offline {
+                    // Offline mode: construct a BitNet-backed model client.
+                    let bitnet_config = RouterConfig::local_bitnet(&bitnet_url);
+                    let bitnet_router = Arc::new(ModelRouter::new(bitnet_config));
+                    let bitnet_client: Arc<dyn ModelClient> = Arc::new(RouterModelClient {
+                        router: Arc::new(RwLock::new(bitnet_router)),
+                        model: Arc::new(RwLock::new("bitnet-local".to_string())),
+                        endpoint: Arc::new(RwLock::new(bitnet_url.clone())),
+                        api_key: None,
+                    });
+
+                    let chain = ModelChain::new(
+                        Some(Arc::clone(&bitnet_client)),
+                        None, // no cloud standard
+                        None, // no cloud deep
+                    );
+                    let status = chain.status();
+                    tracing::info!(
+                        mode = %status.mode,
+                        bitnet_url = %bitnet_url,
+                        "ModelChain active in offline mode (BitNet fallback only)"
+                    );
+
+                    (Arc::clone(&bitnet_client), bitnet_client)
+                } else if copilot {
                     let auth_path = PathBuf::from(&home).join(".pares-agens/copilot-auth.json");
                     let cached = std::fs::read_to_string(&auth_path)
                         .ok()
