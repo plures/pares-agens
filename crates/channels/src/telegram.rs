@@ -2529,6 +2529,51 @@ impl ChannelAdapter for TelegramAdapter {
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
+                            "sessions" => {
+                                let chat_id_str = msg.chat.id.0.to_string();
+                                let mut sections: Vec<String> = Vec::new();
+
+                                // Main session
+                                sections.push("📍 Main session: active".to_string());
+
+                                // Delegated tasks
+                                if let Some(mgr) = &task_manager {
+                                    let tasks = mgr.tasks_for_chat(&chat_id_str, false);
+                                    let delegated: Vec<_> = tasks.iter().filter(|t| {
+                                        matches!(t.status, pares_radix_core::task::TaskStatus::Delegated)
+                                    }).collect();
+                                    if delegated.is_empty() {
+                                        sections.push("👥 Delegated: none".to_string());
+                                    } else {
+                                        let mut out = format!("👥 Delegated: {} active", delegated.len());
+                                        for t in &delegated {
+                                            let short_id = &t.id[..8.min(t.id.len())];
+                                            out.push_str(&format!("\n  • {short_id} — {}", t.description));
+                                        }
+                                        sections.push(out);
+                                    }
+                                }
+
+                                // Scheduled tasks
+                                if let Some(sched) = &scheduler {
+                                    let tasks = sched.list().await;
+                                    let enabled: Vec<_> = tasks.iter().filter(|t| t.enabled).collect();
+                                    if enabled.is_empty() {
+                                        sections.push("⏰ Scheduled: none".to_string());
+                                    } else {
+                                        let mut out = format!("⏰ Scheduled: {} active", enabled.len());
+                                        for t in &enabled {
+                                            out.push_str(&format!("\n  • {} — {}", t.id, t.name));
+                                        }
+                                        sections.push(out);
+                                    }
+                                }
+
+                                let reply = sections.join("\n\n");
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
                             _ => {
                                 // Unknown slash command — respond immediately
                                 // instead of falling through to model
