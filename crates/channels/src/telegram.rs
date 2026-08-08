@@ -344,6 +344,54 @@ fn parse_logs_tail_lines(args: Vec<&str>) -> Result<usize, &'static str> {
     }
 }
 
+/// Outcome of resolving an elevated `/approve` or `/deny` command against the
+/// shared [`pares_radix_core::approval::ApprovalRegistry`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApprovalCommandOutcome {
+    /// A pending approval matched the supplied token and was resolved.
+    Resolved,
+    /// No pending approval matched the supplied token.
+    NotFound,
+    /// No token was supplied; report how many approvals are pending.
+    Pending(usize),
+    /// The approval registry was not wired into the adapter.
+    RegistryUnavailable,
+}
+
+/// Parse the optional approval token argument for `/approve` and `/deny`.
+fn parse_approval_token<'a>(args: &[&'a str]) -> Option<&'a str> {
+    args.first()
+        .map(|arg| arg.trim())
+        .filter(|arg| !arg.is_empty())
+}
+
+/// Render the reply for an elevated `/approve` or `/deny` command.
+fn format_approval_reply(
+    is_approve: bool,
+    token: Option<&str>,
+    outcome: ApprovalCommandOutcome,
+) -> String {
+    let cmd = if is_approve { "approve" } else { "deny" };
+    match outcome {
+        ApprovalCommandOutcome::Resolved => match token {
+            Some(tok) if is_approve => format!("✅ Approved: {tok}"),
+            Some(tok) => format!("❌ Denied: {tok}"),
+            None => "Approval registry not available.".to_string(),
+        },
+        ApprovalCommandOutcome::NotFound => match token {
+            Some(tok) => format!("No pending approval found for token: {tok}"),
+            None => "Approval registry not available.".to_string(),
+        },
+        ApprovalCommandOutcome::Pending(0) => "No pending approvals.".to_string(),
+        ApprovalCommandOutcome::Pending(count) => {
+            format!("{count} pending approval(s). Specify a token: /{cmd} <token>")
+        }
+        ApprovalCommandOutcome::RegistryUnavailable => {
+            "Approval registry not available.".to_string()
+        }
+    }
+}
+
 /// Format `journalctl` output for Telegram delivery.
 ///
 /// Successful output returns stdout (or a fallback message when empty). Failed
@@ -2473,48 +2521,33 @@ impl ChannelAdapter for TelegramAdapter {
                                     ).await;
                                     return respond(());
                                 }
-                                let token: Option<&str> = {
-                                    let args: Vec<&str> = cmd_parts.collect();
-                                    args.first().copied()
-                                };
+                                let args: Vec<&str> = cmd_parts.collect();
+                                let token = parse_approval_token(&args);
                                 let is_approve = cmd == "approve";
                                 let decision = if is_approve {
                                     pares_radix_core::approval::ApprovalDecision::Allow
                                 } else {
                                     pares_radix_core::approval::ApprovalDecision::Deny
                                 };
-                                let reply = if let Some(tok) = token {
-                                    if let Some(reg) = approval_registry.as_ref() {
-                                        let resolved = reg.resolve(tok, decision).await;
-                                        if resolved {
+                                let outcome = match (token, approval_registry.as_ref()) {
+                                    (_, None) => ApprovalCommandOutcome::RegistryUnavailable,
+                                    (Some(tok), Some(reg)) => {
+                                        if reg.resolve(tok, decision).await {
                                             info!(
                                                 command = cmd,
                                                 token = tok,
                                                 "elevated approval command resolved pending tool approval"
                                             );
-                                            if is_approve {
-                                                format!("✅ Approved: {tok}")
-                                            } else {
-                                                format!("❌ Denied: {tok}")
-                                            }
+                                            ApprovalCommandOutcome::Resolved
                                         } else {
-                                            format!("No pending approval found for token: {tok}")
+                                            ApprovalCommandOutcome::NotFound
                                         }
-                                    } else {
-                                        "Approval registry not available.".to_string()
                                     }
-                                } else if let Some(reg) = approval_registry.as_ref() {
-                                    let count = reg.pending_count().await;
-                                    if count == 0 {
-                                        "No pending approvals.".to_string()
-                                    } else {
-                                        format!(
-                                            "{count} pending approval(s). Specify a token: /{cmd} <token>"
-                                        )
+                                    (None, Some(reg)) => {
+                                        ApprovalCommandOutcome::Pending(reg.pending_count().await)
                                     }
-                                } else {
-                                    "Approval registry not available.".to_string()
                                 };
+                                let reply = format_approval_reply(is_approve, token, outcome);
                                 Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
@@ -3389,6 +3422,72 @@ mod tests {
         assert_eq!(
             parse_logs_tail_lines(vec!["10", "20"]).unwrap_err(),
             "Usage: /logs [n]"
+        );
+    }
+
+    // ── /approve and /deny ────────────────────────────────────────────────
+
+    #[test]
+    fn parse_approval_token_extracts_first_argument() {
+        assert_eq!(parse_approval_token(&["tok-1"]), Some("tok-1"));
+        assert_eq!(parse_approval_token(&["tok-1", "extra"]), Some("tok-1"));
+    }
+
+    #[test]
+    fn parse_approval_token_is_none_without_arguments() {
+        assert_eq!(parse_approval_token(&[]), None);
+        assert_eq!(parse_approval_token(&["  "]), None);
+    }
+
+    #[test]
+    fn approval_reply_reports_resolved_decision() {
+        assert_eq!(
+            format_approval_reply(true, Some("tok-1"), ApprovalCommandOutcome::Resolved),
+            "✅ Approved: tok-1"
+        );
+        assert_eq!(
+            format_approval_reply(false, Some("tok-1"), ApprovalCommandOutcome::Resolved),
+            "❌ Denied: tok-1"
+        );
+    }
+
+    #[test]
+    fn approval_reply_reports_unknown_token() {
+        assert_eq!(
+            format_approval_reply(true, Some("tok-x"), ApprovalCommandOutcome::NotFound),
+            "No pending approval found for token: tok-x"
+        );
+    }
+
+    #[test]
+    fn approval_reply_reports_pending_counts() {
+        assert_eq!(
+            format_approval_reply(true, None, ApprovalCommandOutcome::Pending(0)),
+            "No pending approvals."
+        );
+        assert_eq!(
+            format_approval_reply(true, None, ApprovalCommandOutcome::Pending(2)),
+            "2 pending approval(s). Specify a token: /approve <token>"
+        );
+        assert_eq!(
+            format_approval_reply(false, None, ApprovalCommandOutcome::Pending(1)),
+            "1 pending approval(s). Specify a token: /deny <token>"
+        );
+    }
+
+    #[test]
+    fn approval_reply_reports_missing_registry() {
+        assert_eq!(
+            format_approval_reply(
+                true,
+                Some("tok-1"),
+                ApprovalCommandOutcome::RegistryUnavailable
+            ),
+            "Approval registry not available."
+        );
+        assert_eq!(
+            format_approval_reply(false, None, ApprovalCommandOutcome::RegistryUnavailable),
+            "Approval registry not available."
         );
     }
 
