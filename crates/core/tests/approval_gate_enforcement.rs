@@ -125,19 +125,13 @@ async fn approval_registry_blocks_destructive_tool_pending_human_decision() {
 
     // Prove the gate is BLOCKING: spawn a task that waits on approval,
     // verify it does NOT complete within a short timeout (action is gated).
-    let pending_arc = Arc::new(tokio::sync::Mutex::new(Some(pending)));
-    let pending_clone = Arc::clone(&pending_arc);
+    let mut wait_handle = tokio::spawn(async move { pending.wait().await });
 
-    let wait_handle = tokio::spawn(async move {
-        let mut guard = pending_clone.lock().await;
-        let p = guard.take().unwrap();
-        p.wait().await
-    });
-
-    // Give the wait task a chance to resolve (it should NOT resolve)
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Prove the gate is BLOCKING: the wait must NOT resolve before any human decision.
     assert!(
-        !wait_handle.is_finished(),
+        tokio::time::timeout(Duration::from_millis(50), &mut wait_handle)
+            .await
+            .is_err(),
         "approval gate MUST block execution — action must not proceed without human decision"
     );
 
