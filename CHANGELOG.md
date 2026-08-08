@@ -1,3 +1,9 @@
+## [1.69.0] — 2026-08-08
+
+- feat(telegram): /sessions — list active sessions (#704) (e1fdcc7)
+- build(deps-dev): bump playwright from 1.62.0 to 1.62.1 (#702) (86b9651)
+- chore: add CODEOWNERS, SHA-pin third-party actions (df44024)
+
 ## [1.68.1] — 2026-08-03
 
 - fix(deps): pin takecell to 0.1.1 to unblock nixpkgs rustc 1.95.0 build (#701) (3c827b7)
