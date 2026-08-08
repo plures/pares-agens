@@ -74,7 +74,7 @@ const TELEGRAM_BLANK_RESPONSE_FALLBACK: &str =
 const TELEGRAM_NO_RESPONSE_FALLBACK: &str =
     "I’m sorry — I finished processing, but no visible response was produced. Please try again.";
 const TELEGRAM_TIMEOUT_FALLBACK: &str = "⚠️ System notice: the request timed out before the assistant produced a response. Please retry or narrow the request.";
-const TELEGRAM_HELP_COMMANDS: [(&str, &str); 35] = [
+const TELEGRAM_HELP_COMMANDS: [(&str, &str); 36] = [
     ("/start", "show this command list"),
     ("/help", "show this command list"),
     ("/status", "status + health snapshot"),
@@ -140,6 +140,7 @@ const TELEGRAM_HELP_COMMANDS: [(&str, &str); 35] = [
     ("/cluster info", "show local node capabilities"),
     ("/cluster deploy <file>", "deploy workloads from a .px file"),
     ("/cluster workloads", "list running workloads"),
+    ("/web <query>", "quick web search (top 3 Brave results)"),
 ];
 const DEFAULT_LOG_TAIL_LINES: usize = 80;
 const MAX_LOG_TAIL_LINES: usize = 400;
@@ -2511,6 +2512,21 @@ impl ChannelAdapter for TelegramAdapter {
                                 Self::acknowledge_message(&bot, &msg).await;
                                 return respond(());
                             }
+                            "web" => {
+                                let query: String = cmd_parts.collect::<Vec<&str>>().join(" ");
+                                if query.is_empty() {
+                                    Self::send_reply_with_fallback(&bot, &msg, "Usage: /web <query>", None, event_spine.as_ref()).await;
+                                    Self::acknowledge_message(&bot, &msg).await;
+                                    return respond(());
+                                }
+                                let reply = match brave_web_search(&query).await {
+                                    Ok(results) => format_brave_results(&query, &results),
+                                    Err(e) => format!("Web search failed: {e}"),
+                                };
+                                Self::send_reply_with_fallback(&bot, &msg, &reply, None, event_spine.as_ref()).await;
+                                Self::acknowledge_message(&bot, &msg).await;
+                                return respond(());
+                            }
                             "approve" | "deny" => {
                                 if !is_update_authorized(&msg) {
                                     Self::send_reply_with_fallback(
@@ -3165,6 +3181,79 @@ impl ChannelAdapter for TelegramAdapter {
     }
 }
 
+/// A single Brave web search result.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct BraveSearchResult {
+    title: String,
+    url: String,
+    description: Option<String>,
+}
+
+/// Perform a Brave web search and return up to 3 results.
+async fn brave_web_search(query: &str) -> Result<Vec<BraveSearchResult>, String> {
+    let api_key = std::env::var("BRAVE_API_KEY")
+        .map_err(|_| "BRAVE_API_KEY not set".to_string())?;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get("https://api.search.brave.com/res/v1/web/search")
+        .header("X-Subscription-Token", &api_key)
+        .query(&[("q", query), ("count", "3")])
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+
+    tracing::info!(
+        query,
+        status = %response.status(),
+        "brave web search response"
+    );
+
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("failed to parse response: {e}"))?;
+
+    let results = body
+        .get("web")
+        .and_then(|w| w.get("results"))
+        .and_then(|r| r.as_array())
+        .map(|arr| {
+            arr.iter()
+                .take(3)
+                .filter_map(|item| {
+                    Some(BraveSearchResult {
+                        title: item.get("title")?.as_str()?.to_string(),
+                        url: item.get("url")?.as_str()?.to_string(),
+                        description: item
+                            .get("description")
+                            .and_then(|d| d.as_str())
+                            .map(|s| s.to_string()),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(results)
+}
+
+/// Format Brave search results for display.
+fn format_brave_results(query: &str, results: &[BraveSearchResult]) -> String {
+    if results.is_empty() {
+        return format!("No results found for \"{query}\".");
+    }
+
+    let mut output = format!("🔍 Results for \"{query}\":\n");
+    for (i, result) in results.iter().enumerate() {
+        output.push_str(&format!("\n{}. {}\n   {}\n", i + 1, result.title, result.url));
+        if let Some(desc) = &result.description {
+            output.push_str(&format!("   {}\n", desc));
+        }
+    }
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3726,5 +3815,35 @@ mod tests {
         let adapter = TelegramAdapter::with_event_spine(config, handle);
         assert_eq!(adapter.name(), "telegram");
         assert!(adapter.event_spine.is_some());
+    }
+
+    #[test]
+    fn format_brave_results_empty() {
+        let results: Vec<BraveSearchResult> = vec![];
+        let output = format_brave_results("test query", &results);
+        assert_eq!(output, "No results found for \"test query\".");
+    }
+
+    #[test]
+    fn format_brave_results_populated() {
+        let results = vec![
+            BraveSearchResult {
+                title: "First Result".to_string(),
+                url: "https://example.com/1".to_string(),
+                description: Some("Description one".to_string()),
+            },
+            BraveSearchResult {
+                title: "Second Result".to_string(),
+                url: "https://example.com/2".to_string(),
+                description: None,
+            },
+        ];
+        let output = format_brave_results("rust", &results);
+        assert!(output.contains("🔍 Results for \"rust\""));
+        assert!(output.contains("1. First Result"));
+        assert!(output.contains("https://example.com/1"));
+        assert!(output.contains("Description one"));
+        assert!(output.contains("2. Second Result"));
+        assert!(output.contains("https://example.com/2"));
     }
 }
