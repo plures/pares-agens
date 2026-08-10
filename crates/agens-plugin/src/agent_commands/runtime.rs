@@ -3170,6 +3170,35 @@ async fn run_adapter_with_recovery(
     }
 }
 
+/// Wire and spawn the spine heartbeat runner for a channel.
+///
+/// All spine-driven channels (stdio, telegram, http) share the same wiring:
+/// pipeline emitter + task manager, config load, optional quiet-hours override.
+/// The returned shutdown sender must be kept alive for the runner to keep going.
+async fn spawn_spine_heartbeat(
+    state: Arc<dyn pares_radix_core::state::StateStore>,
+    task_manager: Arc<pares_radix_core::task_manager::TaskManager>,
+    emitter: pares_radix_core::spine::pipeline::PipelineEmitter,
+    started_log: &str,
+) -> tokio::sync::watch::Sender<bool> {
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let mut heartbeat =
+        pares_agens_core::heartbeat::HeartbeatRunner::new(Arc::clone(&state))
+            .with_pipeline_emitter(emitter)
+            .with_task_manager(task_manager, state);
+    heartbeat.load_config().await;
+    if std::env::var("PARES_HEARTBEAT_NO_QUIET").is_ok() {
+        let mut cfg = heartbeat.config().clone();
+        cfg.quiet_hours_enabled = false;
+        heartbeat.set_config(cfg).await;
+    }
+    tokio::spawn(async move {
+        heartbeat.run(shutdown_rx).await;
+    });
+    info!("{started_log}");
+    shutdown_tx
+}
+
 async fn flush_pluresdb_on_shutdown(
     store: &PluresDbStore,
     hostname: &str,
@@ -3885,28 +3914,13 @@ pub(crate) async fn run_serve_spine(
                     info!("Stdio delivery loop started");
 
                     // 6.5. Start heartbeat runner (proactive behavior)
-                    let (_heartbeat_shutdown_tx, heartbeat_shutdown_rx) =
-                        tokio::sync::watch::channel(false);
-                    {
-                        let mut heartbeat = pares_agens_core::heartbeat::HeartbeatRunner::new(
-                            Arc::clone(&spine_heartbeat_state),
-                        )
-                        .with_pipeline_emitter(pipeline.emitter())
-                        .with_task_manager(
-                            Arc::clone(&spine_task_manager),
-                            Arc::clone(&spine_heartbeat_state),
-                        );
-                        heartbeat.load_config().await;
-                        if std::env::var("PARES_HEARTBEAT_NO_QUIET").is_ok() {
-                            let mut cfg = heartbeat.config().clone();
-                            cfg.quiet_hours_enabled = false;
-                            heartbeat.set_config(cfg).await;
-                        }
-                        tokio::spawn(async move {
-                            heartbeat.run(heartbeat_shutdown_rx).await;
-                        });
-                        info!("Heartbeat runner started (proactive behavior)");
-                    }
+                    let _heartbeat_shutdown_tx = spawn_spine_heartbeat(
+                        Arc::clone(&spine_heartbeat_state),
+                        Arc::clone(&spine_task_manager),
+                        pipeline.emitter(),
+                        "Heartbeat runner started (proactive behavior)",
+                    )
+                    .await;
 
                     // 7. Start receiving (blocks until /quit or EOF)
                     let emitter = pipeline.emitter();
@@ -3934,25 +3948,13 @@ pub(crate) async fn run_serve_spine(
                     info!("Telegram delivery loop started (progressive streaming enabled)");
 
                     // 6.5. Start heartbeat runner (proactive behavior)
-                    let (_heartbeat_shutdown_tx, heartbeat_shutdown_rx) =
-                        tokio::sync::watch::channel(false);
-                    {
-                        let pipeline_emitter_for_heartbeat = pipeline.emitter();
-                        let mut heartbeat =
-                            pares_agens_core::heartbeat::HeartbeatRunner::new(Arc::clone(&spine_heartbeat_state))
-                                .with_pipeline_emitter(pipeline_emitter_for_heartbeat)
-                                .with_task_manager(Arc::clone(&spine_task_manager), Arc::clone(&spine_heartbeat_state));
-                        heartbeat.load_config().await;
-                        if std::env::var("PARES_HEARTBEAT_NO_QUIET").is_ok() {
-                            let mut cfg = heartbeat.config().clone();
-                            cfg.quiet_hours_enabled = false;
-                            heartbeat.set_config(cfg).await;
-                        }
-                        tokio::spawn(async move {
-                            heartbeat.run(heartbeat_shutdown_rx).await;
-                        });
-                        info!("Heartbeat runner started (proactive behavior + task dispatch)");
-                    }
+                    let _heartbeat_shutdown_tx = spawn_spine_heartbeat(
+                        Arc::clone(&spine_heartbeat_state),
+                        Arc::clone(&spine_task_manager),
+                        pipeline.emitter(),
+                        "Heartbeat runner started (proactive behavior + task dispatch)",
+                    )
+                    .await;
 
                     // 7. Start receiving (blocks)
                     let emitter = pipeline.emitter();
@@ -3990,28 +3992,13 @@ pub(crate) async fn run_serve_spine(
                     // HTTP has the same autonomous queue semantics as the
                     // interactive channels: heartbeat writes a tick; PX selects
                     // and claims work; TaskDispatcher performs the re-drive.
-                    let (_heartbeat_shutdown_tx, heartbeat_shutdown_rx) =
-                        tokio::sync::watch::channel(false);
-                    {
-                        let mut heartbeat = pares_agens_core::heartbeat::HeartbeatRunner::new(
-                            Arc::clone(&spine_heartbeat_state),
-                        )
-                        .with_pipeline_emitter(pipeline.emitter())
-                        .with_task_manager(
-                            Arc::clone(&spine_task_manager),
-                            Arc::clone(&spine_heartbeat_state),
-                        );
-                        heartbeat.load_config().await;
-                        if std::env::var("PARES_HEARTBEAT_NO_QUIET").is_ok() {
-                            let mut cfg = heartbeat.config().clone();
-                            cfg.quiet_hours_enabled = false;
-                            heartbeat.set_config(cfg).await;
-                        }
-                        tokio::spawn(async move {
-                            heartbeat.run(heartbeat_shutdown_rx).await;
-                        });
-                        info!("Heartbeat runner started (HTTP + PX task dispatch)");
-                    }
+                    let _heartbeat_shutdown_tx = spawn_spine_heartbeat(
+                        Arc::clone(&spine_heartbeat_state),
+                        Arc::clone(&spine_task_manager),
+                        pipeline.emitter(),
+                        "Heartbeat runner started (HTTP + PX task dispatch)",
+                    )
+                    .await;
 
                     // Start HTTP server (blocks)
                     let emitter = pipeline.emitter();
