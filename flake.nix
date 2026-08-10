@@ -96,7 +96,10 @@ tar.extractall(os.environ['out'] + '/lib')
           allowBuiltinFetchGit = true;
         };
 
-        cargoBuildFlags = [ "-p" "pares-agens-cli" ];
+        # The packaged daemon is the spine host.  Its executable is renamed in
+        # postInstall so consumers retain the stable `pares-agens` command
+        # while receiving the PX-driven `serve-spine` surface.
+        cargoBuildFlags = [ "-p" "agens-plugin" ];
         # Real (non-ignored) offline BGE embedder test lives behind the
         # `embeddings` feature on pares-agens-core; run it explicitly so the
         # hermetic build proves the vendored model works, not just skips it.
@@ -125,6 +128,13 @@ tar.extractall(os.environ['out'] + '/lib')
           mkdir -p "$FASTEMBED_CACHE_DIR"
           cp -R ${bgeFastembedCache { inherit pkgs; }}/. "$FASTEMBED_CACHE_DIR/"
           chmod -R u+w "$FASTEMBED_CACHE_DIR"
+        '';
+
+        postInstall = ''
+          mv "$out/bin/agens-host" "$out/bin/pares-agens"
+          ln -s "pares-agens" "$out/bin/agens-host"
+          install -d "$out/share/pares-agens/praxis"
+          cp -r praxis/procedures "$out/share/pares-agens/praxis/procedures"
         '';
 
         meta = {
