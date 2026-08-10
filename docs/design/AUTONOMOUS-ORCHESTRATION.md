@@ -44,7 +44,7 @@ could not durably claim a task before giving it to an agent.
 | --- | --- |
 | Two independent runtime paths | The legacy loop bypasses PX decisions; channel behavior differs. |
 | Process-local cooldown and no durable claim | Restarts replay work; concurrent runners can select the same task. |
-| PX action handler was lazy/unwired | `read_evaluable_tasks`, `mark_task_in_progress`, and `dispatch_task` could not complete the decision-to-execution path. |
+| PX action handler was lazy/unwired | `task_list_evaluable_graph`, `mark_task_in_progress`, and `dispatch_task` could not complete the decision-to-execution path. |
 | Direct `Agent.handle_event` dispatch | Task work does not re-enter the same pipeline or preserve the originating chat route. |
 | Flat model task API | `TaskManager` supports `parent_task` and `subtasks`, but the model-facing registry exposes only `task_create`; it cannot create a durable child edge. |
 | Completion is not a fan-in gate | A parent can be completed without first proving all subtasks are terminal/satisfied. |
