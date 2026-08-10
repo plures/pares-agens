@@ -1030,7 +1030,7 @@ impl CerebellumActionHandler {
                 let _ = broadcast_handle.await;
                 Err(ExecutionError::ActionFailed {
                     action: "model_complete".to_string(),
-                    message: e,
+                    message: e.to_string(),
                 })
             }
         }

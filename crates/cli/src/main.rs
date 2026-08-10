@@ -48,7 +48,8 @@ use pares_agens_core::memory::{
     PluresLm,
 };
 use pares_radix_core::model::{
-    ChatMessage as CoreChatMessage, ChatOptions, ModelClient, ToolDefinition, ToolDispatcher,
+    ChatMessage as CoreChatMessage, ChatOptions, ModelClient, ModelClientError, ToolDefinition,
+    ToolDispatcher,
 };
 use pares_radix_core::procedure::{Procedure, ProcedureRegistry};
 use pares_radix_core::plugins::{PluginCrudExecutor, PluginRuntime};
@@ -583,7 +584,7 @@ impl ModelClient for RouterModelClient {
         messages: &[CoreChatMessage],
         tools: &[ToolDefinition],
         options: &ChatOptions,
-    ) -> Result<pares_radix_core::model::ModelCompletion, String> {
+    ) -> Result<pares_radix_core::model::ModelCompletion, ModelClientError> {
         let converted_messages = messages
             .iter()
             .map(|m| {
@@ -643,12 +644,15 @@ impl ModelClient for RouterModelClient {
         }
 
         let router = self.router.read().await.clone();
-        let response = router.chat(&request).await.map_err(|e| e.to_string())?;
+        let response = router
+            .chat(&request)
+            .await
+            .map_err(|e| ModelClientError::Transport(e.to_string()))?;
 
         let choice = response
             .choices
             .first()
-            .ok_or_else(|| "model returned no choices".to_string())?;
+            .ok_or_else(|| ModelClientError::Transport("model returned no choices".to_string()))?;
 
         let tool_calls = choice
             .message
@@ -687,9 +691,11 @@ impl ModelClient for ToggleableModelClient {
         messages: &[CoreChatMessage],
         tools: &[ToolDefinition],
         options: &ChatOptions,
-    ) -> Result<pares_radix_core::model::ModelCompletion, String> {
+    ) -> Result<pares_radix_core::model::ModelCompletion, ModelClientError> {
         if !*self.enabled.read().await {
-            return Err("deep model escalation is disabled".to_string());
+            return Err(ModelClientError::Transport(
+                "deep model escalation is disabled".to_string(),
+            ));
         }
         self.inner.complete(messages, tools, options).await
     }
@@ -2330,25 +2336,15 @@ async fn main() {
                     // Default fallback chain for Copilot: if the primary model
                     // is unavailable (enterprise-only, rate-limited, etc.), try
                     // progressively simpler models.
-                    let conscious_fallbacks = vec![
-                        "gpt-4o".to_string(),
-                        "gpt-4o-mini".to_string(),
-                        "claude-3.5-sonnet".to_string(),
-                    ];
-                    let deep_fallbacks = vec![
-                        "claude-3.5-sonnet".to_string(),
-                        "gpt-4o".to_string(),
-                    ];
-
                     (
                         Arc::new(CopilotModelClient::new_with_model_handle(
                             auth,
                             Arc::clone(&model_name),
-                        ).with_fallbacks(conscious_fallbacks)),
+                        )),
                         Arc::new(CopilotModelClient::new_with_model_handle(
                             deep_auth,
                             Arc::clone(&deep_model_name),
-                        ).with_fallbacks(deep_fallbacks)),
+                        )),
                     )
                 } else {
                     // Set up model router
@@ -2886,7 +2882,7 @@ async fn main() {
                 Arc::new(CopilotModelClient::new_with_model_handle(
                     auth,
                     Arc::clone(&model_name_handle),
-                ).with_fallbacks(vec!["gpt-4o".into(), "gpt-4o-mini".into()]))
+                ))
             } else {
                 let provider_config = ProviderConfig::new(&model_url, api_key.clone());
                 let router_config = RouterConfig::single("default", provider_config);

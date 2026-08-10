@@ -118,7 +118,7 @@ impl AgensProvider {
             .arg(flag("use_copilot", Some("PARES_USE_COPILOT")));
 
         let serve = Command::new("serve")
-            .about("Run the agent as a headless daemon with a channel adapter.")
+            .about("Legacy headless daemon; use serve-spine for PX autonomous orchestration.")
             .arg(opt(
                 "telegram_token",
                 Some("PARES_TELEGRAM_TOKEN"),

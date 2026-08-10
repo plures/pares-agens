@@ -34,7 +34,7 @@ pares-agens-core = { path = "../core" }
 # PLATFORM layer (chronos, event, plugins, shell_executor, spine, StateStore) —
 # referenced via git+[patch] redirect to the local pares-radix checkout (same
 # pattern as crates/core; Stage S-C/S-D scaffolding).
-pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.45" }
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.60" }
 pares-agens-agenda = { path = "../agenda" }
 # Marketplace crate — provides the skill-workshop authoring lifecycle
 # (ProposalStore / SkillProposal) exposed via the `skill_workshop` MCP tool.
@@ -42,14 +42,14 @@ pares-agens-marketplace = { path = "../marketplace" }
 # Praxis (PraxisModule, px compiler/executor) — git+[patch] redirect to local
 # pares-radix crates/praxis (the agens crates/praxis is a different crate,
 # `pares-agens-praxis`; the radix_handler imports `pares_radix_praxis::`).
-pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.45" }
+pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.60" }
 # .px engine (parser/compiler/executor) is consumed THROUGH PluresDB per the
 # px-through-PluresDB doctrine (ADR-0021 / TASK-PX-CANON): pluresdb-px is the
 # canonical consumption surface. Same git source + rev as the other pluresdb-px
 # consumers in this workspace (crates/core, crates/agens-plugin) — do NOT depend
 # on plures/praxis (praxis-native) directly.
-pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1" }
+pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "2af92b1923e11e41c9103ad8f14900b179d839f6" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
-pluresdb = { git = "https://github.com/plures/pluresdb", rev = "d08f88b5410384235f586320bafb89c4be3aa7a1", features = ["embeddings"] }
+pluresdb = { git = "https://github.com/plures/pluresdb", rev = "2af92b1923e11e41c9103ad8f14900b179d839f6", features = ["embeddings"] }

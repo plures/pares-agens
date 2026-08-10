@@ -243,7 +243,7 @@ impl AgentInvoke {
             .map_err(|_| InvokeError::Timeout {
                 ms: self.config.timeout_ms,
             })?
-            .map_err(InvokeError::ModelError)?;
+            .map_err(|e| InvokeError::ModelError(e.to_string()))?;
 
         // ── Extract text response ─────────────────────────────────────────────
         let raw_response = completion

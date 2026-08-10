@@ -219,7 +219,7 @@ async fn run_sub_task(
                     agent_name: agent_name.clone(),
                     output: Err(DelegationError::ModelError {
                         agent: agent_name.clone(),
-                        message: e,
+                        message: e.to_string(),
                     }
                     .to_string()),
                 };

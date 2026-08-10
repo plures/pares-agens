@@ -1498,11 +1498,13 @@ impl Agent {
             let completion = if let (Some(tx), 0) = (stream_tx, turn) {
                 model_client
                     .complete_stream(&messages_for_model, &tools, options, tx.clone())
-                    .await?
+                    .await
+                    .map_err(|e| e.to_string())?
             } else {
                 model_client
                     .complete(&messages_for_model, &tools, options)
-                    .await?
+                    .await
+                    .map_err(|e| e.to_string())?
             };
             let latency_ms = model_start.elapsed().as_millis();
             info!(
