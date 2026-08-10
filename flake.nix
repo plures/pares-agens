@@ -132,6 +132,7 @@ tar.extractall(os.environ['out'] + '/lib')
 
         postInstall = ''
           mv "$out/bin/agens-host" "$out/bin/pares-agens"
+          ln -s "pares-agens" "$out/bin/agens-host"
           install -d "$out/share/pares-agens/praxis"
           cp -r praxis/procedures "$out/share/pares-agens/praxis/procedures"
         '';
