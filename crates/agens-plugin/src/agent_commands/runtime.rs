@@ -83,6 +83,138 @@ struct ToggleableModelClient {
     enabled: Arc<RwLock<bool>>,
 }
 
+/// Channel-independent command gate for the live Spine model boundary.
+///
+/// Every channel ultimately produces a `ModelRequest`; handling operational
+/// commands here therefore keeps Telegram, stdio/TUI, and HTTP consistent and
+/// prevents them from being answered by a model.  This is deliberately a small
+/// diagnostics I/O edge.  Conversational routing remains `.px`-owned.
+struct SpineCommandGate {
+    inner: pares_radix_core::spine::procedures::model_invoker::ModelInvoker,
+    model: String,
+    tool_count: usize,
+}
+
+impl SpineCommandGate {
+    fn new(
+        inner: pares_radix_core::spine::procedures::model_invoker::ModelInvoker,
+        model: String,
+        tool_count: usize,
+    ) -> Self {
+        Self {
+            inner,
+            model,
+            tool_count,
+        }
+    }
+}
+
+fn spine_command_reply(content: &str, model: &str, tool_count: usize) -> Option<String> {
+    let command = content
+        .split_whitespace()
+        .next()?
+        .strip_prefix('/')?
+        .split('@')
+        .next()?
+        .to_ascii_lowercase();
+
+    match command.as_str() {
+        "start" | "help" | "commands" => Some([
+            "Pares Agens Spine commands",
+            "/commands or /help — show this command list",
+            "/status or /health — live runtime snapshot",
+            "/version — build information",
+            "",
+            "Commands are handled before model invocation on every channel.",
+        ].join("\n")),
+        "status" | "health" => {
+            let uptime = spine_process_uptime();
+            let hostname = current_hostname();
+            let rss = current_process_rss_kib()
+                .map(|value| format!("{value} KiB"))
+                .unwrap_or_else(|| "n/a".to_string());
+            Some(format!(
+                "🤖 Pares Agens v{} (Spine runtime)\n\
+                 ⏱️ Uptime: {uptime} · PID: {} · RSS: {rss}\n\
+                 🧠 Model: {model}\n\
+                 ⚡ Event Spine: active\n\
+                 🔧 Tools: {tool_count} registered\n\
+                 🗄 PluresDB: ~/.pares-radix/runtime-state/\n\
+                 🖥 Host: {hostname}",
+                env!("CARGO_PKG_VERSION"),
+                std::process::id(),
+            ))
+        }
+        "version" => Some(format!(
+            "Pares Agens v{} (Spine runtime active)",
+            env!("CARGO_PKG_VERSION")
+        )),
+        _ => Some(format!(
+            "/{command} is not registered by the live Spine command surface. Use /commands."
+        )),
+    }
+}
+
+fn spine_process_uptime() -> String {
+    let seconds = std::fs::read_to_string("/proc/uptime")
+        .ok()
+        .and_then(|contents| contents.split_whitespace().next()?.parse::<f64>().ok())
+        .and_then(|system_uptime| {
+            let stat = std::fs::read_to_string(format!("/proc/{}/stat", std::process::id())).ok()?;
+            let start_ticks = stat.split_whitespace().nth(21)?.parse::<u64>().ok()?;
+            Some((system_uptime as u64).saturating_sub(start_ticks / 100))
+        });
+    seconds
+        .map(|value| format!("{}h {}m", value / 3600, (value % 3600) / 60))
+        .unwrap_or_else(|| "unavailable".to_string())
+}
+
+#[async_trait]
+impl pares_radix_core::spine::pipeline::SpineProcedure for SpineCommandGate {
+    fn name(&self) -> &str {
+        "spine_command_gate"
+    }
+
+    fn handles(&self) -> Option<Vec<&'static str>> {
+        Some(vec!["model_request"])
+    }
+
+    async fn handle(
+        &self,
+        event: &pares_radix_core::spine::event::SpineEvent,
+        emitter: &pares_radix_core::spine::pipeline::PipelineEmitter,
+    ) {
+        use pares_radix_core::spine::event::SpineEvent;
+        use pares_radix_core::spine::pipeline::SpineProcedure;
+
+        let SpineEvent::ModelRequest {
+            source,
+            chat_id,
+            content,
+            metadata,
+            ..
+        } = event
+        else {
+            return;
+        };
+
+        if let Some(reply) = spine_command_reply(content, &self.model, self.tool_count) {
+            emitter
+                .emit(SpineEvent::DeliveryRequest {
+                    id: SpineEvent::new_id(),
+                    channel: source.clone(),
+                    chat_id: chat_id.clone(),
+                    content: reply,
+                    metadata: metadata.clone(),
+                })
+                .await;
+            return;
+        }
+
+        self.inner.handle(event, emitter).await;
+    }
+}
+
 impl ToggleableModelClient {
     fn new(inner: Arc<dyn ModelClient>, enabled: Arc<RwLock<bool>>) -> Self {
         Self { inner, enabled }
@@ -3787,17 +3919,21 @@ pub(crate) async fn run_serve_spine(
                     &conversation_store,
                 ))))
                 .await;
+            let spine_tool_count = spine_tool_dispatcher.available_tools().await.len();
+            let model_invoker = ModelInvoker::with_system_prompt(
+                Arc::clone(&model_client),
+                Arc::clone(&spine_tool_dispatcher),
+                &system_prompt,
+            )
+            .with_conversation_store(Arc::clone(&conversation_store))
+            .with_task_manager(Arc::clone(&spine_task_manager))
+            .with_stream_sender(stream_broadcast_tx.clone());
             pipeline
-                .register(Arc::new(
-                    ModelInvoker::with_system_prompt(
-                        Arc::clone(&model_client),
-                        Arc::clone(&spine_tool_dispatcher),
-                        &system_prompt,
-                    )
-                    .with_conversation_store(Arc::clone(&conversation_store))
-                    .with_task_manager(Arc::clone(&spine_task_manager))
-                    .with_stream_sender(stream_broadcast_tx.clone()),
-                ))
+                .register(Arc::new(SpineCommandGate::new(
+                    model_invoker,
+                    model.clone(),
+                    spine_tool_count,
+                )))
                 .await;
             pipeline
                 .register(Arc::new(ToolExecutor::new(Arc::clone(&spine_tool_dispatcher))))
@@ -3824,6 +3960,9 @@ pub(crate) async fn run_serve_spine(
                 use pares_radix_core::spine::actions::CompositeActionHandler;
                 use pares_radix_core::spine::task_dispatch_actions::TaskDispatchActionHandler;
                 use pares_radix_core::task_executor::TaskDispatcher;
+                use pares_agens_core::orchestrator::actions::{
+                    CerebellumActionHandler, SpineActionRouter,
+                };
 
                 let tool_handler = Arc::new(ToolDispatchActionHandler::new(Arc::clone(&spine_tool_dispatcher)));
                 let mut composite = CompositeActionHandler::new(
@@ -3840,14 +3979,44 @@ pub(crate) async fn run_serve_spine(
                     task_dispatcher,
                     Some(Arc::clone(&spine_task_manager)),
                 )));
-                let px_action_handler: Arc<dyn AsyncActionHandler> =
-                    Arc::new(composite);
-
+                // The platform composite owns durable PluresDB, task and tool
+                // boundaries. Cognition actions are a separate, explicit
+                // registration: without this router they fell through to the
+                // model tool registry and every `.px` classification/routing
+                // step was reported as an unregistered tool.
+                let cognition: Arc<dyn AsyncActionHandler> = Arc::new(
+                    CerebellumActionHandler::new_minimal()
+                        .with_model_client(Arc::clone(&model_client))
+                        .with_tool_dispatcher(Arc::clone(&spine_tool_dispatcher)),
+                );
                 // Load from repo-local praxis/ (shipped with the binary)
                 let praxis_dirs = [
                     PathBuf::from(&home).join(".pares-radix/praxis/procedures"),
                     PathBuf::from(&home).join(".pares-radix/praxis/spine"),
                 ];
+
+                // Build the named procedure bridge before registering reactive
+                // triggers. Reactive registration only maps event patterns;
+                // the bridge is what lets one `.px` procedure invoke another
+                // by name without falling through to the model tool registry.
+                let spine_action_router = Arc::new(SpineActionRouter::new(
+                    Arc::new(composite),
+                    cognition,
+                ));
+                let procedure_bridge = Arc::new(PxBridge::new(
+                    Arc::clone(&spine_action_router) as Arc<dyn AsyncActionHandler>,
+                ));
+                let mut bridge_registered = 0;
+                for praxis_dir in &praxis_dirs {
+                    if praxis_dir.is_dir() {
+                        bridge_registered += procedure_bridge.load_from_directory(praxis_dir).await;
+                    }
+                }
+                spine_action_router
+                    .set_procedure_bridge(Arc::clone(&procedure_bridge))
+                    .await;
+                info!(registered = bridge_registered, "Named .px procedure bridge loaded");
+                let px_action_handler: Arc<dyn AsyncActionHandler> = spine_action_router;
 
                 let mut total_registered = 0;
                 for praxis_dir in &praxis_dirs {
@@ -6056,6 +6225,20 @@ pub(crate) async fn run_classify(message: String, bitnet_model_path: std::path::
 mod tests {
     use super::*;
     use pares_radix_core::model::{ModelClientError, ModelCompletion, ToolCall, ToolDefinition};
+
+    #[test]
+    fn spine_commands_are_channel_independent_and_skip_model_invocation() {
+        let status = spine_command_reply("/status", "gpt-test", 13)
+            .expect("status must be claimed by the shared command gate");
+        assert!(status.contains("gpt-test"));
+        assert!(status.contains("13 registered"));
+
+        let help = spine_command_reply("/commands", "gpt-test", 13)
+            .expect("commands must be claimed by the shared command gate");
+        assert!(help.contains("/status"));
+
+        assert!(spine_command_reply("ordinary conversation", "gpt-test", 13).is_none());
+    }
 
     struct TestModelClient;
 

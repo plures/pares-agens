@@ -31,6 +31,7 @@ use tokio::sync::{broadcast, mpsc, RwLock};
 use std::sync::RwLock as StdRwLock;
 
 use crate::memory::embed::EmbeddingProvider;
+use super::px_bridge::PxBridge;
 use pares_radix_core::model::StreamDelta;
 use pares_radix_core::px_adapter::AsyncActionHandler;
 use pares_radix_core::spine::event::SpineEvent;
@@ -75,6 +76,196 @@ pub struct CerebellumActionHandler {
     live_context_tx: broadcast::Sender<Value>,
     /// Session ids whose live feed is suspended while Chronos is inspected.
     paused_live_context_sessions: Arc<RwLock<HashSet<String>>>,
+}
+
+/// Routes the live Spine `.px` action surface to its owning implementation.
+///
+/// The platform composite owns durable state, conversation, task and tool IO.
+/// Agens owns cognition-only actions such as classification and routing.  The
+/// previous `serve-spine` wiring installed only the platform composite; unknown
+/// cognition actions were consequently treated as model tools and failed in the
+/// procedure registry.  Keeping this routing explicit preserves the boundary:
+/// `.px` still chooses the flow, while each Rust handler performs only its
+/// concrete IO or deterministic primitive.
+pub struct SpineActionRouter {
+    platform: Arc<dyn AsyncActionHandler>,
+    cognition: Arc<dyn AsyncActionHandler>,
+    /// Named `.px` procedures loaded for direct procedure-to-procedure calls.
+    procedure_bridge: RwLock<Option<Arc<PxBridge>>>,
+}
+
+impl SpineActionRouter {
+    /// Create a router for a live Spine runtime.
+    pub fn new(
+        platform: Arc<dyn AsyncActionHandler>,
+        cognition: Arc<dyn AsyncActionHandler>,
+    ) -> Self {
+        Self {
+            platform,
+            cognition,
+            procedure_bridge: RwLock::new(None),
+        }
+    }
+
+    /// Attach the named procedure bridge after the live handler exists.
+    ///
+    /// The ordering breaks the natural cycle: the bridge needs this router as
+    /// its action boundary, and this router needs the loaded bridge to resolve
+    /// calls from one `.px` procedure to another.
+    pub async fn set_procedure_bridge(&self, bridge: Arc<PxBridge>) {
+        *self.procedure_bridge.write().await = Some(bridge);
+    }
+
+    fn get_field(params: &Value) -> Result<Value, ExecutionError> {
+        let field = params
+            .get("field")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ExecutionError::ActionFailed {
+                action: "get_field".to_string(),
+                message: "missing field".to_string(),
+            })?;
+        Ok(params
+            .get("object")
+            .and_then(Value::as_object)
+            .and_then(|object| object.get(field))
+            .cloned()
+            .or_else(|| params.get("default").cloned())
+            .unwrap_or(Value::Null))
+    }
+
+    fn append_to_list(params: &Value) -> Result<Value, ExecutionError> {
+        let mut list = params
+            .get("list")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        match params.get("items") {
+            Some(Value::Array(items)) => list.extend(items.iter().cloned()),
+            Some(item) => list.push(item.clone()),
+            None => {
+                return Err(ExecutionError::ActionFailed {
+                    action: "append_to_list".to_string(),
+                    message: "missing items".to_string(),
+                });
+            }
+        }
+        Ok(Value::Array(list))
+    }
+
+    fn get_last_item(params: &Value) -> Result<Value, ExecutionError> {
+        let list = params
+            .get("list")
+            .and_then(Value::as_array)
+            .ok_or_else(|| ExecutionError::ActionFailed {
+                action: "get_last_item".to_string(),
+                message: "missing list".to_string(),
+            })?;
+        Ok(list.last().cloned().unwrap_or(Value::Null))
+    }
+
+    fn compute_context_budget(params: &Value) -> Result<Value, ExecutionError> {
+        let window = params
+            .get("window")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| ExecutionError::ActionFailed {
+                action: "compute_context_budget".to_string(),
+                message: "missing numeric window".to_string(),
+            })?;
+        let output = params
+            .get("reserve_for_output")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let system = params
+            .get("reserve_for_system")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        Ok(Value::from(window.saturating_sub(output.saturating_add(system))))
+    }
+}
+
+/// Cognition actions that must never be sent through the model-tool registry.
+///
+/// State and history verbs deliberately remain absent: the platform composite
+/// is the sole owner of their shared, durable PluresDB backing store.
+const COGNITION_ACTIONS: &[&str] = &[
+    "compute_embedding",
+    "cosine_similarity",
+    "get_current_time",
+    "emit_event",
+    "pause_live_context_subscription",
+    "resume_live_context_subscription",
+    "publish_live_context_event",
+    "normalize_text",
+    "detect_intent",
+    "score_complexity",
+    "detect_tools_needed",
+    "match_plugin",
+    "extract_topic",
+    "determine_model_tier",
+    "classify",
+    "model_complete",
+    "classify_continuation",
+    "classify_intent",
+    "word_count",
+    "match_patterns",
+    "embed_text",
+    "recall_memories",
+    "store_memory",
+    "extract_entities",
+    "manage_context",
+    "build_messages",
+    "append_tail",
+    "dispatch_tools",
+    "build_tool_followup",
+    "timestamp_now",
+    "format_string",
+    "find_most_recent",
+    "generate_id",
+];
+
+#[async_trait]
+impl AsyncActionHandler for SpineActionRouter {
+    async fn call(&self, name: &str, params: &Value) -> Result<Value, ExecutionError> {
+        if COGNITION_ACTIONS.contains(&name) {
+            return self.cognition.call(name, params).await;
+        }
+
+        match name {
+            "get_field" => return Self::get_field(params),
+            "append_to_list" => return Self::append_to_list(params),
+            "get_last_item" => return Self::get_last_item(params),
+            "compute_context_budget" => return Self::compute_context_budget(params),
+            // These aliases intentionally share the platform's one durable
+            // store; they are not a second, in-memory state implementation.
+            "pluresdb_read" | "db_get" => return self.platform.call("read_state", params).await,
+            "pluresdb_write" | "db_set" => return self.platform.call("write_state", params).await,
+            _ => {}
+        }
+
+        // `.px` helpers (for example `route_dispatch`, `classify_message` and
+        // `filter_leaf_tasks`) are procedure calls, not model tools.  Marshal
+        // their named parameters into the bridge before consulting platform IO.
+        let procedure_bridge = self.procedure_bridge.read().await.clone();
+        if let Some(bridge) = procedure_bridge {
+            let vars = params
+                .as_object()
+                .map(|values| {
+                    values
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if let Some(result) = bridge.call(name, vars).await {
+                return result.map_err(|message| ExecutionError::ActionFailed {
+                    action: name.to_string(),
+                    message,
+                });
+            }
+        }
+
+        self.platform.call(name, params).await
+    }
 }
 
 impl CerebellumActionHandler {
@@ -1137,7 +1328,66 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use serde_json::json;
+
+    struct PlatformMarker;
+
+    #[async_trait]
+    impl AsyncActionHandler for PlatformMarker {
+        async fn call(&self, name: &str, _params: &Value) -> Result<Value, ExecutionError> {
+            Ok(json!({"platform_action": name}))
+        }
+    }
+
+    #[tokio::test]
+    async fn live_spine_router_keeps_cognition_out_of_tool_dispatch() {
+        let router = SpineActionRouter::new(
+            Arc::new(PlatformMarker),
+            Arc::new(CerebellumActionHandler::new_minimal()),
+        );
+
+        let classification = router
+            .call("detect_intent", &json!({"text": "please inspect this"}))
+            .await
+            .expect("cognition action should be registered directly");
+        assert!(classification.get("platform_action").is_none());
+
+        let durable = router
+            .call("write_state", &json!({"key": "x", "value": 1}))
+            .await
+            .expect("platform action should retain durable owner");
+        assert_eq!(durable["platform_action"], "write_state");
+    }
+
+    #[test]
+    fn live_spine_router_utility_actions_preserve_px_values() {
+        assert_eq!(
+            SpineActionRouter::get_field(&json!({
+                "object": {"name": "spine"},
+                "field": "name",
+            }))
+            .unwrap(),
+            json!("spine")
+        );
+        assert_eq!(
+            SpineActionRouter::append_to_list(&json!({
+                "list": ["parent"],
+                "items": ["child"],
+            }))
+            .unwrap(),
+            json!(["parent", "child"])
+        );
+        assert_eq!(
+            SpineActionRouter::compute_context_budget(&json!({
+                "window": 32_000,
+                "reserve_for_output": 4_096,
+                "reserve_for_system": 2_048,
+            }))
+            .unwrap(),
+            json!(25_856)
+        );
+    }
 
     // ── cosine_similarity tests ──────────────────────────────────────────────
 
