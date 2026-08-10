@@ -1101,7 +1101,11 @@ impl TaskGraphToolDispatcher {
     }
 
     fn resolve_active_task_id(&self, task_id: &str) -> Option<String> {
-        if self.task_manager.get_task(task_id).is_some() {
+        if self
+            .task_manager
+            .get_task(task_id)
+            .is_some_and(|task| !task.is_terminal())
+        {
             return Some(task_id.to_string());
         }
 
