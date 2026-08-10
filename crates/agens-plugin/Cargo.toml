@@ -24,14 +24,14 @@ path = "src/bin/pares-agens.rs"
 # longer a dependency. As of the v1.55.13 bump, pares-radix-cli / -cli-api were
 # removed upstream (breaking commit 3172cfa de-cognition cli-runtime/cli-api);
 # the CommandProvider seam is now agens-local (see host_runtime + agent_commands).
-pares-radix-praxis      = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.60" }
+pares-radix-praxis      = { git = "https://github.com/plures/pares-radix.git", rev = "049f277d3f0c589763c476dcc04221a51fa57474" }
 # Platform crates pulled in by the relocated run_with_providers host machinery
 # (Cluster -> pares_rector, McpServe -> pares_radix_core + local mcp-server).
 # Keep pares-radix-* tags aligned where possible to avoid duplicate-crate type/trait mismatches.
 
-pares-radix-core        = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.60" }
+pares-radix-core        = { git = "https://github.com/plures/pares-radix.git", rev = "049f277d3f0c589763c476dcc04221a51fa57474" }
 pares-agens-mcp-server  = { path = "../mcp-server" }
-pares-rector            = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.60", package = "pares-rector" }
+pares-rector            = { git = "https://github.com/plures/pares-radix.git", rev = "049f277d3f0c589763c476dcc04221a51fa57474", package = "pares-rector" }
 
 # --- HOST / COGNITION crates (Option A: agens OWNS these) ---
 # Stage R3a: the cognition/host crates are the LOCAL agens copies (path deps).
@@ -47,8 +47,8 @@ pares-agens-tui         = { path = "../tui" }
 
 # --- pluresdb (headroom + px executor types; pinned to the SAME revs radix core uses
 #     so the ActionHandler/CrdtStore types unify across the graph) ---
-pluresdb    = { git = "https://github.com/plures/pluresdb", rev = "2af92b1923e11e41c9103ad8f14900b179d839f6" }
-pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "2af92b1923e11e41c9103ad8f14900b179d839f6" }
+pluresdb    = { git = "https://github.com/plures/pluresdb", rev = "328e060016fdc67e704712cffd71fcd9c38bfbf7" }
+pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "328e060016fdc67e704712cffd71fcd9c38bfbf7" }
 
 # --- headroom leaf deps ---
 sha2 = "0.11"

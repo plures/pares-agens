@@ -11,6 +11,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use pares_radix_core::model::{
     ChatMessage, ChatOptions, ModelClient, ModelClientError, ModelCompletion, ToolDefinition,
+    TransportFailure,
 };
 use tokio::sync::Mutex;
 
@@ -91,7 +92,7 @@ impl ModelClient for BitnetModelClient {
         let runner = self
             .ensure_runner()
             .await
-            .map_err(ModelClientError::Transport)?;
+            .map_err(|error| ModelClientError::Transport(TransportFailure::message(error)))?;
 
         // Build a simple prompt from messages.
         let prompt = messages
@@ -135,8 +136,16 @@ impl ModelClient for BitnetModelClient {
             Ok(output)
         })
         .await
-        .map_err(|e| ModelClientError::Transport(format!("bitnet inference task panicked: {e}")))?
-        .map_err(|e| ModelClientError::Transport(format!("bitnet inference failed: {e}")))?;
+        .map_err(|error| {
+            ModelClientError::Transport(TransportFailure::message(format!(
+                "bitnet inference task panicked: {error}"
+            )))
+        })?
+        .map_err(|error| {
+            ModelClientError::Transport(TransportFailure::message(format!(
+                "bitnet inference failed: {error}"
+            )))
+        })?;
 
         Ok(ModelCompletion {
             content: Some(result),
