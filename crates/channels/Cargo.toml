@@ -20,10 +20,10 @@ serde = { workspace = true }
 axum = "0.8"
 tower-http = { version = "0.7", features = ["cors"] }
 pares-agens-core = { path = "../core" }
-pares-radix-core = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.60" }
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", rev = "049f277d3f0c589763c476dcc04221a51fa57474" }
 pares-agens-marketplace = { path = "../marketplace" }
 pares-agens-agenda = { path = "../agenda" }
-pares-rector = { git = "https://github.com/plures/pares-radix.git", tag = "v1.55.60", package = "pares-rector" }
+pares-rector = { git = "https://github.com/plures/pares-radix.git", rev = "049f277d3f0c589763c476dcc04221a51fa57474", package = "pares-rector" }
 
 [features]
 default = []
@@ -31,4 +31,4 @@ default = []
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 serde_json = { workspace = true }
-pluresdb = { git = "https://github.com/plures/pluresdb", rev = "2af92b1923e11e41c9103ad8f14900b179d839f6" }
+pluresdb = { git = "https://github.com/plures/pluresdb", rev = "328e060016fdc67e704712cffd71fcd9c38bfbf7" }
