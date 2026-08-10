@@ -187,6 +187,9 @@ pub struct Orchestrator {
     /// Optional dataflow bridge for queue-driven procedures.
     /// When loaded, takes precedence over px_bridge (trigger-based).
     dataflow_bridge: Option<Arc<dataflow_bridge::DataflowBridge>>,
+    /// Optional Chronos timeline for emitting structured `recall_query`
+    /// operations (ADR-0019 4.3) when autorecall runs.
+    chronos: Option<Arc<pares_radix_core::chronos::ChronosTimeline>>,
 }
 
 impl Orchestrator {
@@ -202,6 +205,7 @@ impl Orchestrator {
             conversation_store: None,
             px_bridge: None,
             dataflow_bridge: None,
+            chronos: None,
         }
     }
 
@@ -217,6 +221,7 @@ impl Orchestrator {
             conversation_store: None,
             px_bridge: None,
             dataflow_bridge: None,
+            chronos: None,
         }
     }
 
@@ -238,10 +243,22 @@ impl Orchestrator {
         self
     }
 
+    /// Access the underlying PxBridge (if loaded) for direct procedure calls.
+    pub fn px_bridge(&self) -> Option<&Arc<PxBridge>> {
+        self.px_bridge.as_ref()
+    }
+
     /// Attach a dataflow bridge for queue-driven procedure execution.
     /// When set, takes precedence over px_bridge (trigger-based).
     pub fn with_dataflow_bridge(mut self, bridge: Arc<dataflow_bridge::DataflowBridge>) -> Self {
         self.dataflow_bridge = Some(bridge);
+        self
+    }
+
+    /// Attach a Chronos timeline so autorecall emits a structured
+    /// `recall_query` operation (ADR-0019 4.3) on every recall call.
+    pub fn with_chronos(mut self, chronos: Arc<pares_radix_core::chronos::ChronosTimeline>) -> Self {
+        self.chronos = Some(chronos);
         self
     }
 
@@ -323,6 +340,41 @@ impl Orchestrator {
                 .map_err(|e| CerebellumError::Memory(e.to_string()))?;
             let recall_elapsed = recall_start.elapsed();
             tracing::info!(recall_ms = recall_elapsed.as_millis(), memories_found = memories.len(), "memory recall complete");
+
+            if let Some(chronos) = &self.chronos {
+                let session_id = event.chat_id().unwrap_or("unknown").to_string();
+                let turn_id = uuid::Uuid::new_v4().to_string();
+                let inputs = serde_json::json!({
+                    "query": q,
+                    "limit": self.config.recall_limit,
+                    "exclude_categories": exclude_categories,
+                })
+                .to_string();
+                let outputs = serde_json::json!({
+                    "hit_count": memories.len(),
+                    "ids": memories.iter().map(|m| m.id.clone()).collect::<Vec<_>>(),
+                })
+                .to_string();
+                let operation = pares_radix_core::chronos::ChronosOperation {
+                    kind: "recall_query".to_string(),
+                    session_id: session_id.clone(),
+                    turn_id,
+                    inputs,
+                    outputs,
+                    duration_ms: recall_elapsed.as_millis() as u64,
+                };
+                let entry = chronos.build_entry_with_operation(
+                    &format!("recall:{session_id}"),
+                    "pares-agens",
+                    pares_radix_core::chronos::ChronosAction::ToolInvoked,
+                    pares_radix_core::chronos::ChronosLevel::Info,
+                    &serde_json::json!({ "query": q }),
+                    vec![],
+                    Some("autorecall query".into()),
+                    operation,
+                );
+                chronos.record(&entry);
+            }
 
             // Convert recalled memories to ContextItems
             memories
@@ -585,40 +637,69 @@ impl Orchestrator {
         }
     }
 
+    /// Build the factual classification input consumed by `route_dispatch`.
+    /// Classification is an input/model boundary; the destination decision is
+    /// made by the .px procedure.
+    fn route_dispatch_classification(&self, event: &Event) -> serde_json::Value {
+        match event {
+            Event::Message { content, .. } => {
+                let classification = self
+                    .classifier
+                    .as_ref()
+                    .map(|classifier| classifier.classify(content))
+                    .unwrap_or_else(|| {
+                        classifier::CerebellumClassifier::heuristic_only(Vec::new()).classify(content)
+                    });
+                serde_json::to_value(classification).unwrap_or_else(|error| {
+                    warn!(%error, "could not serialize message classification for .px routing");
+                    serde_json::json!({
+                        "intent": "chat",
+                        "complexity": 1,
+                        "needs_tools": false,
+                        "needs_deep_model": false,
+                    })
+                })
+            }
+            _ => serde_json::json!({
+                "intent": "system",
+                "complexity": 0,
+                "needs_tools": false,
+                "needs_deep_model": false,
+            }),
+        }
+    }
+
     /// Try routing via the px_bridge (trigger-based .px procedures).
-    /// Falls back to Rust-native router if px_bridge is inactive, missing, or errors.
+    ///
+    /// route_dispatch is the primary decision source once the bridge is
+    /// loaded and active. The legacy Rust `router::decide()` remains the
+    /// fallback until route_dispatch is proven equivalent via tests in
+    /// production (bridge missing/inactive, call errors, or an unparseable
+    /// result all fall back to the Rust router rather than silently
+    /// defaulting to `Route::Standard`).
     async fn try_px_bridge_route(&self, event: &Event, learned_context: &str) -> Route {
-        if let Some(ref bridge) = self.px_bridge {
-            if bridge.is_active() {
-                let event_type = event.kind().to_string();
-                let content = extract_query(event).unwrap_or_default();
-                match bridge
-                    .route_event(
-                        &event_type,
-                        &content,
-                        learned_context,
-                        self.config.enable_subconscious,
-                        f64::from(self.config.complexity_threshold),
-                    )
-                    .await
-                {
-                    Some(Ok(val)) => {
-                        parse_px_route(&val).unwrap_or_else(|| {
-                            debug!(raw = %val, "px route returned unparseable result, falling back to Rust");
-                            router::decide(event, learned_context, &self.config)
-                        })
-                    }
-                    Some(Err(e)) => {
-                        warn!(error = %e, "px route_event failed, falling back to Rust");
-                        router::decide(event, learned_context, &self.config)
-                    }
-                    None => router::decide(event, learned_context, &self.config),
-                }
-            } else {
+        let Some(bridge) = &self.px_bridge else {
+            return router::decide(event, learned_context, &self.config);
+        };
+        if !bridge.is_active() {
+            return router::decide(event, learned_context, &self.config);
+        }
+
+        let event_type = event.kind().to_string();
+        let classification = self.route_dispatch_classification(event);
+        match bridge
+            .route_dispatch(classification, learned_context, &event_type)
+            .await
+        {
+            Some(Ok(val)) => parse_px_route(&val).unwrap_or_else(|| {
+                debug!(raw = %val, "px route returned unparseable result, falling back to Rust");
+                router::decide(event, learned_context, &self.config)
+            }),
+            Some(Err(e)) => {
+                warn!(error = %e, "px route_dispatch failed, falling back to Rust");
                 router::decide(event, learned_context, &self.config)
             }
-        } else {
-            router::decide(event, learned_context, &self.config)
+            None => router::decide(event, learned_context, &self.config),
         }
     }
 
@@ -912,7 +993,7 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 /// | `known_failure` | always `false` (no failure log in orchestrator) |
 /// | `is_destructive` | `true` for `ToolResult` with destructive tool prefixes |
 /// | `is_external` | `true` for `ToolResult` whose name suggests an external call |
-fn build_authorization_context(event: &Event) -> RuleContext {
+pub fn build_authorization_context(event: &Event) -> RuleContext {
     let (is_destructive, is_external) = match event {
         Event::ToolResult { tool_name, .. } => {
             let destructive = tool_name.starts_with("delete_")
@@ -946,6 +1027,7 @@ fn build_authorization_context(event: &Event) -> RuleContext {
 ///
 /// Expected .px output format:
 /// ```json
+/// {"route": "fast"}
 /// {"route": "standard"}
 /// {"route": "deep", "reason": "..."}
 /// {"route": "delegate", "reason": "...", "tasks": [...]}
@@ -956,6 +1038,7 @@ fn parse_px_route(val: &serde_json::Value) -> Option<Route> {
     let route_str = val.get("route")?.as_str()?;
     match route_str {
         "standard" => Some(Route::Standard),
+        "fast" => Some(Route::Fast),
         "procedural" => Some(Route::Procedural),
         "drop" => Some(Route::Drop),
         "deep" => {
@@ -1045,6 +1128,33 @@ mod tests {
             recurring: true,
         };
         assert_eq!(extract_query(&event), None);
+    }
+
+    #[test]
+    fn parse_px_route_accepts_all_destination_shapes() {
+        assert_eq!(parse_px_route(&serde_json::json!({"route": "fast"})), Some(Route::Fast));
+        assert_eq!(
+            parse_px_route(&serde_json::json!({"route": "standard"})),
+            Some(Route::Standard)
+        );
+        assert_eq!(
+            parse_px_route(&serde_json::json!({"route": "procedural"})),
+            Some(Route::Procedural)
+        );
+        assert_eq!(parse_px_route(&serde_json::json!({"route": "drop"})), Some(Route::Drop));
+        assert!(matches!(
+            parse_px_route(&serde_json::json!({"route": "deep", "reason": "complex"})),
+            Some(Route::Deep { reason }) if reason == "complex"
+        ));
+        assert!(matches!(
+            parse_px_route(&serde_json::json!({
+                "route": "delegate",
+                "reason": "parallel work",
+                "tasks": [{"agent_name": "worker", "input": "do work"}]
+            })),
+            Some(Route::Delegate { reason, tasks })
+                if reason == "parallel work" && tasks.len() == 1 && tasks[0].agent_name == "worker"
+        ));
     }
 
     #[test]

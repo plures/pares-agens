@@ -42,17 +42,50 @@ jobs:
     name: Praxis ADR enforcement
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: ADR-0010 duplication check
         run: bash scripts/praxis-duplication-check.sh .
+  disk-cleanup:
+    name: Reclaim self-hosted runner disk space
+    # The reusable CI workflow's rust job runs on the persistent, shared
+    # praxisbot self-hosted runner. GitHub Actions downloads/extracts every
+    # action used by that job (checkout, rust-toolchain, sccache-action,
+    # rust-cache) before any workflow step executes, and that extraction
+    # itself fails with "No space left on device" when stale artifacts from
+    # prior jobs/repos have filled the disk. Proactively reclaim space here,
+    # on the same runner, before the reusable workflow's job is scheduled.
+    runs-on: self-hosted
+    steps:
+      - name: Free disk space
+        shell: bash
+        run: |
+          # Only reclaim space that is provably unused (Nix GC roots and Docker's
+          # own reference counting both skip anything still in use), so this is
+          # safe even if another job is building concurrently on this runner.
+          echo "Disk usage before cleanup:"
+          df -h || true
+          command -v nix >/dev/null 2>&1 && nix store gc 2>/dev/null || true
+          command -v docker >/dev/null 2>&1 && docker system prune -f 2>/dev/null || true
+          echo "Disk usage after cleanup:"
+          df -h || true
   ci:
+    needs: disk-cleanup
     uses: plures/.github/.github/workflows/ci-reusable.yml@main
     with:
-      # ADR-0015: the GUI crates (tauri/desktop) pull gdk-sys, which needs GTK
-      # system libs (gdk-3.0 -> zlib) that require the Nix devShell. The reusable
-      # clippy/check steps run in the bare runner env, so exclude the GUI crates
-      # here and lint/check them separately under `nix develop` (cargo_extra_check).
-      cargo_clippy_flags: "--workspace --all-targets --exclude pares-agens-tauri -- -D warnings"
-      cargo_check_flags: "--workspace --exclude pares-agens-tauri"
+      # praxisbot's job shell is Nix-based and deliberately has no host apt
+      # database. The reusable workflow's bare cargo steps therefore cannot
+      # discover OpenSSL/pkg-config (or GTK for Tauri). Run the full Rust gates
+      # inside this repo's flake devShell, which declares those dependencies.
+      # These are equivalent required clippy and test gates, not skipped checks.
+      skip_lint: true
+      skip_test: true
       cargo_extra_check: |-
-        nix develop --command bash -c 'cargo check --manifest-path crates/tauri-app/Cargo.toml' || nix develop --command bash -c 'unset RUSTC_WRAPPER && cargo check --manifest-path crates/tauri-app/Cargo.toml'
+        # The self-hosted runner persists workspaces between jobs; discard stale
+        # bare-runner artifacts before the Nix build and release them again on
+        # exit (even on failure) to avoid exhausting its disk, which otherwise
+        # makes a later job fail during `Set up job`.
+        rm -rf target
+        trap 'rm -rf target' EXIT
+        nix develop --command bash -c 'unset RUSTC_WRAPPER SCCACHE_GHA_ENABLED; cargo clippy --workspace --all-targets --exclude pares-agens-tauri -- -D warnings'
+        nix develop --command bash -c 'unset RUSTC_WRAPPER SCCACHE_GHA_ENABLED; cargo check --manifest-path crates/tauri-app/Cargo.toml'
+        nix develop --command bash -c 'unset RUSTC_WRAPPER SCCACHE_GHA_ENABLED; cargo test --workspace --exclude pares-agens-tauri'

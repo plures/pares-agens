@@ -277,7 +277,7 @@ async fn run_sub_task(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pares_radix_core::model::{ChatMessage, ChatOptions, ModelCompletion, ToolDefinition};
+    use pares_radix_core::model::{ChatMessage, ChatOptions, ModelClientError, ModelCompletion, ToolDefinition};
     use async_trait::async_trait;
     use serde_json::Value;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -293,7 +293,7 @@ mod tests {
             messages: &[ChatMessage],
             _tools: &[ToolDefinition],
             _options: &ChatOptions,
-        ) -> Result<ModelCompletion, String> {
+        ) -> Result<ModelCompletion, ModelClientError> {
             let last_user = messages
                 .iter()
                 .rev()
@@ -320,8 +320,8 @@ mod tests {
             _messages: &[ChatMessage],
             _tools: &[ToolDefinition],
             _options: &ChatOptions,
-        ) -> Result<ModelCompletion, String> {
-            Err("connection refused".into())
+        ) -> Result<ModelCompletion, ModelClientError> {
+            Err(ModelClientError::Transport("connection refused".into()))
         }
     }
 
@@ -352,7 +352,7 @@ mod tests {
             messages: &[ChatMessage],
             _tools: &[ToolDefinition],
             _options: &ChatOptions,
-        ) -> Result<ModelCompletion, String> {
+        ) -> Result<ModelCompletion, ModelClientError> {
             let n = self.calls.fetch_add(1, Ordering::SeqCst);
             if n == 0 {
                 // First call — request a tool
@@ -523,7 +523,7 @@ mod tests {
                 messages: &[ChatMessage],
                 _tools: &[ToolDefinition],
                 _options: &ChatOptions,
-            ) -> Result<ModelCompletion, String> {
+            ) -> Result<ModelCompletion, ModelClientError> {
                 let system_content: String = messages
                     .iter()
                     .filter(|m| m.role == "system")
@@ -572,7 +572,7 @@ mod tests {
                 messages: &[ChatMessage],
                 _tools: &[ToolDefinition],
                 _options: &ChatOptions,
-            ) -> Result<ModelCompletion, String> {
+            ) -> Result<ModelCompletion, ModelClientError> {
                 let last_user = messages
                     .iter()
                     .rev()

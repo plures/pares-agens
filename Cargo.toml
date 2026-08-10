@@ -10,7 +10,7 @@ default-members = ["crates/core", "crates/channels", "crates/models", "crates/mc
 # generic Linux runners that don't have GTK/GLib system packages preinstalled.
 
 [workspace.package]
-version = "1.64.2"
+version = "1.68.1"
 edition = "2021"
 license = "BSL-1.1"
 repository = "https://github.com/plures/pares-agens"
@@ -30,6 +30,6 @@ crossterm = "0.29"
 # SQLite reader for importing OpenClaw's `memory/main.sqlite` chunk index during
 # migration. `bundled` compiles SQLite from source so no system libsqlite3 is
 # required (verified building on x86_64-pc-windows-msvc).
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 teloxide = { version = "0.17", features = ["macros", "throttle"] }
 clap = { version = "4", features = ["derive", "env"] }

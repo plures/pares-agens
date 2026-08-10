@@ -60,19 +60,19 @@ jobs:
     runs-on: ${{ matrix.platform }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
 
       # ── Node.js for UI build ──────────────────────────────────────────
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 'lts/*'
 
       # ── Rust toolchain ─────────────────────────────────────────────────
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: "1.93.1"
           targets: ${{ matrix.toolchain_targets || matrix.rust_target }}
@@ -205,7 +205,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download all installers
         uses: actions/download-artifact@v8
@@ -226,7 +226,7 @@ jobs:
           fi
 
       - name: Create GitHub Release and upload assets
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: "Pares Agens ${{ steps.tag.outputs.tag }}"

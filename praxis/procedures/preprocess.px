@@ -47,7 +47,7 @@ procedure preprocess(event: string from "inbound") -> preprocessed into "preproc
   manage_context {items: $context, new_items: $entities, token_budget: $token_budget} -> $managed
   pluresdb_write {key: "session:context", value: $managed}
   inject_guidance {session_type: $session_type, context: $managed} -> $guidance
-  route_event {classification: $classification, context: $managed, guidance: $guidance} -> $route
+  route_dispatch {classification: $classification, context: $managed} -> $route
   return {route: $route, classification: $classification}
 
 # Light preprocessing for tool results before feeding back to model

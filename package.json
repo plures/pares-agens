@@ -1,6 +1,6 @@
 {
   "name": "pares-agens",
-  "version": "1.64.2",
+  "version": "1.68.1",
   "private": true,
   "license": "BSL-1.1",
   "repository": {
@@ -11,6 +11,6 @@
     "node": ">=24"
   },
   "devDependencies": {
-    "playwright": "^1.61.1"
+    "playwright": "^1.62.1"
   }
 }

@@ -281,7 +281,7 @@ pub trait InvokableProcedure: Procedure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pares_radix_core::model::{ChatOptions, ModelCompletion, ToolDefinition};
+    use pares_radix_core::model::{ChatOptions, ModelClientError, ModelCompletion, ToolDefinition};
     use std::time::Duration as StdDuration;
     use tokio::time::sleep;
 
@@ -307,7 +307,7 @@ mod tests {
             _messages: &[ChatMessage],
             _tools: &[ToolDefinition],
             _options: &ChatOptions,
-        ) -> Result<ModelCompletion, String> {
+        ) -> Result<ModelCompletion, ModelClientError> {
             Ok(ModelCompletion {
                 content: Some(self.response.clone()),
                 tool_calls: vec![],
@@ -329,7 +329,7 @@ mod tests {
             _messages: &[ChatMessage],
             _tools: &[ToolDefinition],
             _options: &ChatOptions,
-        ) -> Result<ModelCompletion, String> {
+        ) -> Result<ModelCompletion, ModelClientError> {
             sleep(self.delay).await;
             Ok(ModelCompletion {
                 content: Some("late response".into()),
@@ -350,8 +350,8 @@ mod tests {
             _messages: &[ChatMessage],
             _tools: &[ToolDefinition],
             _options: &ChatOptions,
-        ) -> Result<ModelCompletion, String> {
-            Err("upstream unavailable".into())
+        ) -> Result<ModelCompletion, ModelClientError> {
+            Err(ModelClientError::Transport("upstream unavailable".into()))
         }
     }
 
@@ -366,7 +366,7 @@ mod tests {
             _messages: &[ChatMessage],
             _tools: &[ToolDefinition],
             _options: &ChatOptions,
-        ) -> Result<ModelCompletion, String> {
+        ) -> Result<ModelCompletion, ModelClientError> {
             Ok(ModelCompletion {
                 content: None,
                 tool_calls: vec![],
@@ -633,7 +633,7 @@ mod tests {
             messages: &[ChatMessage],
             _tools: &[ToolDefinition],
             _options: &ChatOptions,
-        ) -> Result<ModelCompletion, String> {
+        ) -> Result<ModelCompletion, ModelClientError> {
             // Return the last user message content so we can assert on it.
             let user_msg = messages
                 .iter()
@@ -663,7 +663,7 @@ mod tests {
             _messages: &[ChatMessage],
             _tools: &[ToolDefinition],
             _options: &ChatOptions,
-        ) -> Result<ModelCompletion, String> {
+        ) -> Result<ModelCompletion, ModelClientError> {
             Ok(ModelCompletion {
                 content: Some(self.response.clone()),
                 tool_calls: vec![],

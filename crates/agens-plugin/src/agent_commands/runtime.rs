@@ -445,6 +445,15 @@ impl RuntimeAgentFactory {
         );
         let turn_store: Arc<dyn pares_agens_core::memory::store::MemoryStore> = self.store.clone();
 
+        // Shared Chronos timeline: attached to BOTH the Orchestrator (so
+        // autorecall emits real `recall_query` operations, ADR-0019 4.3)
+        // and the Agent (tool execution auditing), so recall + tool events
+        // land on the same timeline instance.
+        let chronos = Arc::new(pares_radix_core::chronos::ChronosTimeline::with_jsonl_from_env(
+            self.store.crdt_store_arc(),
+        ));
+        let orchestrator = orchestrator.with_chronos(Arc::clone(&chronos));
+
         let agent = Agent::with_cerebellum(memory, orchestrator, plures_lm)
                 .with_model(
                     Arc::clone(&self.model_client),
@@ -455,12 +464,7 @@ impl RuntimeAgentFactory {
                 .with_delegation(delegation_broker)
                 .with_turn_store(turn_store)
                 .with_personality(personality)
-                .with_chronos({
-                    let chronos = pares_radix_core::chronos::ChronosTimeline::with_jsonl_from_env(
-                        self.store.crdt_store_arc(),
-                    );
-                    Arc::new(chronos)
-                });
+                .with_chronos(chronos);
         // Attach fast model if available
         let agent = if let Some(ref fast_client) = self.fast_model_client {
             agent.with_fast_model(Arc::clone(fast_client))
@@ -1465,6 +1469,20 @@ struct CronToggleProcedure {
     scheduler: Arc<pares_agens_agenda::scheduler::Scheduler>,
 }
 
+/// Exposes the status of loaded umbra-evolved shadow candidates via the
+/// procedure registry (`shadow_status` tool). This replaces the former inert
+/// load-and-discard pattern, retaining the loaded `ShadowProcedures` in shared
+/// state so that operators can inspect loaded candidates and their readiness
+/// for eventual arena evaluation.
+///
+/// Phase A of the pares-umbra integration (issue #677): the shadow holder is
+/// now retained and queryable. Full arena wiring (fitness scoring, promotion)
+/// requires adding the `umbra-shadow` crate as a dependency once license
+/// compatibility is confirmed.
+struct ShadowStatusProcedure {
+    shadow: Arc<pares_radix_core::spine::shadow::ShadowProcedures>,
+}
+
 struct ParesManusToolProcedure {
     tool_name: &'static str,
     manus_ws_url: Arc<String>,
@@ -2403,6 +2421,61 @@ impl Procedure for CronToggleProcedure {
 }
 
 #[async_trait]
+impl Procedure for ShadowStatusProcedure {
+    fn name(&self) -> &str {
+        "shadow_status"
+    }
+
+    fn handles(&self) -> &str {
+        "shadow_status"
+    }
+
+    async fn execute(&self, event: &Event) -> Vec<Event> {
+        match event {
+            Event::Message { id, .. } => {
+                let candidates = self.shadow.candidates();
+                let output = if candidates.is_empty() {
+                    serde_json::json!({
+                        "status": "no_candidates",
+                        "message": "No umbra-evolved shadow candidates loaded. Place .px files with `trigger: manual` in praxis/shadow/ to enroll candidates for evaluation.",
+                        "candidates": [],
+                        "arena_active": false,
+                    })
+                } else {
+                    let items: Vec<serde_json::Value> = candidates
+                        .iter()
+                        .map(|c| {
+                            serde_json::json!({
+                                "name": c.name,
+                                "trigger_kind": c.trigger_kind,
+                                "arena_status": "pending_arena_wiring",
+                            })
+                        })
+                        .collect();
+                    serde_json::json!({
+                        "status": "candidates_loaded",
+                        "message": format!(
+                            "{} shadow candidate(s) loaded. Arena evaluation pending umbra-shadow integration (Phase A, issue #677).",
+                            candidates.len()
+                        ),
+                        "candidates": items,
+                        "arena_active": false,
+                    })
+                };
+                vec![Event::ToolResult {
+                    tool_call_id: id.clone(),
+                    tool_name: "shadow_status".into(),
+                    content: serde_json::to_string_pretty(&output)
+                        .unwrap_or_else(|_| "{}".into()),
+                    is_error: false,
+                }]
+            }
+            _ => vec![],
+        }
+    }
+}
+
+#[async_trait]
 impl Procedure for ParesManusToolProcedure {
     fn name(&self) -> &str {
         self.tool_name
@@ -3250,9 +3323,7 @@ pub(crate) async fn run_serve_spine(
 
                 let auth = CopilotAuth::new(oauth_token);
                 let model_name_arc = Arc::new(RwLock::new(model.clone()));
-                Arc::new(
-                    CopilotModelClient::new_with_model_handle(auth, model_name_arc),
-                )
+                Arc::new(CopilotModelClient::new_with_model_handle(auth, model_name_arc))
             } else {
                 let provider_config = ProviderConfig::new(&model_url, None);
                 let router_config = RouterConfig::single("spine", provider_config);
@@ -4187,7 +4258,6 @@ pub(crate) async fn run_serve(
 
                     // Smart model discovery: if model or deep_model is "auto",
                     // probe the Copilot API for available models and select the best.
-                    let mut discovered_fallbacks: Option<pares_radix_core::auth::copilot::ModelFallbacks> = None;
                     if model == "auto" || deep_model == "auto" || fast_model == "auto" {
                         tracing::info!("auto-detecting available models...");
                         match auth.list_models().await {
@@ -4216,7 +4286,6 @@ pub(crate) async fn run_serve(
                                     }
                                     *fast_model_name.write().await = fast_model.clone();
                                 }
-                                discovered_fallbacks = Some(selection.fallbacks);
                                 tracing::info!(
                                     available_count = available.len(),
                                     models = %available.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(", "),
@@ -4255,54 +4324,6 @@ pub(crate) async fn run_serve(
                             }
                         }
                     }
-
-                    // Build fallback chains: prefer discovery-based chains,
-                    // then cross-tier degradation (Premium→Standard→Fast).
-                    let _conscious_fallbacks = if !radix_config.model.fallbacks.is_empty() {
-                        radix_config.model.fallbacks.clone()
-                    } else if let Some(ref fb) = discovered_fallbacks {
-                        // Standard tier chain, excluding the primary, then fast tier as last resort
-                        let mut chain: Vec<String> = fb.standard.iter()
-                            .filter(|m| *m != &model)
-                            .cloned()
-                            .collect();
-                        chain.extend(fb.fast.iter().cloned());
-                        if chain.is_empty() {
-                            vec!["claude-sonnet-4.5".into(), "gpt-4o".into(), "gpt-4o-mini".into()]
-                        } else {
-                            chain
-                        }
-                    } else {
-                        vec!["claude-sonnet-4.5".into(), "gpt-4o".into(), "gpt-4o-mini".into()]
-                    };
-
-                    let _deep_fallbacks = if let Some(ref fb) = discovered_fallbacks {
-                        // Premium tier chain excluding the deep pick, then standard as fallback
-                        let mut chain: Vec<String> = fb.premium.iter()
-                            .filter(|m| *m != &deep_model)
-                            .cloned()
-                            .collect();
-                        chain.extend(fb.standard.iter().cloned());
-                        if chain.is_empty() {
-                            vec!["claude-sonnet-4.5".into(), "gpt-4o".into()]
-                        } else {
-                            chain
-                        }
-                    } else {
-                        vec!["claude-sonnet-4.5".into(), "gpt-4o".into()]
-                    };
-
-                    let _fast_fallbacks = if let Some(ref fb) = discovered_fallbacks {
-                        // Fast tier chain excluding the pick, then standard as fallback
-                        let mut chain: Vec<String> = fb.fast.iter()
-                            .filter(|m| *m != &fast_model)
-                            .cloned()
-                            .collect();
-                        chain.extend(fb.standard.iter().cloned());
-                        chain
-                    } else {
-                        vec!["gpt-4o-mini".into(), "gpt-4o".into()]
-                    };
 
                     (
                         Arc::new(
@@ -4650,13 +4671,19 @@ pub(crate) async fn run_serve(
             }
 
             // Load umbra-evolved SHADOW candidates from praxis/shadow/ into the
-            // inert shadow holder. CWD is the daemon WorkingDirectory (/home/kbristol
+            // shadow holder. CWD is the daemon WorkingDirectory (/home/kbristol
             // on praxisbot), so this resolves to ~/praxis/shadow — the same tree the
             // nixos service syncs from the package. These declare `trigger: manual`
             // and are loaded OUT-OF-BAND (never into procedure_registry above), so they
             // ship to praxisbot and accumulate fitness for promotion, but never serve
             // live output. See crates/core/src/spine/shadow.rs + praxis/shadow/README.md.
-            let _shadow_procedures = {
+            //
+            // Phase A (issue #677): the shadow holder is now RETAINED in shared state
+            // (Arc) and exposed via the `shadow_status` procedure, replacing the former
+            // load-and-discard dead-end. Full arena wiring (fitness scoring via
+            // `umbra_shadow::ShadowArena`, promotion protocol) will land once the
+            // `umbra-shadow` dependency's license compatibility is confirmed.
+            let shadow_procedures = {
                 use pares_radix_core::spine::shadow::ShadowProcedures;
                 let shadow_dir = std::path::Path::new("praxis/shadow");
                 let mut shadow = ShadowProcedures::new();
@@ -4668,10 +4695,10 @@ pub(crate) async fn run_serve(
                 if loaded > 0 {
                     tracing::info!(
                         shadow_candidates = loaded,
-                        "loaded umbra-evolved shadow candidates from praxis/shadow/ (inert; not live)"
+                        "loaded umbra-evolved shadow candidates from praxis/shadow/ (retained for arena evaluation)"
                     );
                 }
-                shadow
+                Arc::new(shadow)
             };
 
             // Create scheduler (shared via Arc for cron tools)
@@ -4713,6 +4740,11 @@ pub(crate) async fn run_serve(
             }));
             procedure_registry.register(Box::new(CronToggleProcedure {
                 scheduler: Arc::clone(&scheduler),
+            }));
+
+            // Register shadow-status tool (Phase A, issue #677)
+            procedure_registry.register(Box::new(ShadowStatusProcedure {
+                shadow: Arc::clone(&shadow_procedures),
             }));
 
             let procedure_registry = Arc::new(procedure_registry);
@@ -5635,6 +5667,14 @@ pub(crate) async fn run_tui(
                 }
             };
 
+            // Shared Chronos timeline: attached to BOTH the Orchestrator (so
+            // autorecall emits real `recall_query` operations, ADR-0019 4.3)
+            // and the Agent (tool execution auditing).
+            let chronos = Arc::new(pares_radix_core::chronos::ChronosTimeline::with_jsonl_from_env(
+                store.crdt_store_arc(),
+            ));
+            let orchestrator = orchestrator.with_chronos(Arc::clone(&chronos));
+
             let system_prompt_text = build_system_prompt(system_prompt).unwrap_or_else(|e| {
                 eprintln!("Warning: {e}");
                 "You are Pares Radix, an AI assistant. Be direct and helpful.".to_string()
@@ -5653,13 +5693,7 @@ pub(crate) async fn run_tui(
                     .with_turn_store(
                         Arc::clone(&store) as Arc<dyn pares_agens_core::memory::store::MemoryStore>
                     )
-                    .with_chronos({
-                        let chronos =
-                            pares_radix_core::chronos::ChronosTimeline::with_jsonl_from_env(
-                                store.crdt_store_arc(),
-                            );
-                        Arc::new(chronos)
-                    }),
+                    .with_chronos(chronos),
             );
 
             let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<AppEvent>();
@@ -6030,7 +6064,7 @@ pub(crate) async fn run_classify(message: String, bitnet_model_path: std::path::
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pares_radix_core::model::{ModelCompletion, ToolCall, ToolDefinition};
+    use pares_radix_core::model::{ModelClientError, ModelCompletion, ToolCall, ToolDefinition};
 
     struct TestModelClient;
 

@@ -1852,11 +1852,19 @@ impl RadixToolHandler {
         let shell_sessions = self.shell.list().await;
         let active_count = shell_sessions.len();
 
+        // Tool/plugin visibility: report actual registered tool count from
+        // the live runtime surface (addresses QA gap issue #669).
+        let registered_tools = self.list_tools().await;
+        let tool_count = registered_tools.len();
+        let tool_names: Vec<&str> = registered_tools.iter().map(|t| t.name.as_str()).collect();
+
         let mut status = json!({
             "status": "running",
             "version": env!("CARGO_PKG_VERSION"),
             "workdir": self.workdir.display().to_string(),
             "timestamp_unix": uptime_secs,
+            "tool_count": tool_count,
+            "tools": tool_names,
             "components": {
                 "shell": "active",
                 "memory": if self.memory.is_some() { "active" } else { "not_configured" },
@@ -8084,6 +8092,49 @@ mod tests {
         assert!(result.content.contains("running"));
         assert!(result.content.contains("components"));
         assert!(result.content.contains("version"));
+    }
+
+    /// Regression: runtime_status tool_count must match list_tools().len().
+    /// Catches silent-mismatch bugs where status reports stale/wrong tool count
+    /// (e.g. the original "Tools: 0 registered" bug, issue #669).
+    #[tokio::test]
+    async fn runtime_status_tool_count_matches_list_tools() {
+        let handler = make_handler_with_state();
+
+        // Get tool count from the live runtime_status surface
+        let result = handler.call_tool("runtime_status", json!({})).await;
+        assert!(!result.is_error);
+        let status: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+        let reported_count = status["tool_count"].as_u64().expect("tool_count missing from runtime_status");
+
+        // Get actual tool list
+        let tools = handler.list_tools().await;
+
+        assert_eq!(
+            reported_count as usize,
+            tools.len(),
+            "runtime_status tool_count must equal list_tools().len()"
+        );
+        assert!(
+            reported_count > 0,
+            "tool_count must be > 0 — a live runtime always has registered tools"
+        );
+    }
+
+    /// Regression: runtime_status must include tool names array for auditability.
+    #[tokio::test]
+    async fn runtime_status_includes_tool_names() {
+        let handler = make_handler_with_state();
+        let result = handler.call_tool("runtime_status", json!({})).await;
+        assert!(!result.is_error);
+        let status: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+        let tools = status["tools"].as_array().expect("tools array missing from runtime_status");
+        assert!(tools.len() > 0);
+        // Verify a known minimum tool set is present
+        let names: Vec<&str> = tools.iter().filter_map(|v| v.as_str()).collect();
+        assert!(names.contains(&"read_file"), "expected read_file in tools list");
+        assert!(names.contains(&"run_command"), "expected run_command in tools list");
+        assert!(names.contains(&"runtime_status"), "expected runtime_status in tools list");
     }
 
     #[tokio::test]

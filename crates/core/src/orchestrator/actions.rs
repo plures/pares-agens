@@ -186,9 +186,26 @@ impl CerebellumActionHandler {
     }
 
 
-    /// Subscribe to session-scoped live context delivered to a Chronos viewer.
+    /// Subscribe to live context events (payload includes `session_id` for client-side filtering).
     pub fn subscribe_live_context(&self) -> broadcast::Receiver<Value> {
         self.live_context_tx.subscribe()
+    }
+
+    /// Publish an observed agent lifecycle event to attached Chronos viewers.
+    /// The caller supplies facts only; viewer policy remains in `.px`.
+    pub async fn publish_live_context(&self, session_id: &str, event: Value) -> Result<Value, ExecutionError> {
+        self.publish_live_context_event(&json!({"session_id": session_id, "event": event})).await
+    }
+
+    /// Pause live context delivery for a session in this process.
+    /// No `.px` policy/authorization is applied here; callers must gate access.
+    pub async fn pause_live_context(&self, session_id: &str) -> Result<Value, ExecutionError> {
+        self.pause_live_context_subscription(&json!({"session_id": session_id})).await
+    }
+
+    /// Resume live context for a debug session.
+    pub async fn resume_live_context(&self, session_id: &str) -> Result<Value, ExecutionError> {
+        self.resume_live_context_subscription(&json!({"session_id": session_id})).await
     }
 
     async fn pause_live_context_subscription(&self, params: &Value) -> Result<Value, ExecutionError> {
@@ -219,7 +236,7 @@ impl CerebellumActionHandler {
     fn live_context_session_id(params: &Value) -> Result<String, ExecutionError> {
         params.get("session_id").and_then(Value::as_str).filter(|id| !id.is_empty())
             .map(str::to_owned).ok_or_else(|| ExecutionError::ActionFailed {
-                action: "live_context_subscription".to_string(),
+                action: "live_context_session_id".to_string(),
                 message: "missing required param: session_id".to_string(),
             })
     }
@@ -1359,7 +1376,7 @@ mod tests {
 
         assert_eq!(handler.call("pause_live_context_subscription", &json!({"session_id": session_id})).await.unwrap()["paused"], true);
         assert_eq!(handler.call("publish_live_context_event", &json!({"session_id": session_id, "event": {"sequence": 2}})).await.unwrap()["delivered"], false);
-        assert!(tokio::time::timeout(Duration::from_millis(25), subscriber.recv()).await.is_err());
+        assert!(tokio::time::timeout(Duration::from_millis(200), subscriber.recv()).await.is_err());
 
         assert_eq!(handler.call("resume_live_context_subscription", &json!({"session_id": session_id})).await.unwrap()["paused"], false);
         assert_eq!(handler.call("publish_live_context_event", &json!({"session_id": session_id, "event": {"sequence": 3}})).await.unwrap()["delivered"], true);

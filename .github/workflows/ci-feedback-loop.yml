@@ -17,9 +17,9 @@ jobs:
     name: Post-Merge CI Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
       # openssl-sys (pulled transitively via fastembed -> hf-hub -> native-tls
       # on pares-agens-core's `embeddings` feature) needs a system OpenSSL +
       # pkg-config to build on this bare ubuntu-latest runner (no Nix here).
