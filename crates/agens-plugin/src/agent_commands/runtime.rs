@@ -59,6 +59,8 @@ use pares_radix_core::model::{
     ChatMessage as CoreChatMessage, ChatOptions, ModelClient, ModelClientError, ToolDefinition,
     ToolDispatcher,
 };
+use pares_radix_core::task::{CompletionCondition, ConditionType};
+use pares_radix_core::task_manager::TaskManager;
 use pares_radix_core::plugins::{PluginCrudExecutor, PluginRuntime};
 use pares_radix_core::procedure::{Procedure, ProcedureRegistry};
 use pares_radix_core::shell_executor::{ExecRequest, ShellExecutor};
@@ -1053,6 +1055,186 @@ impl ModelClient for ToggleableModelClient {
 
     fn model_id(&self) -> Option<String> {
         self.inner.model_id()
+    }
+}
+
+/// Thin I/O boundary for task-graph operations that the platform task registry
+/// does not yet expose. PX owns scheduling; this type only reads or writes the
+/// durable `TaskManager` graph and protects its completion invariant.
+struct TaskGraphToolDispatcher {
+    inner: Arc<dyn ToolDispatcher>,
+    task_manager: Arc<TaskManager>,
+}
+
+impl TaskGraphToolDispatcher {
+    const CREATE_SUBTASK: &'static str = "task_create_subtask";
+    const LIST_EVALUABLE_GRAPH: &'static str = "task_list_evaluable_graph";
+
+    fn new(inner: Arc<dyn ToolDispatcher>, task_manager: Arc<TaskManager>) -> Self {
+        Self {
+            inner,
+            task_manager,
+        }
+    }
+
+    fn definitions() -> Vec<ToolDefinition> {
+        vec![
+            ToolDefinition {
+                name: Self::CREATE_SUBTASK.into(),
+                description: "Create a durable child task beneath an active parent task. Use this to decompose independently verifiable work; the parent cannot complete until every child is terminal.".into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "parent_task_id": {"type": "string", "description": "Parent task ID; an unambiguous leading ID prefix is accepted."},
+                        "description": {"type": "string", "description": "Concrete child outcome to achieve."},
+                        "completion_conditions": {"type": "array", "items": {"type": "string"}, "description": "Optional conditions required to complete the child."}
+                    },
+                    "required": ["parent_task_id", "description"]
+                }),
+            },
+            ToolDefinition {
+                name: Self::LIST_EVALUABLE_GRAPH.into(),
+                description: "Return durable evaluable task records with their parent and child edges. Used by PX autonomous scheduling.".into(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            },
+        ]
+    }
+
+    fn resolve_active_task_id(&self, task_id: &str) -> Option<String> {
+        if self
+            .task_manager
+            .get_task(task_id)
+            .is_some_and(|task| !task.is_terminal())
+        {
+            return Some(task_id.to_string());
+        }
+
+        let matches: Vec<_> = self
+            .task_manager
+            .evaluable_tasks()
+            .into_iter()
+            .filter(|task| task.id.starts_with(task_id))
+            .collect();
+        (matches.len() == 1).then(|| matches[0].id.clone())
+    }
+
+    fn conditions(arguments: &serde_json::Value) -> Vec<CompletionCondition> {
+        arguments
+            .get("completion_conditions")
+            .and_then(serde_json::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(|description| CompletionCondition {
+                        description: description.to_string(),
+                        condition_type: ConditionType::ModelEvaluation(description.to_string()),
+                        satisfied: false,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    async fn create_subtask(&self, arguments: serde_json::Value) -> String {
+        let parent_task_id = match arguments.get("parent_task_id").and_then(serde_json::Value::as_str) {
+            Some(task_id) => task_id,
+            None => return serde_json::json!({"status": "error", "message": "'parent_task_id' is required"}).to_string(),
+        };
+        let description = match arguments.get("description").and_then(serde_json::Value::as_str) {
+            Some(description) if !description.trim().is_empty() => description,
+            _ => return serde_json::json!({"status": "error", "message": "a non-empty 'description' is required"}).to_string(),
+        };
+        let parent_task_id = match self.resolve_active_task_id(parent_task_id) {
+            Some(task_id) => task_id,
+            None => return serde_json::json!({"status": "error", "message": "parent task not found or terminal"}).to_string(),
+        };
+
+        match self
+            .task_manager
+            .create_subtask(&parent_task_id, description, Self::conditions(&arguments))
+        {
+            Some(task) => serde_json::json!({
+                "status": "created",
+                "task_id": task.id,
+                "parent_task_id": parent_task_id,
+                "description": task.description,
+                "priority": task.priority,
+            })
+            .to_string(),
+            None => serde_json::json!({"status": "error", "message": "parent task not found"}).to_string(),
+        }
+    }
+
+    fn evaluable_graph(&self) -> String {
+        let tasks = self
+            .task_manager
+            .evaluable_tasks()
+            .into_iter()
+            .map(|task| {
+                serde_json::json!({
+                    "id": task.id,
+                    "description": task.description,
+                    "priority": task.priority,
+                    "created_at": task.created_at,
+                    "last_evaluated_at": task.last_evaluated_at,
+                    "attempts": task.attempts,
+                    "subtasks": task.subtasks,
+                    "parent_task": task.parent_task,
+                    "conditions": task.completion_conditions.into_iter().map(|condition| serde_json::json!({
+                        "description": condition.description,
+                        "satisfied": condition.satisfied,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::Value::Array(tasks).to_string()
+    }
+
+    fn completion_is_blocked(&self, arguments: &serde_json::Value) -> Option<String> {
+        let requested_id = arguments.get("task_id").and_then(serde_json::Value::as_str)?;
+        let task_id = self.resolve_active_task_id(requested_id)?;
+        let task = self.task_manager.get_task(&task_id)?;
+        let outstanding = task
+            .subtasks
+            .iter()
+            .filter(|child_id| {
+                self.task_manager
+                    .get_task(child_id)
+                    .is_some_and(|child| !child.is_terminal())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        (!outstanding.is_empty()).then(|| {
+            serde_json::json!({
+                "status": "error",
+                "message": "parent task cannot complete while child tasks remain non-terminal",
+                "task_id": task_id,
+                "outstanding_subtask_ids": outstanding,
+            })
+            .to_string()
+        })
+    }
+}
+
+#[async_trait]
+impl ToolDispatcher for TaskGraphToolDispatcher {
+    async fn available_tools(&self) -> Vec<ToolDefinition> {
+        let mut tools = self.inner.available_tools().await;
+        tools.extend(Self::definitions());
+        tools
+    }
+
+    async fn call_tool(&self, name: &str, arguments: serde_json::Value) -> String {
+        match name {
+            Self::CREATE_SUBTASK => self.create_subtask(arguments).await,
+            Self::LIST_EVALUABLE_GRAPH => self.evaluable_graph(),
+            "task_complete" => match self.completion_is_blocked(&arguments) {
+                Some(result) => result,
+                None => self.inner.call_tool(name, arguments).await,
+            },
+            _ => self.inner.call_tool(name, arguments).await,
+        }
     }
 }
 
@@ -2988,6 +3170,35 @@ async fn run_adapter_with_recovery(
     }
 }
 
+/// Wire and spawn the spine heartbeat runner for a channel.
+///
+/// All spine-driven channels (stdio, telegram, http) share the same wiring:
+/// pipeline emitter + task manager, config load, optional quiet-hours override.
+/// The returned shutdown sender must be kept alive for the runner to keep going.
+async fn spawn_spine_heartbeat(
+    state: Arc<dyn pares_radix_core::state::StateStore>,
+    task_manager: Arc<pares_radix_core::task_manager::TaskManager>,
+    emitter: pares_radix_core::spine::pipeline::PipelineEmitter,
+    started_log: &str,
+) -> tokio::sync::watch::Sender<bool> {
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let mut heartbeat =
+        pares_agens_core::heartbeat::HeartbeatRunner::new(Arc::clone(&state))
+            .with_pipeline_emitter(emitter)
+            .with_task_manager(task_manager, state);
+    heartbeat.load_config().await;
+    if std::env::var("PARES_HEARTBEAT_NO_QUIET").is_ok() {
+        let mut cfg = heartbeat.config().clone();
+        cfg.quiet_hours_enabled = false;
+        heartbeat.set_config(cfg).await;
+    }
+    tokio::spawn(async move {
+        heartbeat.run(shutdown_rx).await;
+    });
+    info!("{started_log}");
+    shutdown_tx
+}
+
 async fn flush_pluresdb_on_shutdown(
     store: &PluresDbStore,
     hostname: &str,
@@ -3468,8 +3679,14 @@ pub(crate) async fn run_serve_spine(
             // 3.8. Finalize tool dispatcher with task registry
             use pares_radix_core::tools::TaskRegistryTool;
             let task_registry = Arc::new(TaskRegistryTool::new(Arc::clone(&spine_task_manager)));
-            let spine_tool_dispatcher: Arc<dyn ToolDispatcher> = Arc::new(
+            let base_tool_dispatcher: Arc<dyn ToolDispatcher> = Arc::new(
                 spine_tool_dispatcher_builder.with_task_registry(Arc::clone(&task_registry)),
+            );
+            let spine_tool_dispatcher: Arc<dyn ToolDispatcher> = Arc::new(
+                TaskGraphToolDispatcher::new(
+                    base_tool_dispatcher,
+                    Arc::clone(&spine_task_manager),
+                ),
             );
 
             // 3.6. Load system prompt — compose from context files like OpenClaw
@@ -3583,7 +3800,7 @@ pub(crate) async fn run_serve_spine(
                 ))
                 .await;
             pipeline
-                .register(Arc::new(ToolExecutor::new(spine_tool_dispatcher)))
+                .register(Arc::new(ToolExecutor::new(Arc::clone(&spine_tool_dispatcher))))
                 .await;
             pipeline.register(Arc::new(ResponseRouter)).await;
             // CommitmentDetector: fallback task creation for when the model commits to work
@@ -3598,18 +3815,33 @@ pub(crate) async fn run_serve_spine(
                 .await;
             info!("Pipeline procedures registered: inbound_router, history_recorder, model_invoker, tool_executor, response_router, commitment_detector");
 
-            // 4.5. Load .px procedures into the ReactiveRegistry via bootstrap
+            // 4.5. Assemble the PX action boundary against this LIVE pipeline.
+            // The procedure graph owns task choice, ordering and lifecycle
+            // transitions. Rust only exposes durable reads/writes plus the
+            // final pipeline injection side effect.
             {
                 use pares_radix_core::px_adapter::{AsyncActionHandler, ToolDispatchActionHandler};
                 use pares_radix_core::spine::actions::CompositeActionHandler;
+                use pares_radix_core::spine::task_dispatch_actions::TaskDispatchActionHandler;
+                use pares_radix_core::task_executor::TaskDispatcher;
 
-                let tool_handler = Arc::new(ToolDispatchActionHandler::new_lazy());
+                let tool_handler = Arc::new(ToolDispatchActionHandler::new(Arc::clone(&spine_tool_dispatcher)));
+                let mut composite = CompositeActionHandler::new(
+                    Arc::clone(&conversation_store),
+                    Arc::clone(&state_store),
+                    Arc::clone(&tool_handler),
+                )
+                .with_task_grounding(Arc::clone(&spine_task_manager));
+                let task_dispatcher = Arc::new(
+                    TaskDispatcher::new(Arc::clone(&state_store))
+                        .with_pipeline_emitter(pipeline.emitter()),
+                );
+                composite.set_task_dispatch(Arc::new(TaskDispatchActionHandler::new(
+                    task_dispatcher,
+                    Some(Arc::clone(&spine_task_manager)),
+                )));
                 let px_action_handler: Arc<dyn AsyncActionHandler> =
-                    Arc::new(CompositeActionHandler::new(
-                        Arc::clone(&conversation_store),
-                        Arc::clone(&state_store),
-                        Arc::clone(&tool_handler),
-                    ));
+                    Arc::new(composite);
 
                 // Load from repo-local praxis/ (shipped with the binary)
                 let praxis_dirs = [
@@ -3682,24 +3914,13 @@ pub(crate) async fn run_serve_spine(
                     info!("Stdio delivery loop started");
 
                     // 6.5. Start heartbeat runner (proactive behavior)
-                    let (_heartbeat_shutdown_tx, heartbeat_shutdown_rx) =
-                        tokio::sync::watch::channel(false);
-                    {
-                        let heartbeat_store: Arc<dyn pares_radix_core::state::StateStore> =
-                            Arc::new(pares_radix_core::state::InMemoryStateStore::default());
-                        let mut heartbeat =
-                            pares_agens_core::heartbeat::HeartbeatRunner::new(heartbeat_store);
-                        heartbeat.load_config().await;
-                        if std::env::var("PARES_HEARTBEAT_NO_QUIET").is_ok() {
-                            let mut cfg = heartbeat.config().clone();
-                            cfg.quiet_hours_enabled = false;
-                            heartbeat.set_config(cfg).await;
-                        }
-                        tokio::spawn(async move {
-                            heartbeat.run(heartbeat_shutdown_rx).await;
-                        });
-                        info!("Heartbeat runner started (proactive behavior)");
-                    }
+                    let _heartbeat_shutdown_tx = spawn_spine_heartbeat(
+                        Arc::clone(&spine_heartbeat_state),
+                        Arc::clone(&spine_task_manager),
+                        pipeline.emitter(),
+                        "Heartbeat runner started (proactive behavior)",
+                    )
+                    .await;
 
                     // 7. Start receiving (blocks until /quit or EOF)
                     let emitter = pipeline.emitter();
@@ -3727,25 +3948,13 @@ pub(crate) async fn run_serve_spine(
                     info!("Telegram delivery loop started (progressive streaming enabled)");
 
                     // 6.5. Start heartbeat runner (proactive behavior)
-                    let (_heartbeat_shutdown_tx, heartbeat_shutdown_rx) =
-                        tokio::sync::watch::channel(false);
-                    {
-                        let pipeline_emitter_for_heartbeat = pipeline.emitter();
-                        let mut heartbeat =
-                            pares_agens_core::heartbeat::HeartbeatRunner::new(Arc::clone(&spine_heartbeat_state))
-                                .with_pipeline_emitter(pipeline_emitter_for_heartbeat)
-                                .with_task_manager(Arc::clone(&spine_task_manager), Arc::clone(&spine_heartbeat_state));
-                        heartbeat.load_config().await;
-                        if std::env::var("PARES_HEARTBEAT_NO_QUIET").is_ok() {
-                            let mut cfg = heartbeat.config().clone();
-                            cfg.quiet_hours_enabled = false;
-                            heartbeat.set_config(cfg).await;
-                        }
-                        tokio::spawn(async move {
-                            heartbeat.run(heartbeat_shutdown_rx).await;
-                        });
-                        info!("Heartbeat runner started (proactive behavior + task dispatch)");
-                    }
+                    let _heartbeat_shutdown_tx = spawn_spine_heartbeat(
+                        Arc::clone(&spine_heartbeat_state),
+                        Arc::clone(&spine_task_manager),
+                        pipeline.emitter(),
+                        "Heartbeat runner started (proactive behavior + task dispatch)",
+                    )
+                    .await;
 
                     // 7. Start receiving (blocks)
                     let emitter = pipeline.emitter();
@@ -3779,6 +3988,17 @@ pub(crate) async fn run_serve_spine(
                             .run_delivery_loop(delivery_rx, pending_for_delivery)
                             .await;
                     });
+
+                    // HTTP has the same autonomous queue semantics as the
+                    // interactive channels: heartbeat writes a tick; PX selects
+                    // and claims work; TaskDispatcher performs the re-drive.
+                    let _heartbeat_shutdown_tx = spawn_spine_heartbeat(
+                        Arc::clone(&spine_heartbeat_state),
+                        Arc::clone(&spine_task_manager),
+                        pipeline.emitter(),
+                        "Heartbeat runner started (HTTP + PX task dispatch)",
+                    )
+                    .await;
 
                     // Start HTTP server (blocks)
                     let emitter = pipeline.emitter();
@@ -5080,7 +5300,7 @@ pub(crate) async fn run_tui(
 
                 let auth = CopilotAuth::new(oauth_token);
                 Arc::new(
-                    CopilotModelClient::new_with_model_handle(auth, Arc::clone(&model_name_handle))
+                    CopilotModelClient::new_with_model_handle(auth, Arc::clone(&model_name_handle)),
                 )
             } else {
                 let provider_config = ProviderConfig::new(&model_url, api_key.clone());
@@ -5867,6 +6087,56 @@ mod tests {
         async fn call_tool(&self, _name: &str, _arguments: serde_json::Value) -> String {
             String::new()
         }
+    }
+
+    #[tokio::test]
+    async fn task_graph_tool_creates_durable_child_and_blocks_parent_completion() {
+        use pluresdb::{CrdtStore, MemoryStorage, StorageEngine};
+
+        let storage: Arc<dyn StorageEngine> = Arc::new(MemoryStorage::default());
+        let store = Arc::new(CrdtStore::default().with_persistence(storage));
+        let task_manager = Arc::new(TaskManager::new(store));
+        let parent = task_manager.create_task("Ship the feature", "chat-1", vec![]);
+        let dispatcher = TaskGraphToolDispatcher::new(
+            Arc::new(TestToolDispatcher),
+            Arc::clone(&task_manager),
+        );
+
+        let created: serde_json::Value = serde_json::from_str(
+            &dispatcher
+                .call_tool(
+                    TaskGraphToolDispatcher::CREATE_SUBTASK,
+                    serde_json::json!({
+                        "parent_task_id": &parent.id[..8],
+                        "description": "Add the durable task graph tool",
+                        "completion_conditions": ["A regression test passes"]
+                    }),
+                )
+                .await,
+        )
+        .unwrap();
+        assert_eq!(created["status"], "created");
+        assert_eq!(created["parent_task_id"], parent.id);
+        let child_id = created["task_id"].as_str().unwrap();
+
+        let persisted_parent = task_manager.get_task(&parent.id).unwrap();
+        let persisted_child = task_manager.get_task(child_id).unwrap();
+        assert_eq!(persisted_parent.subtasks, vec![child_id.to_string()]);
+        assert_eq!(persisted_child.parent_task.as_deref(), Some(parent.id.as_str()));
+
+        let blocked: serde_json::Value = serde_json::from_str(
+            &dispatcher
+                .call_tool("task_complete", serde_json::json!({"task_id": parent.id}))
+                .await,
+        )
+        .unwrap();
+        assert_eq!(blocked["status"], "error");
+        assert_eq!(blocked["outstanding_subtask_ids"], serde_json::json!([child_id]));
+
+        task_manager.complete_task(child_id, Some("child shipped"));
+        assert!(dispatcher
+            .completion_is_blocked(&serde_json::json!({"task_id": parent.id}))
+            .is_none());
     }
 
 

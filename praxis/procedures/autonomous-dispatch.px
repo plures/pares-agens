@@ -74,17 +74,26 @@
 procedure evaluate_dispatch(tick: int from "heartbeat_tick") -> decision into "dispatch_decision":
   given: "Decide whether to dispatch an autonomous task on this heartbeat tick"
 
-  # Load all evaluable tasks
-  db_query {prefix: "task:", filter: {status: "pending"}} -> $all_tasks
+  # Rust supplies the durable task graph from the shared TaskManager. This
+  # action is an IO read only; PX decides which runnable leaf to select.
+  task_list_evaluable_graph {} -> $all_tasks
 
   when length($all_tasks) == 0:
     return {should_dispatch: false, task_id: null, reason: "no_pending_tasks", prompt: null}
   end
 
+  # A parent is a fan-in node, not runnable work. Only childless tasks are
+  # eligible for execution; the parent remains durable context for its leaves.
+  filter_leaf_tasks {tasks: $all_tasks} -> $leaves
+
+  when length($leaves) == 0:
+    return {should_dispatch: false, task_id: null, reason: "no_runnable_leaf_tasks", prompt: null}
+  end
+
   timestamp_now {} -> $now
 
   # Filter by cooldown
-  filter_ready_tasks {tasks: $all_tasks, now: $now, cooldown: config.min_evaluation_interval_ms} -> $ready
+  filter_ready_tasks {tasks: $leaves, now: $now, cooldown: config.min_evaluation_interval_ms} -> $ready
 
   when length($ready) == 0:
     return {should_dispatch: false, task_id: null, reason: "all_cooling_down", prompt: null}
@@ -103,11 +112,10 @@ procedure evaluate_dispatch(tick: int from "heartbeat_tick") -> decision into "d
   # Build the execution prompt
   build_task_prompt {task: $best} -> $prompt
 
-  # Mark as in-progress
-  pluresdb_write {key: "task:{$best.id}:status", value: "in_progress"}
-  pluresdb_write {key: "task:{$best.id}:last_evaluated_at", value: $now}
-  add {a: $best.attempts, b: 1} -> $next_attempts
-  pluresdb_write {key: "task:{$best.id}:attempts", value: $next_attempts}
+  # One narrow Rust IO boundary persists the lifecycle claim and attempt.
+  # The dispatch decision itself remains the result of this procedure.
+  mark_task_in_progress {task_id: $best.id}
+  dispatch_task {task_id: $best.id, prompt: $prompt}
 
   return {
     should_dispatch: true,
@@ -125,16 +133,9 @@ procedure build_steered_prompt(steer: SteerResult from "task_dispatch") -> promp
     return null  # cancelled task — don't dispatch
   end
 
-  db_get {key: "task:{steer.task_id}"} -> $task
-
-  when $task == null:
-    return null
-  end
-
-  # Mark dispatched
-  timestamp_now {} -> $now
-  pluresdb_write {key: "task:{steer.task_id}:status", value: "in_progress"}
-  pluresdb_write {key: "task:{steer.task_id}:last_evaluated_at", value: $now}
+  # Claim and dispatch use the same durable action seam as heartbeat dispatch.
+  mark_task_in_progress {task_id: steer.task_id}
+  dispatch_task {task_id: steer.task_id, prompt: steer.message_to_agent}
 
   return steer.message_to_agent
 
@@ -142,6 +143,17 @@ procedure build_steered_prompt(steer: SteerResult from "task_dispatch") -> promp
 # ═══════════════════════════════════════════════════════════════════
 # Utility Procedures
 # ═══════════════════════════════════════════════════════════════════
+
+# utility: called by evaluate_dispatch
+procedure filter_leaf_tasks(tasks: list) -> leaves:
+  given: "Keep only evaluable tasks without child tasks"
+  define $leaves = []
+  loop over $tasks as task:
+    when length(task.subtasks) == 0:
+      append $leaves $task
+    end
+  end
+  return $leaves
 
 # utility: called by evaluate_dispatch
 procedure filter_ready_tasks(tasks: list, now: int, cooldown: int) -> filtered:
@@ -192,7 +204,7 @@ Attempts: {attempts}
 Conditions:
 {conditions}
 
-Work on this task using available tools. When complete, indicate which conditions are satisfied. If blocked, explain why.",
+Work on this task using available tools. For work with multiple independently verifiable outcomes, call task_create_subtask with this task ID before implementation. The parent remains open until every child is terminal. When complete, call task_complete with this task ID; prose alone does not close the queue. If blocked, explain why.",
     vars: {
       description: $task.description,
       id: $task.id,
