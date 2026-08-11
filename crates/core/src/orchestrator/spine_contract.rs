@@ -49,7 +49,9 @@ pub fn autonomous_dispatch_catalog() -> ContractCatalog {
     );
     catalog.insert(
         "compute_elapsed",
-        action([("start", integer()), ("end", integer())]),
+        CallableContract::new(StaticType::Known(integer()))
+            .required("start", integer())
+            .required("end", integer()),
     );
     catalog.insert("sort_by", dynamic_action(["items", "keys", "orders"]));
     catalog.insert("get_first_item", dynamic_action(["list"]));
