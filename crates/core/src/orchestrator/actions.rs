@@ -223,8 +223,22 @@ impl SpineActionRouter {
         let right = Self::json_field(right, key);
         match (left, right) {
             (Some(left), Some(right)) => {
-                if let (Some(left), Some(right)) = (left.as_f64(), right.as_f64()) {
-                    left.partial_cmp(&right).unwrap_or(std::cmp::Ordering::Equal)
+                if let (Some(left), Some(right)) = (left.as_i64(), right.as_i64()) {
+                    left.cmp(&right)
+                } else if let (Some(left), Some(right)) = (left.as_u64(), right.as_u64()) {
+                    left.cmp(&right)
+                } else if let (Some(left), Some(right)) = (left.as_i64(), right.as_u64()) {
+                    if left < 0 {
+                        std::cmp::Ordering::Less
+                    } else {
+                        (left as u64).cmp(&right)
+                    }
+                } else if let (Some(left), Some(right)) = (left.as_u64(), right.as_i64()) {
+                    if right < 0 {
+                        std::cmp::Ordering::Greater
+                    } else {
+                        left.cmp(&(right as u64))
+                    }
                 } else if let (Some(left), Some(right)) = (left.as_str(), right.as_str()) {
                     left.cmp(right)
                 } else {
