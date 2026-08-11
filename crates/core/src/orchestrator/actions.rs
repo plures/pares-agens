@@ -1085,8 +1085,10 @@ impl CerebellumActionHandler {
         {
             terms.push(intent.to_string());
         }
+        if terms.is_empty() {
+            return Ok(Value::Array(Vec::new()));
+        }
 
-        let recalled = self
             .recall_memories_action(&json!({
                 "text": terms.join(" "),
                 "limit": params.get("limit").cloned().unwrap_or_else(|| json!(10)),
