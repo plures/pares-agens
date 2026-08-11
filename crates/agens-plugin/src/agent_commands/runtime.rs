@@ -28,7 +28,6 @@ use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use uuid::Uuid;
-use walkdir::WalkDir;
 
 use reqwest::header::{HeaderMap, HeaderValue};
 
@@ -48,9 +47,6 @@ use pares_agens_hostkit::{
 };
 use pares_radix_core::auth::copilot::{CopilotAuth, CopilotModelClient};
 use pares_agens_core::orchestrator::px_bridge::PxBridge;
-use pares_agens_core::orchestrator::spine_contract::{
-    autonomous_dispatch_catalog, AUTONOMOUS_DISPATCH_PROFILE,
-};
 use pares_agens_core::orchestrator::{Orchestrator, CerebellumConfig};
 use pares_agens_core::delegation::{broker::DelegationBroker, registry::AgentRegistry};
 use pares_agens_core::memory::{
@@ -3966,10 +3962,7 @@ pub(crate) async fn run_serve_spine(
             // transitions. Rust only exposes durable reads/writes plus the
             // final pipeline injection side effect.
             {
-                use pares_radix_core::px_adapter::{
-                    load_px_procedures, AsyncActionHandler, PxProcedureAdapter,
-                    ToolDispatchActionHandler,
-                };
+                use pares_radix_core::px_adapter::{AsyncActionHandler, ToolDispatchActionHandler};
                 use pares_radix_core::spine::actions::CompositeActionHandler;
                 use pares_radix_core::spine::task_dispatch_actions::TaskDispatchActionHandler;
                 use pares_radix_core::task_executor::TaskDispatcher;
@@ -4008,10 +4001,10 @@ pub(crate) async fn run_serve_spine(
                     PathBuf::from(&home).join(".pares-radix/praxis/spine"),
                 ];
 
-                // Assemble source into adapters before registering either named
-                // or reactive procedures. The autonomous policy is contract-
-                // checked first; a rejected source is absent from both routes.
-                // Radix still owns canonical trigger mapping and registration.
+                // Build the named procedure bridge before registering reactive
+                // triggers. Reactive registration only maps event patterns;
+                // the bridge is what lets one `.px` procedure invoke another
+                // by name without falling through to the model tool registry.
                 let spine_action_router = Arc::new(SpineActionRouter::new(
                     Arc::new(composite),
                     cognition,
@@ -4020,96 +4013,31 @@ pub(crate) async fn run_serve_spine(
                     Arc::clone(&spine_action_router) as Arc<dyn AsyncActionHandler>,
                 ));
                 let mut bridge_registered = 0;
-                let mut reactive_adapters: Vec<PxProcedureAdapter> = Vec::new();
-
                 for praxis_dir in &praxis_dirs {
-                    if !praxis_dir.is_dir() {
-                        debug!(dir = %praxis_dir.display(), ".px directory not found, skipping");
-                        continue;
-                    }
-
-                    for entry in WalkDir::new(praxis_dir)
-                        .into_iter()
-                        .filter_map(Result::ok)
-                        .filter(|entry| {
-                            entry.file_type().is_file()
-                                && entry.path().extension().is_some_and(|extension| extension == "px")
-                        })
-                    {
-                        let procedure_path = entry.into_path();
-                        let source = match std::fs::read_to_string(&procedure_path) {
-                            Ok(source) => source,
-                            Err(error) => {
-                                error!(file = %procedure_path.display(), %error, "Could not read .px source");
-                                continue;
-                            }
-                        };
-                        let autonomous_dispatch = procedure_path
-                            .file_name()
-                            .is_some_and(|name| name == "autonomous-dispatch.px");
-
-                        if autonomous_dispatch {
-                            if let Err(diagnostics) = PxBridge::validate_source_contract(
-                                &source,
-                                &autonomous_dispatch_catalog(),
-                                AUTONOMOUS_DISPATCH_PROFILE,
-                            ) {
-                                error!(
-                                    file = %procedure_path.display(),
-                                    %diagnostics,
-                                    "Rejected autonomous PX policy: complete spine contract diagnostics"
-                                );
-                                continue;
-                            }
-                        }
-
-                        // Compile before bridge registration so a source can
-                        // never be named-callable but missing its reactive form.
-                        let adapters = match load_px_procedures(
-                            &source,
-                            Arc::clone(&spine_action_router) as Arc<dyn AsyncActionHandler>,
-                        ) {
-                            Ok(adapters) => adapters,
-                            Err(error) => {
-                                error!(file = %procedure_path.display(), %error, "Could not compile .px source");
-                                continue;
-                            }
-                        };
-
-                        let loaded = if autonomous_dispatch {
-                            procedure_bridge
-                                .load_checked_from_source(
-                                    &source,
-                                    &autonomous_dispatch_catalog(),
-                                    AUTONOMOUS_DISPATCH_PROFILE,
-                                )
-                                .await
-                        } else {
-                            procedure_bridge.load_from_source(&source).await
-                        };
-                        match loaded {
-                            Ok(count) => {
-                                bridge_registered += count;
-                                reactive_adapters.extend(adapters);
-                            }
-                            Err(error) => error!(
-                                file = %procedure_path.display(),
-                                %error,
-                                "Could not register named .px procedures"
-                            ),
-                        }
+                    if praxis_dir.is_dir() {
+                        bridge_registered += procedure_bridge.load_from_directory(praxis_dir).await;
                     }
                 }
                 spine_action_router
                     .set_procedure_bridge(Arc::clone(&procedure_bridge))
                     .await;
                 info!(registered = bridge_registered, "Named .px procedure bridge loaded");
-                let total_registered = bootstrap::register_reactive_adapters(
-                    reactive_adapters,
-                    &reactive_registry,
-                    None,
-                )
-                .await;
+                let px_action_handler: Arc<dyn AsyncActionHandler> = spine_action_router;
+
+                let mut total_registered = 0;
+                for praxis_dir in &praxis_dirs {
+                    if praxis_dir.is_dir() {
+                        let count = bootstrap::register_reactive_procedures(
+                            praxis_dir,
+                            &reactive_registry,
+                            px_action_handler.clone(),
+                        )
+                        .await;
+                        total_registered += count;
+                    } else {
+                        debug!(dir = %praxis_dir.display(), ".px directory not found, skipping");
+                    }
+                }
 
                 if total_registered > 0 {
                     let trigger_count = reactive_registry.trigger_count().await;

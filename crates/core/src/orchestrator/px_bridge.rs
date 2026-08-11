@@ -28,7 +28,6 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use pares_radix_core::px_adapter::{load_px_procedures, AsyncActionHandler, PxProcedureAdapter};
-use px_check::{ContractCatalog, ExecutionProfile};
 
 /// Holds loaded .px procedures for orchestrator logic, keyed by procedure name.
 pub struct PxBridge {
@@ -41,32 +40,6 @@ pub struct PxBridge {
 }
 
 impl PxBridge {
-    /// Validate a source document against its complete host contract without
-    /// registering it. Hosts use this to make registration atomic across the
-    /// named-procedure bridge and the reactive registry.
-    pub fn validate_source_contract(
-        source: &str,
-        catalog: &ContractCatalog,
-        profile: ExecutionProfile,
-    ) -> Result<(), String> {
-        let report = pluresdb_px::px::compiler::validate_and_compile_checked(source, catalog, profile);
-        if report.is_activatable() {
-            return Ok(());
-        }
-
-        Err(report
-            .diagnostics
-            .iter()
-            .map(|diagnostic| {
-                format!(
-                    "{} {} step {}: {}",
-                    diagnostic.code, diagnostic.procedure, diagnostic.step, diagnostic.message
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n"))
-    }
-
     /// Create a new bridge with the given action handler.
     pub fn new(handler: Arc<dyn AsyncActionHandler>) -> Self {
         Self {
@@ -98,19 +71,6 @@ impl PxBridge {
         }
 
         Ok(count)
-    }
-
-    /// Validate the entire host contract before registering any procedure from
-    /// this source. A failed report activates nothing and includes every static
-    /// defect the Praxis checker can determine in one pass.
-    pub async fn load_checked_from_source(
-        &self,
-        source: &str,
-        catalog: &ContractCatalog,
-        profile: ExecutionProfile,
-    ) -> Result<usize, String> {
-        Self::validate_source_contract(source, catalog, profile)?;
-        self.load_from_source(source).await
     }
 
     /// Load .px procedures from a directory (recursive).
