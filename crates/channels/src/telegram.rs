@@ -3697,13 +3697,26 @@ mod tests {
         assert!(truncated.ends_with("…(truncated)"));
     }
 
+    fn test_shell_output(_unix_command: &str, _windows_command: &str) -> std::process::Output {
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = std::process::Command::new("cmd");
+            command.args(["/C", _windows_command]);
+            command
+        };
+        #[cfg(not(windows))]
+        let mut command = {
+            let mut command = std::process::Command::new("sh");
+            command.args(["-c", _unix_command]);
+            command
+        };
+
+        command.output().unwrap()
+    }
+
     #[test]
     fn format_update_command_output_success_without_stdout() {
-        let output = std::process::Command::new("sh")
-            .arg("-c")
-            .arg("true")
-            .output()
-            .unwrap();
+        let output = test_shell_output("true", "exit /b 0");
         assert_eq!(
             format_update_command_output(&output),
             "Self-update completed.".to_string()
@@ -3712,21 +3725,13 @@ mod tests {
 
     #[test]
     fn format_update_command_output_success_with_stdout() {
-        let output = std::process::Command::new("sh")
-            .arg("-c")
-            .arg("printf 'updated'")
-            .output()
-            .unwrap();
+        let output = test_shell_output("printf 'updated'", "echo updated");
         assert_eq!(format_update_command_output(&output), "updated".to_string());
     }
 
     #[test]
     fn format_update_command_output_failure_includes_stderr() {
-        let output = std::process::Command::new("sh")
-            .arg("-c")
-            .arg("echo boom >&2; exit 7")
-            .output()
-            .unwrap();
+        let output = test_shell_output("echo boom >&2; exit 7", "echo boom 1>&2 & exit /b 7");
         let formatted = format_update_command_output(&output);
         assert!(formatted.contains("Self-update failed"));
         assert!(formatted.contains("boom"));
@@ -3734,21 +3739,13 @@ mod tests {
 
     #[test]
     fn format_service_logs_output_handles_success_and_failure() {
-        let success = std::process::Command::new("sh")
-            .arg("-c")
-            .arg("printf 'line1\\nline2'")
-            .output()
-            .unwrap();
+        let success = test_shell_output("printf 'line1\\nline2'", "echo line1 & echo line2");
         assert_eq!(
             format_service_logs_output(&success),
             "line1\nline2".to_string()
         );
 
-        let failure = std::process::Command::new("sh")
-            .arg("-c")
-            .arg("echo denied >&2; exit 1")
-            .output()
-            .unwrap();
+        let failure = test_shell_output("echo denied >&2; exit 1", "echo denied 1>&2 & exit /b 1");
         let formatted_failure = format_service_logs_output(&failure);
         assert!(formatted_failure.contains("Failed to read service logs"));
         assert!(formatted_failure.contains("denied"));
