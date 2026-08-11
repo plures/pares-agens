@@ -63,7 +63,9 @@ pub fn autonomous_dispatch_catalog() -> ContractCatalog {
     );
     catalog.insert(
         "format_string",
-        dynamic_action(["vars"]).required("template", string()),
+        CallableContract::new(StaticType::Known(string()))
+            .required("template", string())
+            .required_any("vars"),
     );
     // Procedure-to-procedure calls are derived from this same source document
     // by px-check. Their declared PX types therefore remain authoritative.
