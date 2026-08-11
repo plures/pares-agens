@@ -181,6 +181,92 @@ impl SpineActionRouter {
             .unwrap_or(0);
         Ok(Value::from(window.saturating_sub(output.saturating_add(system))))
     }
+
+    fn determine_tier(params: &Value) -> Result<Value, ExecutionError> {
+        let complexity = params
+            .get("complexity")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let has_tools = params
+            .get("has_tools")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        Ok(Value::from(if has_tools || complexity >= 5 {
+            "premium"
+        } else if complexity <= 1 {
+            "fast"
+        } else {
+            "standard"
+        }))
+    }
+
+    fn filter_relevant(params: &Value) -> Result<Value, ExecutionError> {
+        // Constraints are safety guidance. In the absence of a declared PX
+        // relevance predicate, preserve them all rather than silently dropping
+        // a constraint at the action boundary.
+        Ok(params
+            .get("constraints")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())))
+    }
+
+    fn format_guidance_block(params: &Value) -> Result<Value, ExecutionError> {
+        let session_type = params
+            .get("session_type")
+            .and_then(Value::as_str)
+            .unwrap_or("general");
+        let constraints = params
+            .get("constraints")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let entries = constraints
+            .iter()
+            .map(|constraint| {
+                constraint
+                    .get("message")
+                    .or_else(|| constraint.get("name"))
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .unwrap_or_else(|| constraint.to_string())
+            })
+            .collect::<Vec<_>>();
+        if entries.is_empty() {
+            Ok(Value::String(String::new()))
+        } else {
+            Ok(Value::String(format!(
+                "## Praxis guidance ({session_type})\n{}",
+                entries
+                    .iter()
+                    .map(|entry| format!("- {entry}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )))
+        }
+    }
+
+    fn append_guidance(params: &Value) -> Result<Value, ExecutionError> {
+        let base = params.get("base").and_then(Value::as_str).unwrap_or_default();
+        let guidance = params
+            .get("guidance")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        Ok(Value::String(match (base.is_empty(), guidance.is_empty()) {
+            (true, _) => guidance.to_string(),
+            (_, true) => base.to_string(),
+            (false, false) => format!("{base}\n\n{guidance}"),
+        }))
+    }
+
+    fn style_response(params: &Value) -> Result<Value, ExecutionError> {
+        // Personality is declarative policy. The action preserves the model
+        // response until a configured renderer is available; it never invents
+        // or discards user-facing content.
+        Ok(params
+            .get("response")
+            .cloned()
+            .unwrap_or_else(|| Value::String(String::new())))
+    }
 }
 
 /// Cognition actions that must never be sent through the model-tool registry.
@@ -210,6 +296,7 @@ const COGNITION_ACTIONS: &[&str] = &[
     "match_patterns",
     "embed_text",
     "recall_memories",
+    "recall_context",
     "store_memory",
     "extract_entities",
     "manage_context",
@@ -221,6 +308,7 @@ const COGNITION_ACTIONS: &[&str] = &[
     "format_string",
     "find_most_recent",
     "generate_id",
+    "channel_send",
 ];
 
 #[async_trait]
@@ -235,10 +323,16 @@ impl AsyncActionHandler for SpineActionRouter {
             "append_to_list" => return Self::append_to_list(params),
             "get_last_item" => return Self::get_last_item(params),
             "compute_context_budget" => return Self::compute_context_budget(params),
+            "determine_tier" => return Self::determine_tier(params),
+            "filter_relevant" => return Self::filter_relevant(params),
+            "format_guidance_block" => return Self::format_guidance_block(params),
+            "append_guidance" => return Self::append_guidance(params),
+            "style_response" => return Self::style_response(params),
             // These aliases intentionally share the platform's one durable
             // store; they are not a second, in-memory state implementation.
             "pluresdb_read" | "db_get" => return self.platform.call("read_state", params).await,
             "pluresdb_write" | "db_set" => return self.platform.call("write_state", params).await,
+            "db_get_prefix" => return self.platform.call("read_state_prefix", params).await,
             _ => {}
         }
 
@@ -965,6 +1059,46 @@ impl CerebellumActionHandler {
         Ok(json!({"memories": memories}))
     }
 
+    /// Compatibility boundary for the legacy preprocessing procedure.
+    ///
+    /// The procedure provides extracted entities/classification rather than a
+    /// ready embedding. Convert that durable context into a recall query, then
+    /// reuse the sole memory-recall implementation and return its item list.
+    async fn recall_context_action(&self, params: &Value) -> Result<Value, ExecutionError> {
+        let mut terms = Vec::new();
+        if let Some(entities) = params
+            .get("entities")
+            .and_then(|value| value.get("entities").or(Some(value)))
+            .and_then(Value::as_array)
+        {
+            terms.extend(entities.iter().filter_map(|entity| {
+                entity
+                    .get("value")
+                    .or_else(|| entity.get("name"))
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+            }));
+        }
+        if let Some(intent) = params
+            .get("classification")
+            .and_then(|value| value.get("intent").or(Some(value)))
+            .and_then(Value::as_str)
+        {
+            terms.push(intent.to_string());
+        }
+
+        let recalled = self
+            .recall_memories_action(&json!({
+                "text": terms.join(" "),
+                "limit": params.get("limit").cloned().unwrap_or_else(|| json!(10)),
+            }))
+            .await?;
+        Ok(recalled
+            .get("memories")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())))
+    }
+
     /// Store a memory entry with auto-computed embedding.
     async fn store_memory_action(&self, params: &Value) -> Result<Value, ExecutionError> {
         let content = params.get("content").and_then(|v| v.as_str()).unwrap_or_default();
@@ -1276,6 +1410,7 @@ impl AsyncActionHandler for CerebellumActionHandler {
             "match_patterns" => Self::match_patterns_action(params),
             "embed_text" => self.compute_embedding(params).await,
             "recall_memories" => self.recall_memories_action(params).await,
+            "recall_context" => self.recall_context_action(params).await,
             "store_memory" => self.store_memory_action(params).await,
             "extract_entities" => Self::extract_entities_action(params),
             "manage_context" => Self::manage_context_action(params),
@@ -1358,6 +1493,39 @@ mod tests {
             .await
             .expect("platform action should retain durable owner");
         assert_eq!(durable["platform_action"], "write_state");
+
+        let tier = router
+            .call("determine_tier", &json!({"complexity": 6, "has_tools": false}))
+            .await
+            .expect("tier action should be registered directly");
+        assert_eq!(tier, "premium");
+
+        let context = router
+            .call("recall_context", &json!({"entities": {"entities": []}}))
+            .await
+            .expect("context recall action should be registered directly");
+        assert!(context.is_array());
+
+        let guidance = router
+            .call(
+                "format_guidance_block",
+                &json!({"session_type": "chat", "constraints": [{"message": "Preserve durable state"}]}),
+            )
+            .await
+            .expect("guidance formatter should be registered directly");
+        assert!(guidance.as_str().unwrap().contains("Preserve durable state"));
+
+        let sent = router
+            .call("channel_send", &json!({"chat_id": "chat", "content": "hello"}))
+            .await
+            .expect("channel output action should be registered directly");
+        assert_eq!(sent["sent"], true);
+
+        let prefix = router
+            .call("db_get_prefix", &json!({"prefix": "constraint:"}))
+            .await
+            .expect("prefix read should retain durable platform ownership");
+        assert_eq!(prefix["platform_action"], "read_state_prefix");
     }
 
     #[test]

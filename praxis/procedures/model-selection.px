@@ -73,7 +73,8 @@ procedure select_model(request: object from "model_request") -> write into "mode
   read_state {key: "providers:active"} -> $providers
 
   # Enumerate all currently available models across providers
-  list_available_models {providers: $providers} -> $models
+  list_available_models {providers: $providers} -> $available_models
+  get_field {object: $available_models, field: "models", default: []} -> $models
 
   # Classify what this task actually needs
   classify_task_requirements {
@@ -87,22 +88,24 @@ procedure select_model(request: object from "model_request") -> write into "mode
     models: $models,
     requirements: $requirements
   } -> $scored
+  get_field {object: $scored, field: "scored_models", default: []} -> $scored_models
 
   # Pick the top scorer (with fallback chain)
   select_top_with_fallback {
-    scored: $scored,
+    scored_models: $scored_models,
     fallback_count: 2
   } -> $selection
+  get_field {object: $selection, field: "selected"} -> $selected_model
 
   # Record selection for future learning
   write_state {key: "model_selection:last", value: {
     task_type: $requirements,
-    selected: $selection,
+    selected: $selected_model,
     timestamp: $request
   }}
 
   return {
-    model: $selection,
+    model: $selected_model,
     task: $request,
     requirements: $requirements
   }
