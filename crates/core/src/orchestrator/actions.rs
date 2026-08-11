@@ -163,6 +163,106 @@ impl SpineActionRouter {
         Ok(list.last().cloned().unwrap_or(Value::Null))
     }
 
+    fn get_first_item(params: &Value) -> Result<Value, ExecutionError> {
+        let list = params
+            .get("list")
+            .and_then(Value::as_array)
+            .ok_or_else(|| ExecutionError::ActionFailed {
+                action: "get_first_item".to_string(),
+                message: "missing list".to_string(),
+            })?;
+        Ok(list.first().cloned().unwrap_or(Value::Null))
+    }
+
+    /// Apply a policy-declared stable ordering to JSON task records. PX chooses
+    /// the fields and directions; this action only performs the deterministic
+    /// in-memory transformation.
+    fn sort_by(params: &Value) -> Result<Value, ExecutionError> {
+        let mut items = params
+            .get("items")
+            .and_then(Value::as_array)
+            .cloned()
+            .ok_or_else(|| ExecutionError::ActionFailed {
+                action: "sort_by".to_string(),
+                message: "missing items array".to_string(),
+            })?;
+        let keys = params
+            .get("keys")
+            .and_then(Value::as_array)
+            .ok_or_else(|| ExecutionError::ActionFailed {
+                action: "sort_by".to_string(),
+                message: "missing keys array".to_string(),
+            })?;
+        let orders = params.get("orders").and_then(Value::as_array);
+
+        items.sort_by(|left, right| {
+            for (index, key) in keys.iter().enumerate() {
+                let Some(key) = key.as_str() else {
+                    continue;
+                };
+                let direction = orders
+                    .and_then(|orders| orders.get(index))
+                    .and_then(Value::as_str)
+                    .unwrap_or("asc");
+                let ordering = Self::compare_json_fields(left, right, key);
+                if !ordering.is_eq() {
+                    return if direction == "desc" {
+                        ordering.reverse()
+                    } else {
+                        ordering
+                    };
+                }
+            }
+            std::cmp::Ordering::Equal
+        });
+        Ok(Value::Array(items))
+    }
+
+    fn compare_json_fields(left: &Value, right: &Value, key: &str) -> std::cmp::Ordering {
+        let left = Self::json_field(left, key);
+        let right = Self::json_field(right, key);
+        match (left, right) {
+            (Some(left), Some(right)) => {
+                if let (Some(left), Some(right)) = (left.as_f64(), right.as_f64()) {
+                    left.partial_cmp(&right).unwrap_or(std::cmp::Ordering::Equal)
+                } else if let (Some(left), Some(right)) = (left.as_str(), right.as_str()) {
+                    left.cmp(right)
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            }
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+    }
+
+    fn json_field<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+        let mut current = value;
+        for segment in key.split('.') {
+            current = current.get(segment)?;
+        }
+        Some(current)
+    }
+
+    fn compute_elapsed(params: &Value) -> Result<Value, ExecutionError> {
+        let start = params
+            .get("start")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| ExecutionError::ActionFailed {
+                action: "compute_elapsed".to_string(),
+                message: "missing numeric start".to_string(),
+            })?;
+        let end = params
+            .get("end")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| ExecutionError::ActionFailed {
+                action: "compute_elapsed".to_string(),
+                message: "missing numeric end".to_string(),
+            })?;
+        Ok(Value::from(end.saturating_sub(start)))
+    }
+
     fn compute_context_budget(params: &Value) -> Result<Value, ExecutionError> {
         let window = params
             .get("window")
@@ -322,6 +422,9 @@ impl AsyncActionHandler for SpineActionRouter {
             "get_field" => return Self::get_field(params),
             "append_to_list" => return Self::append_to_list(params),
             "get_last_item" => return Self::get_last_item(params),
+            "get_first_item" => return Self::get_first_item(params),
+            "sort_by" => return Self::sort_by(params),
+            "compute_elapsed" => return Self::compute_elapsed(params),
             "compute_context_budget" => return Self::compute_context_budget(params),
             "determine_tier" => return Self::determine_tier(params),
             "filter_relevant" => return Self::filter_relevant(params),
@@ -1557,6 +1660,31 @@ mod tests {
             }))
             .unwrap(),
             json!(25_856)
+        );
+        assert_eq!(
+            SpineActionRouter::get_first_item(&json!({"list": ["first", "second"]})).unwrap(),
+            json!("first")
+        );
+        assert_eq!(
+            SpineActionRouter::sort_by(&json!({
+                "items": [
+                    {"priority": 2, "created_at": 1},
+                    {"priority": 1, "created_at": 3},
+                    {"priority": 1, "created_at": 2}
+                ],
+                "keys": ["priority", "created_at"],
+                "orders": ["asc", "asc"]
+            }))
+            .unwrap(),
+            json!([
+                {"priority": 1, "created_at": 2},
+                {"priority": 1, "created_at": 3},
+                {"priority": 2, "created_at": 1}
+            ])
+        );
+        assert_eq!(
+            SpineActionRouter::compute_elapsed(&json!({"start": 9, "end": 4})).unwrap(),
+            json!(0)
         );
     }
 

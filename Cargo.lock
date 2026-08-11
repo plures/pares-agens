@@ -101,7 +101,7 @@ dependencies = [
  "pares-radix-praxis",
  "pares-rector",
  "pluresdb 3.12.0",
- "pluresdb-px",
+ "pluresdb-px 3.12.0 (git+https://github.com/plures/pluresdb?rev=328e060016fdc67e704712cffd71fcd9c38bfbf7)",
  "ratatui 0.30.2",
  "reqwest 0.12.28",
  "serde",
@@ -117,6 +117,7 @@ dependencies = [
  "tracing-subscriber",
  "unicode-segmentation",
  "uuid",
+ "walkdir",
  "wiremock",
 ]
 
@@ -5349,10 +5350,11 @@ dependencies = [
  "pares-radix-core",
  "pares-radix-praxis",
  "pluresdb 3.12.0",
- "pluresdb-procedures",
- "pluresdb-px",
+ "pluresdb-procedures 3.12.0 (git+https://github.com/plures/pluresdb?rev=328e060016fdc67e704712cffd71fcd9c38bfbf7)",
+ "pluresdb-px 3.12.0 (git+https://github.com/plures/pluresdb?rev=3cd4b44f8391580457212bbafd4ab6fd7e2779dc)",
  "pluresdb-sea",
  "pluresdb-sync 3.12.0",
+ "px-check",
  "regex",
  "regex-lite",
  "reqwest 0.12.28",
@@ -5417,7 +5419,7 @@ dependencies = [
  "pares-radix-core",
  "pares-radix-praxis",
  "pluresdb 3.12.0",
- "pluresdb-px",
+ "pluresdb-px 3.12.0 (git+https://github.com/plures/pluresdb?rev=328e060016fdc67e704712cffd71fcd9c38bfbf7)",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -5515,7 +5517,7 @@ dependencies = [
 [[package]]
 name = "pares-radix-audit"
 version = "1.55.60"
-source = "git+https://github.com/plures/pares-radix.git?rev=f53f0a1b660a67ed24a4ec5ee6bacf0c6416c530#f53f0a1b660a67ed24a4ec5ee6bacf0c6416c530"
+source = "git+https://github.com/plures/pares-radix.git?rev=bc60c05ac1223374e1bd05dc667afc1288e978ac#bc60c05ac1223374e1bd05dc667afc1288e978ac"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5531,7 +5533,7 @@ dependencies = [
 [[package]]
 name = "pares-radix-core"
 version = "1.55.60"
-source = "git+https://github.com/plures/pares-radix.git?rev=f53f0a1b660a67ed24a4ec5ee6bacf0c6416c530#f53f0a1b660a67ed24a4ec5ee6bacf0c6416c530"
+source = "git+https://github.com/plures/pares-radix.git?rev=bc60c05ac1223374e1bd05dc667afc1288e978ac#bc60c05ac1223374e1bd05dc667afc1288e978ac"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -5543,7 +5545,7 @@ dependencies = [
  "pares-radix-praxis",
  "pares-radix-privacy",
  "pluresdb 3.12.0",
- "pluresdb-procedures",
+ "pluresdb-procedures 3.12.0 (git+https://github.com/plures/pluresdb?rev=328e060016fdc67e704712cffd71fcd9c38bfbf7)",
  "pluresdb-sea",
  "pluresdb-sync 3.12.0",
  "regex",
@@ -5567,11 +5569,11 @@ dependencies = [
 [[package]]
 name = "pares-radix-praxis"
 version = "1.55.60"
-source = "git+https://github.com/plures/pares-radix.git?rev=f53f0a1b660a67ed24a4ec5ee6bacf0c6416c530#f53f0a1b660a67ed24a4ec5ee6bacf0c6416c530"
+source = "git+https://github.com/plures/pares-radix.git?rev=bc60c05ac1223374e1bd05dc667afc1288e978ac#bc60c05ac1223374e1bd05dc667afc1288e978ac"
 dependencies = [
  "async-trait",
  "chrono",
- "pluresdb-px",
+ "pluresdb-px 3.12.0 (git+https://github.com/plures/pluresdb?rev=328e060016fdc67e704712cffd71fcd9c38bfbf7)",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -5583,7 +5585,7 @@ dependencies = [
 [[package]]
 name = "pares-radix-privacy"
 version = "1.55.60"
-source = "git+https://github.com/plures/pares-radix.git?rev=f53f0a1b660a67ed24a4ec5ee6bacf0c6416c530#f53f0a1b660a67ed24a4ec5ee6bacf0c6416c530"
+source = "git+https://github.com/plures/pares-radix.git?rev=bc60c05ac1223374e1bd05dc667afc1288e978ac#bc60c05ac1223374e1bd05dc667afc1288e978ac"
 dependencies = [
  "regex",
  "serde",
@@ -5594,7 +5596,7 @@ dependencies = [
 [[package]]
 name = "pares-rector"
 version = "1.55.60"
-source = "git+https://github.com/plures/pares-radix.git?rev=f53f0a1b660a67ed24a4ec5ee6bacf0c6416c530#f53f0a1b660a67ed24a4ec5ee6bacf0c6416c530"
+source = "git+https://github.com/plures/pares-radix.git?rev=bc60c05ac1223374e1bd05dc667afc1288e978ac#bc60c05ac1223374e1bd05dc667afc1288e978ac"
 dependencies = [
  "hostname",
  "num_cpus",
@@ -5956,8 +5958,8 @@ version = "3.12.0"
 source = "git+https://github.com/plures/pluresdb?rev=328e060016fdc67e704712cffd71fcd9c38bfbf7#328e060016fdc67e704712cffd71fcd9c38bfbf7"
 dependencies = [
  "anyhow",
- "pluresdb-core 3.12.0",
- "pluresdb-storage 3.12.0",
+ "pluresdb-core 3.12.0 (git+https://github.com/plures/pluresdb?rev=328e060016fdc67e704712cffd71fcd9c38bfbf7)",
+ "pluresdb-storage 3.12.0 (git+https://github.com/plures/pluresdb?rev=328e060016fdc67e704712cffd71fcd9c38bfbf7)",
  "pluresdb-sync 3.12.0",
  "tokio",
 ]
@@ -5983,7 +5985,24 @@ dependencies = [
  "futures",
  "hnsw_rs",
  "parking_lot 0.12.5",
- "pluresdb-storage 3.12.0",
+ "pluresdb-storage 3.12.0 (git+https://github.com/plures/pluresdb?rev=328e060016fdc67e704712cffd71fcd9c38bfbf7)",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pluresdb-core"
+version = "3.12.0"
+source = "git+https://github.com/plures/pluresdb?rev=3cd4b44f8391580457212bbafd4ab6fd7e2779dc#3cd4b44f8391580457212bbafd4ab6fd7e2779dc"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dashmap",
+ "parking_lot 0.12.5",
+ "pluresdb-storage 3.12.0 (git+https://github.com/plures/pluresdb?rev=3cd4b44f8391580457212bbafd4ab6fd7e2779dc)",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -6002,8 +6021,29 @@ dependencies = [
  "parking_lot 0.12.5",
  "pest",
  "pest_derive",
- "pluresdb-core 3.12.0",
- "pluresdb-procedures-macros",
+ "pluresdb-core 3.12.0 (git+https://github.com/plures/pluresdb?rev=328e060016fdc67e704712cffd71fcd9c38bfbf7)",
+ "pluresdb-procedures-macros 3.12.0 (git+https://github.com/plures/pluresdb?rev=328e060016fdc67e704712cffd71fcd9c38bfbf7)",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pluresdb-procedures"
+version = "3.12.0"
+source = "git+https://github.com/plures/pluresdb?rev=3cd4b44f8391580457212bbafd4ab6fd7e2779dc#3cd4b44f8391580457212bbafd4ab6fd7e2779dc"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "cron",
+ "parking_lot 0.12.5",
+ "pest",
+ "pest_derive",
+ "pluresdb-core 3.12.0 (git+https://github.com/plures/pluresdb?rev=3cd4b44f8391580457212bbafd4ab6fd7e2779dc)",
+ "pluresdb-procedures-macros 3.12.0 (git+https://github.com/plures/pluresdb?rev=3cd4b44f8391580457212bbafd4ab6fd7e2779dc)",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -6023,6 +6063,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pluresdb-procedures-macros"
+version = "3.12.0"
+source = "git+https://github.com/plures/pluresdb?rev=3cd4b44f8391580457212bbafd4ab6fd7e2779dc#3cd4b44f8391580457212bbafd4ab6fd7e2779dc"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "pluresdb-px"
 version = "3.12.0"
 source = "git+https://github.com/plures/pluresdb?rev=328e060016fdc67e704712cffd71fcd9c38bfbf7#328e060016fdc67e704712cffd71fcd9c38bfbf7"
@@ -6031,10 +6081,34 @@ dependencies = [
  "chrono",
  "futures",
  "notify",
- "pluresdb-procedures",
- "px-ast",
- "px-compiler",
- "px-eval",
+ "pluresdb-procedures 3.12.0 (git+https://github.com/plures/pluresdb?rev=328e060016fdc67e704712cffd71fcd9c38bfbf7)",
+ "px-ast 0.0.0",
+ "px-compiler 0.0.0",
+ "px-eval 0.0.0",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "uuid",
+ "walkdir",
+]
+
+[[package]]
+name = "pluresdb-px"
+version = "3.12.0"
+source = "git+https://github.com/plures/pluresdb?rev=3cd4b44f8391580457212bbafd4ab6fd7e2779dc#3cd4b44f8391580457212bbafd4ab6fd7e2779dc"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "futures",
+ "notify",
+ "pluresdb-procedures 3.12.0 (git+https://github.com/plures/pluresdb?rev=3cd4b44f8391580457212bbafd4ab6fd7e2779dc)",
+ "px-ast 0.1.0",
+ "px-check",
+ "px-compiler 0.1.0",
+ "px-eval 0.1.0",
  "regex",
  "serde",
  "serde_json",
@@ -6093,6 +6167,22 @@ dependencies = [
  "sled",
  "thiserror 2.0.20",
  "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pluresdb-storage"
+version = "3.12.0"
+source = "git+https://github.com/plures/pluresdb?rev=3cd4b44f8391580457212bbafd4ab6fd7e2779dc#3cd4b44f8391580457212bbafd4ab6fd7e2779dc"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "chrono",
+ "parking_lot 0.12.5",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
  "tracing",
  "uuid",
 ]
@@ -6439,13 +6529,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "px-ast"
+version = "0.1.0"
+source = "git+https://github.com/plures/praxis-lang.git?rev=89d72cc12732ba1c21e8063d40a39f4a2700cc9c#89d72cc12732ba1c21e8063d40a39f4a2700cc9c"
+dependencies = [
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "px-check"
+version = "0.1.0"
+source = "git+https://github.com/plures/praxis-lang.git?rev=89d72cc12732ba1c21e8063d40a39f4a2700cc9c#89d72cc12732ba1c21e8063d40a39f4a2700cc9c"
+dependencies = [
+ "px-ast 0.1.0",
+]
+
+[[package]]
 name = "px-compiler"
 version = "0.0.0"
 source = "git+https://github.com/plures/praxis-lang.git?rev=37be99e95f2db8e530ea7dd24ec2d0b01113ceeb#37be99e95f2db8e530ea7dd24ec2d0b01113ceeb"
 dependencies = [
  "pest",
- "px-ast",
- "px-grammar",
+ "px-ast 0.0.0",
+ "px-grammar 0.0.0",
+]
+
+[[package]]
+name = "px-compiler"
+version = "0.1.0"
+source = "git+https://github.com/plures/praxis-lang.git?rev=89d72cc12732ba1c21e8063d40a39f4a2700cc9c#89d72cc12732ba1c21e8063d40a39f4a2700cc9c"
+dependencies = [
+ "pest",
+ "px-ast 0.1.0",
+ "px-check",
+ "px-grammar 0.1.0",
 ]
 
 [[package]]
@@ -6453,8 +6572,18 @@ name = "px-eval"
 version = "0.0.0"
 source = "git+https://github.com/plures/praxis-lang.git?rev=37be99e95f2db8e530ea7dd24ec2d0b01113ceeb#37be99e95f2db8e530ea7dd24ec2d0b01113ceeb"
 dependencies = [
- "px-ast",
- "px-compiler",
+ "px-ast 0.0.0",
+ "px-compiler 0.0.0",
+ "serde_json",
+]
+
+[[package]]
+name = "px-eval"
+version = "0.1.0"
+source = "git+https://github.com/plures/praxis-lang.git?rev=89d72cc12732ba1c21e8063d40a39f4a2700cc9c#89d72cc12732ba1c21e8063d40a39f4a2700cc9c"
+dependencies = [
+ "px-ast 0.1.0",
+ "px-compiler 0.1.0",
  "serde_json",
 ]
 
@@ -6462,6 +6591,15 @@ dependencies = [
 name = "px-grammar"
 version = "0.0.0"
 source = "git+https://github.com/plures/praxis-lang.git?rev=37be99e95f2db8e530ea7dd24ec2d0b01113ceeb#37be99e95f2db8e530ea7dd24ec2d0b01113ceeb"
+dependencies = [
+ "pest",
+ "pest_derive",
+]
+
+[[package]]
+name = "px-grammar"
+version = "0.1.0"
+source = "git+https://github.com/plures/praxis-lang.git?rev=89d72cc12732ba1c21e8063d40a39f4a2700cc9c#89d72cc12732ba1c21e8063d40a39f4a2700cc9c"
 dependencies = [
  "pest",
  "pest_derive",
@@ -7262,7 +7400,7 @@ checksum = "3fbf2ae1b8bc8e02df939598064d22402220cd5bbcca1c76f7d6a310974d5615"
 dependencies = [
  "dyn-clone",
  "indexmap 1.9.3",
- "schemars_derive",
+ "schemars_derive 0.8.22",
  "serde",
  "serde_json",
  "url",
@@ -7289,6 +7427,7 @@ checksum = "687274d293b6cdc6e73e0fee520bf2049650090d7164f87672d212a3c530cf4a"
 dependencies = [
  "dyn-clone",
  "ref-cast",
+ "schemars_derive 1.2.2",
  "serde",
  "serde_json",
 ]
@@ -7301,8 +7440,20 @@ checksum = "32e265784ad618884abaea0600a9adf15393368d840e0222d101a072f3f7534d"
 dependencies = [
  "proc-macro2",
  "quote",
- "serde_derive_internals",
+ "serde_derive_internals 0.29.1",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "schemars_derive"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d98c67716b46af2f0b8cf752abc930f6f9aecfbf671ecfb531db8a31dbe4e2ba"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_derive_internals 0.30.0",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -7428,6 +7579,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "serde_derive_internals"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f852137cce035d6a4df67ccce505ff6b3e9fd3a10e3e52b24dc71e650bb1a9bd"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
 ]
 
 [[package]]

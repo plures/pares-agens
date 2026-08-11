@@ -1,3 +1,4 @@
+# px-schema: pares-agens.spine@1#autonomous-dispatch-v1
 # autonomous-dispatch.px — Task dispatch decisions (v3 dataflow)
 #
 # Replaces the Rust-side TaskExecutor.try_execute_next() logic.
@@ -23,56 +24,38 @@
 # Facts
 # ═══════════════════════════════════════════════════════════════════
 
-# [parser-skip] fact DispatchDecision:
-# [parser-skip]   should_dispatch: bool
-# [parser-skip]   task_id: optional[string]
-# [parser-skip]   reason: string
-# [parser-skip]   prompt: optional[string]
-# [parser-skip] 
-# [parser-skip] fact EvaluableTask:
-# [parser-skip]   id: string
-# [parser-skip]   description: string
-# [parser-skip]   priority: int
-# [parser-skip]   created_at: int
-# [parser-skip]   last_evaluated_at: optional[int]
-# [parser-skip]   attempts: int
-# [parser-skip]   conditions: list
-# [parser-skip] 
-# ═══════════════════════════════════════════════════════════════════
-# Config
-# ═══════════════════════════════════════════════════════════════════
+fact DispatchDecision:
+  should_dispatch: bool
+  task_id: string
+  reason: string
+  prompt: string
 
-# [parser-skip] config autonomous_dispatch:
-# [parser-skip]   min_evaluation_interval_ms: int = 60000   # 1 minute cooldown per task
-# [parser-skip]   max_evaluations_per_tick: int = 1         # one task per heartbeat
-# [parser-skip]   max_attempts: int = 5                     # give up after 5 tries
-# [parser-skip] 
-# ═══════════════════════════════════════════════════════════════════
-# Constraints
-# ═══════════════════════════════════════════════════════════════════
+fact EvaluableTask:
+  id: string
+  description: string
+  priority: int
+  created_at: int
+  last_evaluated_at: int
+  attempts: int
+  conditions: list
+  subtasks: list
 
-# [parser-skip] constraint dispatch_respects_cooldown:
-# [parser-skip]   given: "Tasks cannot be dispatched more frequently than the minimum interval"
-# [parser-skip]   check: |
-# [parser-skip]     when DispatchDecision.should_dispatch == true:
-# [parser-skip]       task.last_evaluated_at == null OR
-# [parser-skip]       (now_ms() - task.last_evaluated_at) > config.min_evaluation_interval_ms
-# [parser-skip]   severity: error
-# [parser-skip] 
-# [parser-skip] constraint dispatch_respects_max_attempts:
-# [parser-skip]   given: "Tasks that have failed too many times should not be retried"
-# [parser-skip]   check: |
-# [parser-skip]     when DispatchDecision.should_dispatch == true:
-# [parser-skip]       task.attempts < config.max_attempts
-# [parser-skip]   severity: error
-# [parser-skip] 
+fact SteerResult:
+  task_id: string
+  message_to_agent: string
+
+# The dataflow bindings below are the executable configuration. They are local
+# rather than parser-skipped config so the compiler can prove every use.
 # ═══════════════════════════════════════════════════════════════════
 # Dataflow Procedures
 # ═══════════════════════════════════════════════════════════════════
 
 # Heartbeat entry: should we dispatch a task this tick?
-procedure evaluate_dispatch(tick: int from "heartbeat_tick") -> decision into "dispatch_decision":
+procedure evaluate_dispatch(tick: int from "heartbeat_tick") -> DispatchDecision into "dispatch_decision":
   given: "Decide whether to dispatch an autonomous task on this heartbeat tick"
+
+  define $min_evaluation_interval_seconds = 60
+  define $max_attempts = 5
 
   # Rust supplies the durable task graph from the shared TaskManager. This
   # action is an IO read only; PX decides which runnable leaf to select.
@@ -93,14 +76,14 @@ procedure evaluate_dispatch(tick: int from "heartbeat_tick") -> decision into "d
   timestamp_now {} -> $now
 
   # Filter by cooldown
-  filter_ready_tasks {tasks: $leaves, now: $now, cooldown: config.min_evaluation_interval_ms} -> $ready
+  filter_ready_tasks {tasks: $leaves, now: $now, cooldown: $min_evaluation_interval_seconds} -> $ready
 
   when length($ready) == 0:
     return {should_dispatch: false, task_id: null, reason: "all_cooling_down", prompt: null}
   end
 
   # Filter by max attempts
-  filter_retriable {tasks: $ready, max: config.max_attempts} -> $retriable
+  filter_retriable {tasks: $ready, max: $max_attempts} -> $retriable
 
   when length($retriable) == 0:
     return {should_dispatch: false, task_id: null, reason: "all_exhausted", prompt: null}
@@ -109,35 +92,40 @@ procedure evaluate_dispatch(tick: int from "heartbeat_tick") -> decision into "d
   # Select highest priority (lowest number), then oldest
   select_best_task {tasks: $retriable} -> $best
 
+  get_field {object: $best, field: "id"} -> $best_id
+
   # Build the execution prompt
   build_task_prompt {task: $best} -> $prompt
 
   # One narrow Rust IO boundary persists the lifecycle claim and attempt.
   # The dispatch decision itself remains the result of this procedure.
-  mark_task_in_progress {task_id: $best.id}
-  dispatch_task {task_id: $best.id, prompt: $prompt}
+  mark_task_in_progress {task_id: $best_id}
+  dispatch_task {task_id: $best_id, prompt: $prompt}
 
   return {
     should_dispatch: true,
-    task_id: $best.id,
+    task_id: $best_id,
     reason: "task_ready",
     prompt: $prompt
   }
 
 
 # Steering entry: user confirmed/redirected a task — build prompt and dispatch
-procedure build_steered_prompt(steer: SteerResult from "task_dispatch") -> prompt into "task_prompt":
+procedure build_steered_prompt(steer: SteerResult from "task_dispatch") -> string into "task_prompt":
   given: "Build execution prompt for a steered task"
 
-  when steer.message_to_agent == null:
+  get_field {object: $steer, field: "message_to_agent"} -> $message_to_agent
+  get_field {object: $steer, field: "task_id"} -> $task_id
+
+  when $message_to_agent == null:
     return null  # cancelled task — don't dispatch
   end
 
   # Claim and dispatch use the same durable action seam as heartbeat dispatch.
-  mark_task_in_progress {task_id: steer.task_id}
-  dispatch_task {task_id: steer.task_id, prompt: steer.message_to_agent}
+  mark_task_in_progress {task_id: $task_id}
+  dispatch_task {task_id: $task_id, prompt: $message_to_agent}
 
-  return steer.message_to_agent
+  return $message_to_agent
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -145,7 +133,7 @@ procedure build_steered_prompt(steer: SteerResult from "task_dispatch") -> promp
 # ═══════════════════════════════════════════════════════════════════
 
 # utility: called by evaluate_dispatch
-procedure filter_leaf_tasks(tasks: list) -> leaves:
+procedure filter_leaf_tasks(tasks: list) -> list:
   given: "Keep only evaluable tasks without child tasks"
   define $leaves = []
   loop over $tasks as task:
@@ -156,15 +144,16 @@ procedure filter_leaf_tasks(tasks: list) -> leaves:
   return $leaves
 
 # utility: called by evaluate_dispatch
-procedure filter_ready_tasks(tasks: list, now: int, cooldown: int) -> filtered:
+procedure filter_ready_tasks(tasks: list, now: int, cooldown: int) -> list:
   given: "Filter tasks that have cooled down enough for re-evaluation"
   define $ready = []
   loop over $tasks as task:
-    when task.last_evaluated_at == null:
+    get_field {object: $task, field: "last_evaluated_at"} -> $last_evaluated_at
+    when $last_evaluated_at == null:
       append $ready $task
     end
-    when task.last_evaluated_at != null:
-      compute_elapsed {start: $task.last_evaluated_at, end: $now} -> $elapsed
+    when $last_evaluated_at != null:
+      compute_elapsed {start: $last_evaluated_at, end: $now} -> $elapsed
       when $elapsed > $cooldown:
         append $ready $task
       end
@@ -173,7 +162,7 @@ procedure filter_ready_tasks(tasks: list, now: int, cooldown: int) -> filtered:
   return $ready
 
 # utility: called by evaluate_dispatch
-procedure filter_retriable(tasks: list, max: int) -> filtered:
+procedure filter_retriable(tasks: list, max: int) -> list:
   given: "Filter tasks that haven't exhausted their retry budget"
   define $retriable = []
   loop over $tasks as task:
@@ -184,16 +173,21 @@ procedure filter_retriable(tasks: list, max: int) -> filtered:
   return $retriable
 
 # utility: called by evaluate_dispatch
-procedure select_best_task(tasks: list) -> best:
+procedure select_best_task(tasks: list) -> EvaluableTask:
   given: "Select highest-priority task (lowest number = highest priority), then oldest"
   sort_by {items: $tasks, keys: ["priority", "created_at"], orders: ["asc", "asc"]} -> $sorted
-  return $sorted[0]
+  get_first_item {list: $sorted} -> $best
+  return $best
 
 # utility: called by evaluate_dispatch, build_steered_prompt
-procedure build_task_prompt(task: EvaluableTask) -> prompt:
+procedure build_task_prompt(task: EvaluableTask) -> string:
   given: "Build the execution prompt string for an autonomous task"
 
-  format_conditions {conditions: $task.conditions} -> $cond_text
+  get_field {object: $task, field: "description"} -> $description
+  get_field {object: $task, field: "id"} -> $id
+  get_field {object: $task, field: "priority"} -> $priority
+  get_field {object: $task, field: "attempts"} -> $attempts
+  get_field {object: $task, field: "conditions"} -> $conditions
 
   format_string {
     template: "[autonomous-task] Execute this task:
@@ -206,35 +200,12 @@ Conditions:
 
 Work on this task using available tools. For work with multiple independently verifiable outcomes, call task_create_subtask with this task ID before implementation. The parent remains open until every child is terminal. When complete, call task_complete with this task ID; prose alone does not close the queue. If blocked, explain why.",
     vars: {
-      description: $task.description,
-      id: $task.id,
-      priority: $task.priority,
-      attempts: $task.attempts,
-      conditions: $cond_text
+      description: $description,
+      id: $id,
+      priority: $priority,
+      attempts: $attempts,
+      conditions: $conditions
     }
   } -> $prompt
 
   return $prompt
-
-# utility: called by build_task_prompt
-procedure format_conditions(conditions: list) -> text:
-  given: "Format task conditions into a readable checklist"
-  when length($conditions) == 0:
-    return "No specific conditions — use your judgment."
-  end
-  define $lines = []
-  loop over $conditions as c:
-    define $status = "⏳"
-    when c.satisfied:
-      define $status = "✅"
-    end
-    compute_index {offset: 1} -> $i
-    format_string {
-      template: "  {i}. {status} {description}",
-      vars: {i: $i, status: $status, description: $c.description}
-    } -> $line
-    append $lines $line
-  end
-  join {items: $lines, separator: "
-"} -> $text
-  return $text
