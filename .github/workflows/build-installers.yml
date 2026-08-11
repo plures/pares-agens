@@ -147,7 +147,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: cargo tauri build --target ${{ matrix.rust_target }} --bundles ${{ matrix.bundle_target }} --locked
+        run: cargo tauri build --target ${{ matrix.rust_target }} --bundles ${{ matrix.bundle_target }}
 
       # ── Windows code signing (SignPath) ───────────────────────────────
       - name: Sign MSI (SignPath)
@@ -176,7 +176,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: cargo tauri build --target ${{ matrix.rust_target }} --bundles ${{ matrix.bundle_target }} --locked
+        run: cargo tauri build --target ${{ matrix.rust_target }} --bundles ${{ matrix.bundle_target }}
 
       - name: Build and bundle (Linux)
         if: matrix.platform == 'ubuntu-22.04'
@@ -184,7 +184,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: cargo tauri build --target ${{ matrix.rust_target }} --bundles ${{ matrix.bundle_target }} --locked
+        run: cargo tauri build --target ${{ matrix.rust_target }} --bundles ${{ matrix.bundle_target }}
 
       # ── Upload artifacts ───────────────────────────────────────────────
       - name: Upload installer artifact
