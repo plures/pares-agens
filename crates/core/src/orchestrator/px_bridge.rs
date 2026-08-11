@@ -28,6 +28,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use pares_radix_core::px_adapter::{load_px_procedures, AsyncActionHandler, PxProcedureAdapter};
+use px_check::{ContractCatalog, ExecutionProfile};
 
 /// Holds loaded .px procedures for orchestrator logic, keyed by procedure name.
 pub struct PxBridge {
@@ -40,6 +41,32 @@ pub struct PxBridge {
 }
 
 impl PxBridge {
+    /// Validate a source document against its complete host contract without
+    /// registering it. Hosts use this to make registration atomic across the
+    /// named-procedure bridge and the reactive registry.
+    pub fn validate_source_contract(
+        source: &str,
+        catalog: &ContractCatalog,
+        profile: ExecutionProfile,
+    ) -> Result<(), String> {
+        let report = pluresdb_px::px::compiler::validate_and_compile_checked(source, catalog, profile);
+        if report.is_activatable() {
+            return Ok(());
+        }
+
+        Err(report
+            .diagnostics
+            .iter()
+            .map(|diagnostic| {
+                format!(
+                    "{} {} step {}: {}",
+                    diagnostic.code, diagnostic.procedure, diagnostic.step, diagnostic.message
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n"))
+    }
+
     /// Create a new bridge with the given action handler.
     pub fn new(handler: Arc<dyn AsyncActionHandler>) -> Self {
         Self {
@@ -55,6 +82,15 @@ impl PxBridge {
     /// Procedures are indexed by name for direct invocation.
     pub async fn load_from_source(&self, source: &str) -> Result<usize, String> {
         let adapters = load_px_procedures(source, self.handler.clone())?;
+        Ok(self.load_adapters(adapters).await)
+    }
+
+    /// Register adapters that the caller compiled already.
+    ///
+    /// Startup uses this when the same immutable adapters must be supplied to
+    /// the named bridge and Radix's reactive registry. It prevents a second
+    /// parser/compiler pass over the same PX source.
+    pub async fn load_adapters(&self, adapters: Vec<PxProcedureAdapter>) -> usize {
         let count = adapters.len();
 
         let mut procs = self.procedures.write().await;
@@ -70,7 +106,20 @@ impl PxBridge {
             info!(count, "px_bridge: loaded orchestrator procedures");
         }
 
-        Ok(count)
+        count
+    }
+
+    /// Validate the entire host contract before registering any procedure from
+    /// this source. A failed report activates nothing and includes every static
+    /// defect the Praxis checker can determine in one pass.
+    pub async fn load_checked_from_source(
+        &self,
+        source: &str,
+        catalog: &ContractCatalog,
+        profile: ExecutionProfile,
+    ) -> Result<usize, String> {
+        Self::validate_source_contract(source, catalog, profile)?;
+        self.load_from_source(source).await
     }
 
     /// Load .px procedures from a directory (recursive).
@@ -279,6 +328,23 @@ procedure test_proc:
         // May or may not parse depending on grammar support for simple return
         // The point is it doesn't crash
         assert!(count == 0 || count == 1);
+    }
+
+    #[tokio::test]
+    async fn bridge_registers_precompiled_adapters() {
+        let handler: Arc<dyn AsyncActionHandler> = Arc::new(NoOpHandler);
+        let bridge = PxBridge::new(Arc::clone(&handler));
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../praxis/procedures/routing.px"),
+        )
+        .expect("routing.px must exist");
+
+        let adapters = load_px_procedures(&source, handler).expect("routing.px must compile");
+        let count = bridge.load_adapters(adapters).await;
+
+        assert!(count > 0, "precompiled procedures must be registered");
+        assert!(bridge.is_active());
     }
 
     /// Load the real routing.px procedure and exercise route_dispatch end-to-end
