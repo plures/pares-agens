@@ -82,6 +82,15 @@ impl PxBridge {
     /// Procedures are indexed by name for direct invocation.
     pub async fn load_from_source(&self, source: &str) -> Result<usize, String> {
         let adapters = load_px_procedures(source, self.handler.clone())?;
+        Ok(self.load_adapters(adapters).await)
+    }
+
+    /// Register adapters that the caller compiled already.
+    ///
+    /// Startup uses this when the same immutable adapters must be supplied to
+    /// the named bridge and Radix's reactive registry. It prevents a second
+    /// parser/compiler pass over the same PX source.
+    pub async fn load_adapters(&self, adapters: Vec<PxProcedureAdapter>) -> usize {
         let count = adapters.len();
 
         let mut procs = self.procedures.write().await;
@@ -97,7 +106,7 @@ impl PxBridge {
             info!(count, "px_bridge: loaded orchestrator procedures");
         }
 
-        Ok(count)
+        count
     }
 
     /// Validate the entire host contract before registering any procedure from
@@ -319,6 +328,23 @@ procedure test_proc:
         // May or may not parse depending on grammar support for simple return
         // The point is it doesn't crash
         assert!(count == 0 || count == 1);
+    }
+
+    #[tokio::test]
+    async fn bridge_registers_precompiled_adapters() {
+        let handler: Arc<dyn AsyncActionHandler> = Arc::new(NoOpHandler);
+        let bridge = PxBridge::new(Arc::clone(&handler));
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../praxis/procedures/routing.px"),
+        )
+        .expect("routing.px must exist");
+
+        let adapters = load_px_procedures(&source, handler).expect("routing.px must compile");
+        let count = bridge.load_adapters(adapters).await;
+
+        assert!(count > 0, "precompiled procedures must be registered");
+        assert!(bridge.is_active());
     }
 
     /// Load the real routing.px procedure and exercise route_dispatch end-to-end

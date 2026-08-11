@@ -63,9 +63,9 @@ walkdir = "2"
 # (`../radix-core`); here it is referenced via git and redirected to the local
 # pares-radix checkout by the temporary [patch] block in the workspace root
 # Cargo.toml (Stage S-C scaffolding — to be replaced by a real pin in S-F).
-pares-radix-core = { git = "https://github.com/plures/pares-radix.git", rev = "bc60c05ac1223374e1bd05dc667afc1288e978ac" }
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", rev = "ad13ff79c3204fd171ea2775e34ca040fb314ea1" }
 # Praxis (decision ledger / constraints) — same git+patch redirect as core.
-pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", rev = "bc60c05ac1223374e1bd05dc667afc1288e978ac" }
+pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", rev = "ad13ff79c3204fd171ea2775e34ca040fb314ea1" }
 # Privacy and audit are local crates in this (pares-agens) workspace.
 pares-agens-privacy = { path = "../privacy" }
 pares-agens-audit = { path = "../audit" }

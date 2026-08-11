@@ -263,6 +263,13 @@ impl SpineActionRouter {
         Ok(Value::from(end.saturating_sub(start)))
     }
 
+    /// Epoch milliseconds for PX policies that compare directly with durable
+    /// task timestamps. Unlike `get_current_time`, this action returns the
+    /// scalar the PX contract declares rather than a diagnostic object.
+    fn timestamp_now() -> Result<Value, ExecutionError> {
+        Ok(Value::from(CerebellumActionHandler::current_timestamp_ms()?))
+    }
+
     fn compute_context_budget(params: &Value) -> Result<Value, ExecutionError> {
         let window = params
             .get("window")
@@ -405,7 +412,6 @@ const COGNITION_ACTIONS: &[&str] = &[
     "channel_send",
     "dispatch_tools",
     "build_tool_followup",
-    "timestamp_now",
     "format_string",
     "find_most_recent",
     "generate_id",
@@ -425,6 +431,7 @@ impl AsyncActionHandler for SpineActionRouter {
             "get_first_item" => return Self::get_first_item(params),
             "sort_by" => return Self::sort_by(params),
             "compute_elapsed" => return Self::compute_elapsed(params),
+            "timestamp_now" => return Self::timestamp_now(),
             "compute_context_budget" => return Self::compute_context_budget(params),
             "determine_tier" => return Self::determine_tier(params),
             "filter_relevant" => return Self::filter_relevant(params),
@@ -784,16 +791,23 @@ impl CerebellumActionHandler {
         Ok(json!({ "written": true }))
     }
 
-    fn get_current_time() -> Result<Value, ExecutionError> {
-        let timestamp_ms = SystemTime::now()
+    fn current_timestamp_ms() -> Result<i64, ExecutionError> {
+        SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| ExecutionError::ActionFailed {
-                action: "get_current_time".to_string(),
+                action: "timestamp_now".to_string(),
                 message: e.to_string(),
             })?
-            .as_millis() as i64;
+            .as_millis()
+            .try_into()
+            .map_err(|_| ExecutionError::ActionFailed {
+                action: "timestamp_now".to_string(),
+                message: "current time exceeds i64 milliseconds".to_string(),
+            })
+    }
 
-        Ok(json!({ "timestamp_ms": timestamp_ms }))
+    fn get_current_time() -> Result<Value, ExecutionError> {
+        Ok(json!({ "timestamp_ms": Self::current_timestamp_ms()? }))
     }
 
     async fn emit_event(&self, params: &Value) -> Result<Value, ExecutionError> {
@@ -1632,6 +1646,15 @@ mod tests {
             .await
             .expect("prefix read should retain durable platform ownership");
         assert_eq!(prefix["platform_action"], "read_state_prefix");
+
+        let timestamp = router
+            .call("timestamp_now", &json!({}))
+            .await
+            .expect("timestamp_now should be handled by the spine boundary");
+        assert!(
+            timestamp.as_i64().is_some_and(|value| value > 1_704_067_200_000),
+            "timestamp_now must return epoch milliseconds, got {timestamp}"
+        );
     }
 
     #[test]

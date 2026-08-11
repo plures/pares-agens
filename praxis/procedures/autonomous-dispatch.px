@@ -26,23 +26,23 @@
 
 fact DispatchDecision:
   should_dispatch: bool
-  task_id: string
+  task_id: optional[string]
   reason: string
-  prompt: string
+  prompt: optional[string]
 
 fact EvaluableTask:
   id: string
   description: string
   priority: int
   created_at: int
-  last_evaluated_at: int
+  last_evaluated_at: optional[int]
   attempts: int
   conditions: list
   subtasks: list
 
 fact SteerResult:
   task_id: string
-  message_to_agent: string
+  message_to_agent: optional[string]
 
 # The dataflow bindings below are the executable configuration. They are local
 # rather than parser-skipped config so the compiler can prove every use.
@@ -54,7 +54,7 @@ fact SteerResult:
 procedure evaluate_dispatch(tick: int from "heartbeat_tick") -> DispatchDecision into "dispatch_decision":
   given: "Decide whether to dispatch an autonomous task on this heartbeat tick"
 
-  define $min_evaluation_interval_seconds = 60
+  define $min_evaluation_interval_ms = 60000
   define $max_attempts = 5
 
   # Rust supplies the durable task graph from the shared TaskManager. This
@@ -76,7 +76,7 @@ procedure evaluate_dispatch(tick: int from "heartbeat_tick") -> DispatchDecision
   timestamp_now {} -> $now
 
   # Filter by cooldown
-  filter_ready_tasks {tasks: $leaves, now: $now, cooldown: $min_evaluation_interval_seconds} -> $ready
+  filter_ready_tasks {tasks: $leaves, now: $now, cooldown: $min_evaluation_interval_ms} -> $ready
 
   when length($ready) == 0:
     return {should_dispatch: false, task_id: null, reason: "all_cooling_down", prompt: null}
@@ -111,7 +111,7 @@ procedure evaluate_dispatch(tick: int from "heartbeat_tick") -> DispatchDecision
 
 
 # Steering entry: user confirmed/redirected a task — build prompt and dispatch
-procedure build_steered_prompt(steer: SteerResult from "task_dispatch") -> string into "task_prompt":
+procedure build_steered_prompt(steer: SteerResult from "task_dispatch") -> optional[string] into "task_prompt":
   given: "Build execution prompt for a steered task"
 
   get_field {object: $steer, field: "message_to_agent"} -> $message_to_agent

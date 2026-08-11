@@ -26,7 +26,7 @@ pares-agens-bitnet-sys = { path = "../bitnet-sys" }
 # bitnet implements the PLATFORM traits (model::ModelClient, classifier::ClassifierBackend),
 # which live in pares-radix-core. Referenced via git+[patch] redirect to the local
 # pares-radix checkout (same pattern as crates/core — Stage S-C scaffolding).
-pares-radix-core = { git = "https://github.com/plures/pares-radix.git", rev = "bc60c05ac1223374e1bd05dc667afc1288e978ac", optional = true }
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", rev = "ad13ff79c3204fd171ea2775e34ca040fb314ea1", optional = true }
 async-trait = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }

@@ -20,10 +20,10 @@ serde = { workspace = true }
 axum = "0.8"
 tower-http = { version = "0.7", features = ["cors"] }
 pares-agens-core = { path = "../core" }
-pares-radix-core = { git = "https://github.com/plures/pares-radix.git", rev = "bc60c05ac1223374e1bd05dc667afc1288e978ac" }
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", rev = "ad13ff79c3204fd171ea2775e34ca040fb314ea1" }
 pares-agens-marketplace = { path = "../marketplace" }
 pares-agens-agenda = { path = "../agenda" }
-pares-rector = { git = "https://github.com/plures/pares-radix.git", rev = "bc60c05ac1223374e1bd05dc667afc1288e978ac", package = "pares-rector" }
+pares-rector = { git = "https://github.com/plures/pares-radix.git", rev = "ad13ff79c3204fd171ea2775e34ca040fb314ea1", package = "pares-rector" }
 
 [features]
 default = []

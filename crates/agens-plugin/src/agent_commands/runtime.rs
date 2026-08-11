@@ -4076,28 +4076,11 @@ pub(crate) async fn run_serve_spine(
                             }
                         };
 
-                        let loaded = if autonomous_dispatch {
-                            procedure_bridge
-                                .load_checked_from_source(
-                                    &source,
-                                    &autonomous_dispatch_catalog(),
-                                    AUTONOMOUS_DISPATCH_PROFILE,
-                                )
-                                .await
-                        } else {
-                            procedure_bridge.load_from_source(&source).await
-                        };
-                        match loaded {
-                            Ok(count) => {
-                                bridge_registered += count;
-                                reactive_adapters.extend(adapters);
-                            }
-                            Err(error) => error!(
-                                file = %procedure_path.display(),
-                                %error,
-                                "Could not register named .px procedures"
-                            ),
-                        }
+                        // `PxProcedureAdapter` is immutable after compilation.
+                        // Clone the adapters—not the source compilation—so the
+                        // named bridge and reactive registry share one parse.
+                        bridge_registered += procedure_bridge.load_adapters(adapters.clone()).await;
+                        reactive_adapters.extend(adapters);
                     }
                 }
                 spine_action_router
