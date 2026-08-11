@@ -3697,21 +3697,33 @@ mod tests {
         assert!(truncated.ends_with("…(truncated)"));
     }
 
-    fn test_shell_output(_unix_command: &str, _windows_command: &str) -> std::process::Output {
+    fn test_shell_output(unix_command: &str, windows_command: &str) -> std::process::Output {
         #[cfg(windows)]
         let mut command = {
             let mut command = std::process::Command::new("cmd");
-            command.args(["/C", _windows_command]);
+            command.args(["/C", windows_command]);
             command
         };
         #[cfg(not(windows))]
         let mut command = {
             let mut command = std::process::Command::new("sh");
-            command.args(["-c", _unix_command]);
+            command.args(["-c", unix_command]);
             command
         };
 
-        command.output().unwrap()
+        let mut output = command.output().unwrap();
+
+        #[cfg(windows)]
+        {
+            output.stdout = String::from_utf8_lossy(&output.stdout)
+                .replace("\r\n", "\n")
+                .into_bytes();
+            output.stderr = String::from_utf8_lossy(&output.stderr)
+                .replace("\r\n", "\n")
+                .into_bytes();
+        }
+
+        output
     }
 
     #[test]
