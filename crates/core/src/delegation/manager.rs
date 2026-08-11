@@ -406,7 +406,8 @@ mod tests {
     use super::*;
     use crate::delegation::registry::{AgentDefinition, AgentRegistry};
     use pares_radix_core::model::{
-        ChatMessage, ChatOptions, ModelClient, ModelClientError, ModelCompletion, ToolDefinition, ToolDispatcher,
+        ChatMessage, ChatOptions, ModelClient, ModelClientError, ModelCompletion, ToolDefinition,
+        ToolDispatcher, TransportFailure,
     };
     use async_trait::async_trait;
     use serde_json::Value;
@@ -765,7 +766,9 @@ mod tests {
                 _tools: &[ToolDefinition],
                 _options: &ChatOptions,
             ) -> Result<ModelCompletion, ModelClientError> {
-                Err(ModelClientError::Transport("connection refused".into()))
+                Err(ModelClientError::Transport(TransportFailure::message(
+                    "connection refused",
+                )))
             }
         }
 

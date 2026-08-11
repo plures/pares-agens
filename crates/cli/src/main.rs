@@ -49,7 +49,7 @@ use pares_agens_core::memory::{
 };
 use pares_radix_core::model::{
     ChatMessage as CoreChatMessage, ChatOptions, ModelClient, ModelClientError, ToolDefinition,
-    ToolDispatcher,
+    ToolDispatcher, TransportFailure,
 };
 use pares_radix_core::procedure::{Procedure, ProcedureRegistry};
 use pares_radix_core::plugins::{PluginCrudExecutor, PluginRuntime};
@@ -648,12 +648,16 @@ impl ModelClient for RouterModelClient {
         let response = router
             .chat(&request)
             .await
-            .map_err(|e| ModelClientError::Transport(e.to_string()))?;
+            .map_err(|error| {
+                ModelClientError::Transport(TransportFailure::message(error.to_string()))
+            })?;
 
         let choice = response
             .choices
             .first()
-            .ok_or_else(|| ModelClientError::Transport("model returned no choices".to_string()))?;
+            .ok_or_else(|| {
+                ModelClientError::Transport(TransportFailure::message("model returned no choices"))
+            })?;
 
         let tool_calls = choice
             .message
@@ -694,9 +698,9 @@ impl ModelClient for ToggleableModelClient {
         options: &ChatOptions,
     ) -> Result<pares_radix_core::model::ModelCompletion, ModelClientError> {
         if !*self.enabled.read().await {
-            return Err(ModelClientError::Transport(
-                "deep model escalation is disabled".to_string(),
-            ));
+            return Err(ModelClientError::Transport(TransportFailure::message(
+                "deep model escalation is disabled",
+            )));
         }
         self.inner.complete(messages, tools, options).await
     }

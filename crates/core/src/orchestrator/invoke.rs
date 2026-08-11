@@ -281,7 +281,9 @@ pub trait InvokableProcedure: Procedure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pares_radix_core::model::{ChatOptions, ModelClientError, ModelCompletion, ToolDefinition};
+    use pares_radix_core::model::{
+        ChatOptions, ModelClientError, ModelCompletion, ToolDefinition, TransportFailure,
+    };
     use std::time::Duration as StdDuration;
     use tokio::time::sleep;
 
@@ -351,7 +353,9 @@ mod tests {
             _tools: &[ToolDefinition],
             _options: &ChatOptions,
         ) -> Result<ModelCompletion, ModelClientError> {
-            Err(ModelClientError::Transport("upstream unavailable".into()))
+            Err(ModelClientError::Transport(TransportFailure::message(
+                "upstream unavailable",
+            )))
         }
     }
 
