@@ -53,8 +53,7 @@ semver = "1"
 toml = "1.1"
 base64 = "0.23"
 sha2 = "0.11"
-pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "3cd4b44f8391580457212bbafd4ab6fd7e2779dc" }
-px-check = { git = "https://github.com/plures/praxis-lang.git", rev = "89d72cc12732ba1c21e8063d40a39f4a2700cc9c", package = "px-check" }
+pluresdb-px = { git = "https://github.com/plures/pluresdb", rev = "328e060016fdc67e704712cffd71fcd9c38bfbf7" }
 tiktoken-rs = "0.12"
 unicode-segmentation = "1"
 subtle = "2"
@@ -63,9 +62,9 @@ walkdir = "2"
 # (`../radix-core`); here it is referenced via git and redirected to the local
 # pares-radix checkout by the temporary [patch] block in the workspace root
 # Cargo.toml (Stage S-C scaffolding — to be replaced by a real pin in S-F).
-pares-radix-core = { git = "https://github.com/plures/pares-radix.git", rev = "bc60c05ac1223374e1bd05dc667afc1288e978ac" }
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", rev = "f53f0a1b660a67ed24a4ec5ee6bacf0c6416c530" }
 # Praxis (decision ledger / constraints) — same git+patch redirect as core.
-pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", rev = "bc60c05ac1223374e1bd05dc667afc1288e978ac" }
+pares-radix-praxis = { git = "https://github.com/plures/pares-radix.git", rev = "f53f0a1b660a67ed24a4ec5ee6bacf0c6416c530" }
 # Privacy and audit are local crates in this (pares-agens) workspace.
 pares-agens-privacy = { path = "../privacy" }
 pares-agens-audit = { path = "../audit" }

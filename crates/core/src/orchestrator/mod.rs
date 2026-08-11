@@ -32,7 +32,6 @@ pub mod invoke;
 pub mod pipeline;
 pub mod px_bridge;
 pub mod router;
-pub mod spine_contract;
 
 use pares_radix_core::pluresdb_bridge::PluresDbBridge;
 use crate::orchestrator::px_bridge::PxBridge;
