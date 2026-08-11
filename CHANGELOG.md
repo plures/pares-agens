@@ -1,3 +1,9 @@
+## [1.81.1] — 2026-08-11
+
+- fix(deps): unify Radix revision identity (#721) (362c742)
+- fix(spine): restore cognition action dispatch (#719) (6b5dc2a)
+- fix: close spine action registration gaps (#718) (584b415)
+
 ## [1.81.0] — 2026-08-11
 
 - fix: remove unsupported tauri build flag (#716) (9af93c5)
