@@ -302,6 +302,7 @@ const COGNITION_ACTIONS: &[&str] = &[
     "manage_context",
     "build_messages",
     "append_tail",
+    "channel_send",
     "dispatch_tools",
     "build_tool_followup",
     "timestamp_now",
@@ -1089,6 +1090,7 @@ impl CerebellumActionHandler {
             return Ok(Value::Array(Vec::new()));
         }
 
+        let recalled = self
             .recall_memories_action(&json!({
                 "text": terms.join(" "),
                 "limit": params.get("limit").cloned().unwrap_or_else(|| json!(10)),
