@@ -23,7 +23,7 @@ tracing = "0.1"
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 pares-agens-core = { path = "../core" }
-pares-radix-core = { git = "https://github.com/plures/pares-radix.git", rev = "f53f0a1" }
+pares-radix-core = { git = "https://github.com/plures/pares-radix.git", rev = "f53f0a1b660a67ed24a4ec5ee6bacf0c6416c530" }
 async-trait = "0.1"
 pares-agens-channels = { path = "../channels" }
 pares-agens-migrate = { path = "../cli", package = "pares-agens-cli" }
