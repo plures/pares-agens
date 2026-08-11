@@ -388,6 +388,38 @@ procedure test_proc:
         );
     }
 
+    #[tokio::test]
+    async fn autonomous_leaf_filter_keeps_only_childless_tasks() {
+        let handler: Arc<dyn AsyncActionHandler> = Arc::new(NoOpHandler);
+        let bridge = PxBridge::new(handler);
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../praxis/procedures/autonomous-dispatch.px"),
+        )
+        .expect("autonomous-dispatch.px must exist");
+        bridge
+            .load_from_source(&source)
+            .await
+            .expect("autonomous-dispatch.px must load");
+
+        let result = bridge
+            .call(
+                "filter_leaf_tasks",
+                HashMap::from([(
+                    "tasks".to_string(),
+                    json!([
+                        {"id": "parent", "subtasks": ["child"]},
+                        {"id": "child", "subtasks": []}
+                    ]),
+                )]),
+            )
+            .await
+            .expect("filter_leaf_tasks must be registered")
+            .expect("filter_leaf_tasks must execute");
+
+        assert_eq!(result, json!([{"id": "child", "subtasks": []}]));
+    }
+
     /// Local mirror of orchestrator::mod::parse_px_route, kept in sync manually
     /// since px_bridge doesn't depend on the orchestrator crate module directly.
     /// Exercises the same match arms (including the "fast" arm) to prove the

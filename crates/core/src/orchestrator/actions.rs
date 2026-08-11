@@ -163,6 +163,106 @@ impl SpineActionRouter {
         Ok(list.last().cloned().unwrap_or(Value::Null))
     }
 
+    fn get_first_item(params: &Value) -> Result<Value, ExecutionError> {
+        let list = params
+            .get("list")
+            .and_then(Value::as_array)
+            .ok_or_else(|| ExecutionError::ActionFailed {
+                action: "get_first_item".to_string(),
+                message: "missing list".to_string(),
+            })?;
+        Ok(list.first().cloned().unwrap_or(Value::Null))
+    }
+
+    /// Deterministically order PX values by declared object fields.
+    ///
+    /// This is a generic execution primitive: PX chooses its keys and sort
+    /// direction, while Rust only applies that declared ordering to JSON data.
+    fn sort_by(params: &Value) -> Result<Value, ExecutionError> {
+        let mut items = params
+            .get("items")
+            .and_then(Value::as_array)
+            .cloned()
+            .ok_or_else(|| ExecutionError::ActionFailed {
+                action: "sort_by".to_string(),
+                message: "missing items array".to_string(),
+            })?;
+        let keys = params
+            .get("keys")
+            .and_then(Value::as_array)
+            .ok_or_else(|| ExecutionError::ActionFailed {
+                action: "sort_by".to_string(),
+                message: "missing keys array".to_string(),
+            })?;
+        let orders = params.get("orders").and_then(Value::as_array);
+
+        items.sort_by(|left, right| {
+            for (index, key) in keys.iter().enumerate() {
+                let Some(key) = key.as_str() else { continue };
+                let direction = orders
+                    .and_then(|orders| orders.get(index))
+                    .and_then(Value::as_str)
+                    .unwrap_or("asc");
+                let ordering = Self::compare_json_fields(left, right, key);
+                if !ordering.is_eq() {
+                    return if direction == "desc" {
+                        ordering.reverse()
+                    } else {
+                        ordering
+                    };
+                }
+            }
+            std::cmp::Ordering::Equal
+        });
+        Ok(Value::Array(items))
+    }
+
+    fn compare_json_fields(left: &Value, right: &Value, key: &str) -> std::cmp::Ordering {
+        let left = Self::json_field(left, key);
+        let right = Self::json_field(right, key);
+        match (left, right) {
+            (Some(left), Some(right)) => {
+                if let (Some(left), Some(right)) = (left.as_f64(), right.as_f64()) {
+                    left.partial_cmp(&right).unwrap_or(std::cmp::Ordering::Equal)
+                } else if let (Some(left), Some(right)) = (left.as_str(), right.as_str()) {
+                    left.cmp(right)
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            }
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+    }
+
+    fn json_field<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+        let mut current = value;
+        for segment in key.split('.') {
+            current = current.get(segment)?;
+        }
+        Some(current)
+    }
+
+    /// Return an elapsed duration for PX policies that supply their own clock.
+    fn compute_elapsed(params: &Value) -> Result<Value, ExecutionError> {
+        let start = params
+            .get("start")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| ExecutionError::ActionFailed {
+                action: "compute_elapsed".to_string(),
+                message: "missing numeric start".to_string(),
+            })?;
+        let end = params
+            .get("end")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| ExecutionError::ActionFailed {
+                action: "compute_elapsed".to_string(),
+                message: "missing numeric end".to_string(),
+            })?;
+        Ok(Value::from(end.saturating_sub(start)))
+    }
+
     fn compute_context_budget(params: &Value) -> Result<Value, ExecutionError> {
         let window = params
             .get("window")
@@ -322,6 +422,9 @@ impl AsyncActionHandler for SpineActionRouter {
             "get_field" => return Self::get_field(params),
             "append_to_list" => return Self::append_to_list(params),
             "get_last_item" => return Self::get_last_item(params),
+            "get_first_item" => return Self::get_first_item(params),
+            "sort_by" => return Self::sort_by(params),
+            "compute_elapsed" => return Self::compute_elapsed(params),
             "compute_context_budget" => return Self::compute_context_budget(params),
             "determine_tier" => return Self::determine_tier(params),
             "filter_relevant" => return Self::filter_relevant(params),
@@ -1548,6 +1651,31 @@ mod tests {
             }))
             .unwrap(),
             json!(["parent", "child"])
+        );
+        assert_eq!(
+            SpineActionRouter::get_first_item(&json!({"list": ["child", "parent"]})).unwrap(),
+            json!("child")
+        );
+        assert_eq!(
+            SpineActionRouter::sort_by(&json!({
+                "items": [
+                    {"id": "later", "priority": 2, "created_at": 20},
+                    {"id": "first", "priority": 1, "created_at": 30},
+                    {"id": "oldest", "priority": 1, "created_at": 10}
+                ],
+                "keys": ["priority", "created_at"],
+                "orders": ["asc", "asc"]
+            }))
+            .unwrap(),
+            json!([
+                {"id": "oldest", "priority": 1, "created_at": 10},
+                {"id": "first", "priority": 1, "created_at": 30},
+                {"id": "later", "priority": 2, "created_at": 20}
+            ])
+        );
+        assert_eq!(
+            SpineActionRouter::compute_elapsed(&json!({"start": 10, "end": 70})).unwrap(),
+            json!(60)
         );
         assert_eq!(
             SpineActionRouter::compute_context_budget(&json!({
