@@ -277,7 +277,9 @@ async fn run_sub_task(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pares_radix_core::model::{ChatMessage, ChatOptions, ModelClientError, ModelCompletion, ToolDefinition};
+    use pares_radix_core::model::{
+        ChatMessage, ChatOptions, ModelClientError, ModelCompletion, ToolDefinition, TransportFailure,
+    };
     use async_trait::async_trait;
     use serde_json::Value;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -321,7 +323,9 @@ mod tests {
             _tools: &[ToolDefinition],
             _options: &ChatOptions,
         ) -> Result<ModelCompletion, ModelClientError> {
-            Err(ModelClientError::Transport("connection refused".into()))
+            Err(ModelClientError::Transport(TransportFailure::message(
+                "connection refused",
+            )))
         }
     }
 

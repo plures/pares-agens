@@ -15,7 +15,7 @@ use pares_agens_core::memory::store::{InMemoryStore, MemoryStore};
 use pares_agens_core::memory::PluresLm;
 use pares_radix_core::model::{
     ChatMessage, ChatOptions, ModelClient, ModelClientError, ModelCompletion, StreamDelta, StreamSender,
-    ToolDefinition, ToolDispatcher,
+    ToolDefinition, ToolDispatcher, TransportFailure,
 };
 use pares_radix_core::optimization::OptimizationSafetyGate;
 use pares_radix_core::plugins::PluginRuntime;
@@ -215,7 +215,9 @@ impl ModelClient for AppModelClient {
         let response = router_guard
             .chat(&request)
             .await
-            .map_err(|e| ModelClientError::Transport(e.to_string()))?;
+            .map_err(|error| {
+                ModelClientError::Transport(TransportFailure::message(error.to_string()))
+            })?;
         drop(router_guard);
         let latency_ms = start.elapsed().as_millis();
         info!(latency_ms, model = %model, "model call completed");
@@ -226,7 +228,9 @@ impl ModelClient for AppModelClient {
         let choice = response
             .choices
             .first()
-            .ok_or_else(|| ModelClientError::Transport("model returned no choices".to_string()))?;
+            .ok_or_else(|| {
+                ModelClientError::Transport(TransportFailure::message("model returned no choices"))
+            })?;
 
         let tool_calls = choice
             .message
@@ -343,7 +347,9 @@ impl ModelClient for AppModelClient {
             Err(e) => {
                 // Fall back to non-streaming on stream error.
                 let _ = tx.send(StreamDelta::Done);
-                return Err(ModelClientError::Transport(e.to_string()));
+                return Err(ModelClientError::Transport(TransportFailure::message(
+                    e.to_string(),
+                )));
             }
         };
 
