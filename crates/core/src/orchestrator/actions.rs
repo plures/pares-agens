@@ -308,7 +308,6 @@ const COGNITION_ACTIONS: &[&str] = &[
     "format_string",
     "find_most_recent",
     "generate_id",
-    "channel_send",
 ];
 
 #[async_trait]
