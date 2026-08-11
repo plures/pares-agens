@@ -80,7 +80,7 @@ dependencies = [
 
 [[package]]
 name = "agens-plugin"
-version = "1.81.1"
+version = "1.82.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4293,7 +4293,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-client"
-version = "1.81.1"
+version = "1.82.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5224,7 +5224,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-agenda"
-version = "1.81.1"
+version = "1.82.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5239,7 +5239,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-audit"
-version = "1.81.1"
+version = "1.82.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5274,11 +5274,11 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-buildinfo"
-version = "1.81.1"
+version = "1.82.0"
 
 [[package]]
 name = "pares-agens-channels"
-version = "1.81.1"
+version = "1.82.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -5302,7 +5302,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-cli"
-version = "1.81.1"
+version = "1.82.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5333,7 +5333,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-core"
-version = "1.81.1"
+version = "1.82.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -5378,7 +5378,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-hostkit"
-version = "1.81.1"
+version = "1.82.0"
 dependencies = [
  "pares-agens-channels",
  "pares-agens-core",
@@ -5390,7 +5390,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-marketplace"
-version = "1.81.1"
+version = "1.82.0"
 dependencies = [
  "chrono",
  "serde",
@@ -5401,7 +5401,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-mcp-server"
-version = "1.81.1"
+version = "1.82.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -5431,7 +5431,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-models"
-version = "1.81.1"
+version = "1.82.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -5448,7 +5448,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-privacy"
-version = "1.81.1"
+version = "1.82.0"
 dependencies = [
  "regex",
  "serde",
@@ -5459,7 +5459,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-sync"
-version = "1.81.1"
+version = "1.82.0"
 dependencies = [
  "chrono",
  "serde",
@@ -5497,7 +5497,7 @@ dependencies = [
 
 [[package]]
 name = "pares-agens-tui"
-version = "1.81.1"
+version = "1.82.0"
 dependencies = [
  "async-trait",
  "chrono",
