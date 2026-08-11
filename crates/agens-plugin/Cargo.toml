@@ -29,9 +29,9 @@ pares-radix-praxis      = { git = "https://github.com/plures/pares-radix.git", r
 # (Cluster -> pares_rector, McpServe -> pares_radix_core + local mcp-server).
 # Keep pares-radix-* tags aligned where possible to avoid duplicate-crate type/trait mismatches.
 
-pares-radix-core        = { git = "https://github.com/plures/pares-radix.git", rev = "f53f0a1" }
+pares-radix-core        = { git = "https://github.com/plures/pares-radix.git", rev = "f53f0a1b660a67ed24a4ec5ee6bacf0c6416c530" }
 pares-agens-mcp-server  = { path = "../mcp-server" }
-pares-rector            = { git = "https://github.com/plures/pares-radix.git", rev = "f53f0a1", package = "pares-rector" }
+pares-rector            = { git = "https://github.com/plures/pares-radix.git", rev = "f53f0a1b660a67ed24a4ec5ee6bacf0c6416c530", package = "pares-rector" }
 
 # --- HOST / COGNITION crates (Option A: agens OWNS these) ---
 # Stage R3a: the cognition/host crates are the LOCAL agens copies (path deps).
