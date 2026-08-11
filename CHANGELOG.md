@@ -1,7 +1,6 @@
 ## [1.82.0] — 2026-08-11
 
-- Revert "feat(spine): activate checked autonomous PX policy (#723)" (#724) (245e18c)
-- feat(spine): activate checked autonomous PX policy (#723) (4e1f180)
+- Revert "feat(spine): activate checked autonomous PX policy (#723)" (#724) (245e18c) — the checked autonomous PX policy introduced in #723 was reverted before release, so it does not ship in this version.
 
 ## [1.81.1] — 2026-08-11
 
